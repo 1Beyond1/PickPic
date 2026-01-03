@@ -4,7 +4,7 @@
     "slug": "PickPic",
     "version": "0.1.1",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/icon_new.jpg",
     "scheme": "pickpic",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
