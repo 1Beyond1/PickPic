@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
-import React from 'react';
-import { Dimensions, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Dimensions, Image as RNImage, StyleSheet } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Extrapolation,
@@ -11,17 +11,17 @@ import Animated, {
     withSpring,
     withTiming,
 } from 'react-native-reanimated';
-import { BORDER_RADIUS } from '../constants/theme';
+import { BORDER_RADIUS, SPACING } from '../constants/theme';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { PhotoAsset } from '../stores/useMediaStore';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Increased Card Dimensions
-const CARD_WIDTH = SCREEN_WIDTH * 0.92; // Was 0.9 or smaller implicitly
-const CARD_HEIGHT = SCREEN_HEIGHT * 0.65; // Increase height for bigger view
-const CARD_borderRadius = BORDER_RADIUS.xl;
-const SWIPE_THRESHOLD = 150;
+// Card padding around the image
+const CARD_PADDING = SPACING.s;
+const MAX_CARD_WIDTH = SCREEN_WIDTH * 0.85;
+const MAX_CARD_HEIGHT = SCREEN_HEIGHT * 0.55;
+const SWIPE_THRESHOLD = 120;
 
 interface DropZone {
     id: string;
@@ -53,13 +53,44 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     dropZones,
 }) => {
     const { colors } = useThemeColor();
+    const [cardWidth, setCardWidth] = useState(MAX_CARD_WIDTH);
+    const [cardHeight, setCardHeight] = useState(MAX_CARD_HEIGHT * 0.7);
+
+    // Load image dimensions and calculate card size to fit image
+    useEffect(() => {
+        if (photo.uri) {
+            RNImage.getSize(
+                photo.uri,
+                (imgWidth, imgHeight) => {
+                    const ratio = imgWidth / imgHeight;
+
+                    // Calculate dimensions to fit image within max bounds
+                    let width = MAX_CARD_WIDTH;
+                    let height = width / ratio;
+
+                    // If height exceeds max, scale down
+                    if (height > MAX_CARD_HEIGHT) {
+                        height = MAX_CARD_HEIGHT;
+                        width = height * ratio;
+                    }
+
+                    // Add padding for card border
+                    setCardWidth(width + CARD_PADDING * 2);
+                    setCardHeight(height + CARD_PADDING * 2);
+                },
+                (error) => {
+                    console.log('Failed to get image size:', error);
+                    setCardWidth(MAX_CARD_WIDTH);
+                    setCardHeight(MAX_CARD_HEIGHT * 0.7);
+                }
+            );
+        }
+    }, [photo.uri]);
 
     const translateX = useSharedValue(0);
     const translateY = useSharedValue(0);
     const scale = useSharedValue(1);
 
-    // Zone detection threshold - card must be dragged past this Y coordinate to activate zones
-    // 80% of screen height means zone area is only at the very bottom
     const ZONE_ACTIVATION_Y = SCREEN_HEIGHT * 0.75;
 
     const checkZone = (absoluteX: number) => {
@@ -77,9 +108,8 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         .onUpdate((event) => {
             translateX.value = event.translationX;
             translateY.value = event.translationY;
-            scale.value = withTiming(0.95);
+            scale.value = withTiming(0.96);
 
-            // Use absoluteY to check if card is in the drop zone area
             if (event.absoluteY > ZONE_ACTIVATION_Y && onHoverZone) {
                 const zoneId = checkZone(event.absoluteX);
                 runOnJS(onHoverZone)(zoneId);
@@ -89,25 +119,20 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         })
         .onEnd((event) => {
             if (translateY.value < -SWIPE_THRESHOLD) {
-                // Swipe Up -> Delete
                 translateX.value = withTiming(0);
                 translateY.value = withTiming(-SCREEN_HEIGHT, {}, () => {
                     runOnJS(onSwipeUp)();
                 });
             } else if (translateY.value > SWIPE_THRESHOLD) {
-                // Swipe Down
                 const isInZoneArea = event.absoluteY > ZONE_ACTIVATION_Y;
                 const matchedZoneId = isInZoneArea ? checkZone(event.absoluteX) : null;
 
                 if (matchedZoneId) {
-                    // Hit a zone -> Organize
                     translateX.value = withTiming(0);
                     translateY.value = withTiming(SCREEN_HEIGHT, {}, () => {
                         runOnJS(onSwipeDown)(matchedZoneId);
                     });
                 } else {
-                    // No zone hit -> ALWAYS Skip (simplified logic)
-                    // Whether collections enabled or not, swipe down without zone hit = Skip
                     translateX.value = withTiming(0);
                     translateY.value = withTiming(SCREEN_HEIGHT, {}, () => {
                         runOnJS(onSwipeDown)();
@@ -132,7 +157,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         const rotate = interpolate(
             translateX.value,
             [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
-            [-15, 0, 15],
+            [-8, 0, 8],
             Extrapolation.CLAMP
         );
 
@@ -153,15 +178,18 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                 styles.cardContainer,
                 animatedStyle,
                 {
+                    width: cardWidth,
+                    height: cardHeight,
                     backgroundColor: colors.surface,
-                    shadowColor: colors.textSecondary // Softer shadow in dark mode?
+                    borderColor: colors.border,
                 }
             ]}>
+                {/* Image fills card with small padding */}
                 <Image
                     source={{ uri: photo.uri }}
-                    style={styles.image}
-                    contentFit="cover"
-                    transition={200}
+                    style={[styles.image, { margin: CARD_PADDING }]}
+                    contentFit="contain"
+                    transition={150}
                 />
             </Animated.View>
         </GestureDetector>
@@ -171,17 +199,18 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 const styles = StyleSheet.create({
     cardContainer: {
         position: 'absolute',
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
         borderRadius: BORDER_RADIUS.l,
         overflow: 'hidden',
-        elevation: 5,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
+        borderWidth: 1,
+        // Subtle shadow
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
         shadowRadius: 8,
     },
     image: {
-        width: '100%',
-        height: '100%',
+        flex: 1,
+        borderRadius: BORDER_RADIUS.m,
     },
 });

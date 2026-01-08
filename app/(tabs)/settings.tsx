@@ -1,23 +1,25 @@
 import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
 import { COLORS, SPACING } from '../../constants/theme';
+
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { APP_VERSION, useSettingsStore } from '../../stores/useSettingsStore';
 
-const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [], colors, isDark }: any) => {
+const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [], colors, isDark, fonts }: any) => {
     return (
         <View style={styles.item}>
-            <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
+            <Text style={[styles.label, { color: colors.text, fontFamily: fonts?.ui }]}>{label}</Text>
             {type === 'switch' ? (
                 <Switch
                     value={value}
                     onValueChange={onValueChange}
-                    trackColor={{ false: isDark ? '#333' : '#E0E0E0', true: '#0A84FF' }}
+                    trackColor={{ false: isDark ? '#333' : '#E0E0E0', true: colors.primary }}
                     thumbColor={isDark ? '#FFF' : '#FFF'}
                 />
             ) : (
@@ -30,14 +32,14 @@ const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [
                                 onPress={() => onValueChange(opt)}
                                 style={[
                                     styles.optionButton,
-                                    isSelected && { backgroundColor: '#0A84FF' },
+                                    isSelected && { backgroundColor: colors.primary },
                                     !isSelected && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
                                 ]}
                             >
                                 <Text
                                     style={[
                                         styles.optionText,
-                                        { color: isSelected ? '#FFF' : colors.textSecondary },
+                                        { color: isSelected ? '#FFF' : colors.textSecondary, fontFamily: fonts?.ui },
                                         isSelected && { fontWeight: 'bold' }
                                     ]}
                                 >
@@ -56,12 +58,14 @@ export default function SettingsScreen() {
     const insets = useSafeAreaInsets();
     const { t } = useI18n();
     const { colors, isDark } = useThemeColor();
+    const fonts = undefined; // Custom fonts feature removed
 
     const {
         groupSize, setGroupSize,
-        enableRandomDisplay, toggleRandomDisplay,
+        displayOrder, setDisplayOrder,
         theme, setTheme,
-        language, setLanguage
+        language, setLanguage,
+        selectedAlbumIds, setSelectedAlbums
     } = useSettingsStore();
 
     const {
@@ -69,6 +73,8 @@ export default function SettingsScreen() {
         resetPhotoProgress, resetVideoProgress,
         totalPhotos, totalVideos
     } = useMediaStore();
+
+    const [showAlbumSelector, setShowAlbumSelector] = useState(false);
 
     const handleResetPhotoProgress = () => {
         Alert.alert(
@@ -96,6 +102,11 @@ export default function SettingsScreen() {
         Linking.openURL('https://github.com/1Beyond1');
     };
 
+    const handleAlbumConfirm = (ids: string[]) => {
+        setSelectedAlbums(ids);
+        setShowAlbumSelector(false);
+    };
+
     const glassTint = isDark ? 'dark' : 'light';
 
     return (
@@ -104,7 +115,7 @@ export default function SettingsScreen() {
 
             <ScrollView contentContainerStyle={styles.content}>
                 {/* Group Size */}
-                <GlassContainer style={styles.section} tint={glassTint}>
+                <GlassContainer style={styles.section}>
                     <SettingItem
                         label={t('settings_group_size')}
                         type="select"
@@ -113,38 +124,77 @@ export default function SettingsScreen() {
                         options={[10, 20, 30]}
                         colors={colors}
                         isDark={isDark}
+                        fonts={fonts}
                     />
                 </GlassContainer>
 
-                {/* Random Display */}
-                <GlassContainer style={styles.section} tint={glassTint}>
-                    <SettingItem
-                        label={t('settings_random')}
-                        value={enableRandomDisplay}
-                        onValueChange={toggleRandomDisplay}
-                        colors={colors}
-                        isDark={isDark}
-                    />
-                    <Text style={[styles.hintText, { color: colors.textSecondary }]}>
-                        {t('random_display_hint')}
-                    </Text>
+                {/* Album Filter */}
+                <GlassContainer style={styles.section}>
+                    <Pressable style={styles.item} onPress={() => setShowAlbumSelector(true)}>
+                        <Text style={[styles.label, { color: colors.text }]}>{t('settings_album_filter' as any)}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Text style={[styles.optionText, { color: colors.textSecondary, marginRight: 4 }]}>
+                                {selectedAlbumIds.length === 0
+                                    ? t('album_filter_all' as any)
+                                    : t('album_filter_selected' as any, { count: selectedAlbumIds.length })}
+                            </Text>
+                            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                        </View>
+                    </Pressable>
+                </GlassContainer>
+
+                {/* Display Order */}
+                <GlassContainer style={styles.section}>
+                    <View style={styles.item}>
+                        <Text style={[styles.label, { color: colors.text }]}>{t('settings_display_order')}</Text>
+                    </View>
+                    <View style={styles.optionsContainer}>
+                        {(['newest', 'oldest', 'random'] as const).map((order) => {
+                            const isSelected = displayOrder === order;
+                            const labelKey = order === 'newest' ? 'display_order_newest'
+                                : order === 'oldest' ? 'display_order_oldest'
+                                    : 'display_order_random';
+                            return (
+                                <Pressable
+                                    key={order}
+                                    onPress={() => setDisplayOrder(order)}
+                                    style={[
+                                        styles.optionButton,
+                                        isSelected && { backgroundColor: colors.primary },
+                                        !isSelected && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.optionText,
+                                            { color: isSelected ? '#FFF' : colors.textSecondary },
+                                            isSelected && { fontWeight: 'bold' }
+                                        ]}
+                                    >
+                                        {t(labelKey as any)}
+                                    </Text>
+                                </Pressable>
+                            );
+                        })}
+                    </View>
                 </GlassContainer>
 
                 {/* Theme */}
-                <GlassContainer style={styles.section} tint={glassTint}>
+                <GlassContainer style={styles.section}>
                     <SettingItem
                         label={t('settings_theme')}
                         type="select"
                         value={theme}
                         onValueChange={setTheme}
-                        options={['light', 'dark', 'auto']}
+                        options={['WarmTerra', 'light', 'dark']}
                         colors={colors}
                         isDark={isDark}
+                        fonts={fonts}
                     />
                 </GlassContainer>
 
                 {/* Language */}
-                <GlassContainer style={styles.section} tint={glassTint}>
+                <GlassContainer style={styles.section}>
                     <SettingItem
                         label={t('settings_language')}
                         type="select"
@@ -153,11 +203,12 @@ export default function SettingsScreen() {
                         options={['zh', 'en']}
                         colors={colors}
                         isDark={isDark}
+                        fonts={fonts}
                     />
                 </GlassContainer>
 
                 {/* Photo Progress */}
-                <GlassContainer style={styles.section} tint={glassTint}>
+                <GlassContainer style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('tab_photos')} {t('photos_header')}</Text>
                     <View style={styles.progressRow}>
                         <Text style={[styles.progressText, { color: colors.textSecondary }]}>
@@ -176,7 +227,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* Video Progress */}
-                <GlassContainer style={styles.section} tint={glassTint}>
+                <GlassContainer style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('tab_videos')} {t('photos_header')}</Text>
                     <View style={styles.progressRow}>
                         <Text style={[styles.progressText, { color: colors.textSecondary }]}>
@@ -192,6 +243,31 @@ export default function SettingsScreen() {
                     >
                         <Text style={styles.resetButtonText}>{t('settings_reset_videos')}</Text>
                     </Pressable>
+                </GlassContainer>
+
+                {/* Developer Options */}
+                <GlassContainer style={styles.section}>
+                    <Pressable
+                        style={styles.devOptionsHeader}
+                        onPress={() => useSettingsStore.getState().toggleDevOptions()}
+                    >
+                        <View>
+                            <Text style={[styles.label, { color: colors.text }]}>{t('settings_dev_options' as any)}</Text>
+                            <Text style={[styles.hintText, { color: colors.textTertiary }]}>{t('settings_dev_options_hint' as any)}</Text>
+                        </View>
+                        <Ionicons
+                            name={useSettingsStore.getState().showDevOptions ? "chevron-up" : "chevron-down"}
+                            size={20}
+                            color={colors.textSecondary}
+                        />
+                    </Pressable>
+
+                    {useSettingsStore.getState().showDevOptions && (
+                        <View style={styles.devOptionsContent}>
+                            <View style={styles.divider} />
+                            {/* Developer options content removed */}
+                        </View>
+                    )}
                 </GlassContainer>
 
                 {/* Footer: Author & Version */}
@@ -211,6 +287,14 @@ export default function SettingsScreen() {
                 </View>
 
             </ScrollView>
+
+            {/* Album Selector Modal */}
+            <AlbumSelector
+                visible={showAlbumSelector}
+                onClose={() => setShowAlbumSelector(false)}
+                onConfirm={handleAlbumConfirm}
+                initialSelection={selectedAlbumIds}
+            />
         </View>
     );
 }
@@ -307,5 +391,19 @@ const styles = StyleSheet.create({
         fontSize: 11,
         marginTop: 4,
         opacity: 0.6,
-    }
+    },
+    devOptionsHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 4,
+    },
+    devOptionsContent: {
+        marginTop: SPACING.s,
+    },
+    divider: {
+        height: 1,
+        backgroundColor: 'rgba(0,0,0,0.1)',
+        marginVertical: SPACING.s,
+    },
 });

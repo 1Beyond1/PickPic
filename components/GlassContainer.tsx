@@ -1,35 +1,39 @@
-import { BlurView } from 'expo-blur';
 import React from 'react';
-import { StyleSheet, View, ViewStyle } from 'react-native';
-import { BORDER_RADIUS, GLASS_EFFECT } from '../constants/theme';
+import { Platform, StyleSheet, View, ViewStyle } from 'react-native';
+import { BORDER_RADIUS, COLORS, COLORS_DARK } from '../constants/theme';
+import { useThemeColor } from '../hooks/useThemeColor';
 
-interface GlassContainerProps {
+interface CardContainerProps {
     children: React.ReactNode;
     style?: ViewStyle;
-    intensity?: number;
-    tint?: 'light' | 'dark' | 'default';
     borderRadius?: number;
+    elevated?: boolean; // Warm Terra subtle elevation
 }
 
-export const GlassContainer: React.FC<GlassContainerProps> = ({
+// Warm Terra clean card container
+export const GlassContainer: React.FC<CardContainerProps> = ({
     children,
     style,
-    intensity = GLASS_EFFECT.intensity,
-    tint = GLASS_EFFECT.tint as any,
     borderRadius = BORDER_RADIUS.l,
+    elevated = true,
 }) => {
-    // Default background based on tint if not overridden by style
-    // Tuned for Light Mode: more opaque white to stand out against off-white background
-    const defaultBg = tint === 'light' ? 'rgba(255, 255, 255, 0.6)' : 'rgba(40, 40, 40, 0.3)';
+    const { isDark } = useThemeColor();
+
+    const backgroundColor = isDark ? COLORS_DARK.surface : COLORS.surface;
+    const borderColor = isDark ? COLORS_DARK.border : COLORS.border;
 
     return (
-        <View style={[styles.container, { borderRadius, backgroundColor: defaultBg }, style]}>
-            <BlurView
-                intensity={intensity}
-                tint={tint}
-                style={[StyleSheet.absoluteFill, { borderRadius }]}
-            />
-            <View style={styles.content}>{children}</View>
+        <View style={[
+            styles.container,
+            elevated && (isDark ? styles.shadowDark : styles.shadowLight),
+            {
+                borderRadius,
+                backgroundColor,
+                borderColor,
+            },
+            style
+        ]}>
+            {children}
         </View>
     );
 };
@@ -38,9 +42,30 @@ const styles = StyleSheet.create({
     container: {
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.1)',
+        padding: 16,
     },
-    content: {
-        zIndex: 1,
+    // Warm Terra subtle shadow for light mode
+    shadowLight: {
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 1 },
+                shadowOpacity: 0.04,
+                shadowRadius: 3,
+            },
+            android: { elevation: 1 },
+        }),
+    },
+    // Darker shadow for dark mode
+    shadowDark: {
+        ...Platform.select({
+            ios: {
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 4,
+            },
+            android: { elevation: 2 },
+        }),
     },
 });

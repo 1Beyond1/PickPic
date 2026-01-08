@@ -34,6 +34,8 @@ export default {
     settings_change: 'Change',
     settings_random: 'Random Display',
     settings_theme: 'Theme',
+    theme_WarmTerra: 'Warm Terra',
+    theme_light: 'Light',
     settings_language: 'Language',
 
     album_select_title: 'Select Albums (Max 4)',
@@ -63,4 +65,30 @@ export default {
     video_muted: 'Muted',
     video_sound: 'Sound',
     trash_empty: 'Empty',
+
+    // New keys v0.2.0
+    settings_display_order: 'Display Order',
+    display_order_newest: 'Newest First',
+    display_order_oldest: 'Oldest First',
+    display_order_random: 'Random',
+    settings_album_filter: 'Albums to Organize',
+    album_filter_all: 'All Albums',
+    album_filter_selected: '{count} Albums Selected',
+    album_selector_title: 'Select Albums to Organize',
+    thumbnail_tap_undo: 'Tap to undo, Long press to preview',
+    no_delete_this_batch: 'No photos marked for deletion in this batch',
+    continue_next_batch: 'Continue to Next Batch',
+
+    // Version history
+    announcement_update_title: "What's New",
+    update_v030_1: '• Album Filter: Choose specific albums to organize',
+    update_v030_2: '• Display Order: Newest / Oldest / Random options',
+    update_v030_3: '• UI Refresh: New Warm Terra theme with theme switching',
+    update_v030_4: '• Card Optimization: Auto-fit image ratio, no cropping',
+    update_v030_5: '• APK Optimization: ARM64-only build for reduced file size',
+
+    // Developer options
+    settings_dev_options: 'Developer Options',
+    settings_dev_options_hint: 'Tap to expand/collapse',
+
 };

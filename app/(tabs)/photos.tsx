@@ -27,7 +27,7 @@ export default function PhotosScreen() {
         createAlbum, addAssetToAlbum, loadAlbums
     } = useMediaStore();
 
-    const { groupSize, enableRandomDisplay } = useSettingsStore();
+    const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore();
 
     const [removedIds, setRemovedIds] = useState<string[]>([]);
     const [showNewAlbumModal, setShowNewAlbumModal] = useState(false);
@@ -36,7 +36,7 @@ export default function PhotosScreen() {
     const [activeHoverZone, setActiveHoverZone] = useState<string | null>(null);
 
     useEffect(() => {
-        loadPhotos(groupSize, enableRandomDisplay);
+        loadPhotos(groupSize, displayOrder, selectedAlbumIds);
         loadAlbums();
     }, []);
 
@@ -97,6 +97,25 @@ export default function PhotosScreen() {
     const [previewPhoto, setPreviewPhoto] = useState<any>(null);
 
     const handleBatchFinished = () => {
+        // If no photos to delete, show message and auto-proceed
+        if (deleteQueue.length === 0) {
+            return (
+                <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+                    <Text style={[styles.emptyText, { color: colors.text }]}>{t('no_delete_this_batch' as any)}</Text>
+                    <Pressable
+                        style={[styles.actionButton, { backgroundColor: colors.primary }]}
+                        onPress={() => {
+                            resetBatch();
+                            loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+                            setRemovedIds([]);
+                        }}
+                    >
+                        <Text style={styles.actionButtonText}>{t('continue_next_batch' as any)}</Text>
+                    </Pressable>
+                </View>
+            );
+        }
+
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                 <Text style={[styles.emptyText, { color: colors.text }]}>{t('photos_finished')}</Text>
@@ -125,13 +144,13 @@ export default function PhotosScreen() {
                             </View>
                         )}
                     </View>
-                    {deleteQueue.length > 0 && <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 5 }}>点击撤销，长按查看</Text>}
+                    {deleteQueue.length > 0 && <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 5 }}>{t('thumbnail_tap_undo' as any)}</Text>}
                 </GlassContainer>
 
-                <Pressable style={styles.actionButton} onPress={async () => {
+                <Pressable style={[styles.actionButton, { backgroundColor: colors.primary }]} onPress={async () => {
                     await confirmDeletion(); // Wait for deletion to complete
                     resetBatch();
-                    loadPhotos(groupSize, enableRandomDisplay);
+                    loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                     setRemovedIds([]);
                 }}>
                     <Text style={styles.actionButtonText}>{t('photos_confirm')}</Text>
@@ -139,7 +158,7 @@ export default function PhotosScreen() {
 
                 <Pressable style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: 10 }]} onPress={() => {
                     resetBatch();
-                    loadPhotos(groupSize, enableRandomDisplay);
+                    loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                     setRemovedIds([]);
                 }}>
                     <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('photos_skip')}</Text>
@@ -151,7 +170,7 @@ export default function PhotosScreen() {
     if (isLoading) {
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <ActivityIndicator size="large" color={colors.primary} />
             </View>
         );
     }
@@ -184,7 +203,7 @@ export default function PhotosScreen() {
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                 <Text style={[styles.emptyText, { color: colors.text }]}>{t('photos_empty')}</Text>
-                <Pressable onPress={() => loadPhotos(groupSize, enableRandomDisplay)} style={styles.actionButton}>
+                <Pressable onPress={() => loadPhotos(groupSize, displayOrder, selectedAlbumIds)} style={[styles.actionButton, { backgroundColor: colors.primary }]}>
                     <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
                 </Pressable>
             </View>
@@ -198,7 +217,7 @@ export default function PhotosScreen() {
             </View>
 
             <View style={styles.deckContainer}>
-                {visiblePhotos.slice(0, 3).reverse().map((photo, index) => {
+                {visiblePhotos.slice(0, 2).reverse().map((photo, index) => {
                     const realIndex = visiblePhotos.indexOf(photo);
                     return (
                         <PhotoCard
@@ -220,7 +239,7 @@ export default function PhotosScreen() {
             {/* Footer hints - collections disabled for v0.1.1 */}
             <View style={styles.footerHints}>
                 <View style={styles.hintItem}>
-                    <Ionicons name="trash-outline" size={24} color={COLORS.danger} />
+                    <Ionicons name="trash-outline" size={24} color={colors.danger} />
                     <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('hint_swipe_up')}</Text>
                 </View>
                 <View style={styles.hintItem}>
@@ -345,8 +364,8 @@ const styles = StyleSheet.create({
         marginTop: 10
     },
     thumbnail: {
-        width: 60,
-        height: 60,
+        width: 100,
+        height: 100,
         borderRadius: 8
     },
     undoOverlay: {
@@ -357,15 +376,15 @@ const styles = StyleSheet.create({
         borderRadius: 10
     },
     moreCount: {
-        width: 60,
-        height: 60,
+        width: 100,
+        height: 100,
         justifyContent: 'center',
         alignItems: 'center',
         backgroundColor: 'rgba(128,128,128,0.2)',
         borderRadius: 8
     },
     actionButton: {
-        backgroundColor: COLORS.primary,
+        backgroundColor: COLORS.primary, // This needs to be dynamic, will be overridden in render
         paddingHorizontal: 40,
         paddingVertical: 15,
         borderRadius: BORDER_RADIUS.full

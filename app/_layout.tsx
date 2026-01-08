@@ -1,30 +1,42 @@
 import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AnnouncementModal } from '../components/AnnouncementModal';
 import { COLORS } from '../constants/theme';
 import { APP_VERSION, useSettingsStore } from '../stores/useSettingsStore';
 
+// Keep splash screen visible while loading
+SplashScreen.preventAutoHideAsync();
+
 export default function RootLayout() {
   const { dismissedAnnouncementVersion, dismissAnnouncement } = useSettingsStore();
   const [showAnnouncement, setShowAnnouncement] = useState(false);
+  const [appReady, setAppReady] = useState(false);
+
+  // Initialize app
+  useEffect(() => {
+    async function initializeApp() {
+      setAppReady(true);
+      SplashScreen.hideAsync();
+    }
+    initializeApp();
+  }, []);
 
   useEffect(() => {
     // Show announcement if it hasn't been dismissed for this version
-    if (dismissedAnnouncementVersion !== APP_VERSION) {
-      // Small delay to let the app fully load
+    if (dismissedAnnouncementVersion !== APP_VERSION && appReady) {
       const timer = setTimeout(() => {
         setShowAnnouncement(true);
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [dismissedAnnouncementVersion]);
+  }, [dismissedAnnouncementVersion, appReady]);
 
   const handleDismissOnce = () => {
     setShowAnnouncement(false);
-    // Don't save to storage - will show again next time
   };
 
   const handleDismissForVersion = () => {
@@ -59,5 +71,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: COLORS.background,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

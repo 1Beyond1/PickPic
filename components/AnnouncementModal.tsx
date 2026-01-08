@@ -29,7 +29,9 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
                     >
                         {/* Header */}
                         <View style={styles.header}>
-                            <Ionicons name="information-circle" size={48} color={COLORS.primary} />
+                            <View style={styles.iconContainer}>
+                                <Ionicons name="sparkles" size={28} color={COLORS.primary} />
+                            </View>
                             <Text style={styles.title}>{t('announcement_title')}</Text>
                             <Text style={styles.version}>{APP_VERSION}</Text>
                         </View>
@@ -55,9 +57,21 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
 
                             <View style={styles.divider} />
 
+                            <Text style={styles.sectionTitle}>🆕 {t('announcement_update_title' as any)}</Text>
+                            <View style={styles.updateItem}>
+                                <Text style={styles.updateVersion}>v0.2.1</Text>
+                                <Text style={styles.updateText}>{t('update_v030_1' as any)}</Text>
+                                <Text style={styles.updateText}>{t('update_v030_2' as any)}</Text>
+                                <Text style={styles.updateText}>{t('update_v030_3' as any)}</Text>
+                                <Text style={styles.updateText}>{t('update_v030_4' as any)}</Text>
+                                <Text style={styles.updateText}>{t('update_v030_5' as any)}</Text>
+                            </View>
+
+                            <View style={styles.divider} />
+
                             <Text style={styles.sectionTitle}>👨‍💻 {t('announcement_author_title')}</Text>
                             <View style={styles.authorRow}>
-                                <Ionicons name="logo-github" size={24} color="#FFF" />
+                                <Ionicons name="logo-github" size={24} color={COLORS.text} />
                                 <Text style={styles.authorText}>1Beyond1</Text>
                             </View>
                             <Text style={styles.followHint}>{t('github_follow')}</Text>
@@ -90,16 +104,16 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.6)',
+        backgroundColor: 'rgba(27, 20, 14, 0.5)',
     },
     modalBackground: {
         width: SCREEN_WIDTH - 40,
         maxHeight: SCREEN_HEIGHT * 0.75,
-        backgroundColor: '#1E1E1E', // Solid dark background since we can't use BlurView safely without native rebuild
+        backgroundColor: COLORS.background,
         borderRadius: BORDER_RADIUS.xl,
         overflow: 'hidden',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
+        borderColor: COLORS.border,
     },
     scrollView: {
         // flex: 1, // Removed to allow content to determine height (fixed empty modal issue)
@@ -112,10 +126,18 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: SPACING.l,
     },
+    iconContainer: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        backgroundColor: 'rgba(217, 119, 6, 0.1)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
     title: {
         fontSize: 22,
         fontWeight: 'bold',
-        color: '#FFF',
+        color: COLORS.text,
         marginTop: SPACING.m,
     },
     version: {
@@ -130,7 +152,7 @@ const styles = StyleSheet.create({
     sectionTitle: {
         fontSize: 16,
         fontWeight: 'bold',
-        color: '#FFF',
+        color: COLORS.text,
         marginBottom: SPACING.m,
     },
     noticeItem: {
@@ -142,7 +164,7 @@ const styles = StyleSheet.create({
     noticeText: {
         flex: 1,
         fontSize: 14,
-        color: 'rgba(255,255,255,0.8)',
+        color: COLORS.textSecondary,
         lineHeight: 20,
     },
     highlight: {
@@ -151,7 +173,7 @@ const styles = StyleSheet.create({
     },
     divider: {
         height: 1,
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: COLORS.border,
         marginVertical: SPACING.l,
     },
     authorRow: {
@@ -162,19 +184,19 @@ const styles = StyleSheet.create({
     },
     authorText: {
         fontSize: 16,
-        color: '#FFF',
+        color: COLORS.text,
         fontWeight: '600',
     },
     followHint: {
         fontSize: 12,
-        color: 'rgba(255,255,255,0.5)',
+        color: COLORS.textSecondary,
     },
     buttonContainer: {
         flexDirection: 'row',
         gap: 12,
         padding: SPACING.m,
         borderTopWidth: 1,
-        borderTopColor: 'rgba(255,255,255,0.1)',
+        borderTopColor: COLORS.border,
     },
     button: {
         flex: 1,
@@ -183,10 +205,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     secondaryButton: {
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: COLORS.surface,
     },
     secondaryButtonText: {
-        color: 'rgba(255,255,255,0.7)',
+        color: COLORS.textSecondary,
         fontSize: 14,
         fontWeight: '500',
     },
@@ -194,8 +216,24 @@ const styles = StyleSheet.create({
         backgroundColor: COLORS.primary,
     },
     primaryButtonText: {
-        color: '#FFF',
+        color: COLORS.white,
         fontSize: 14,
         fontWeight: '600',
+    },
+    updateItem: {
+        marginBottom: SPACING.m,
+    },
+    updateVersion: {
+        fontSize: 15,
+        fontWeight: 'bold',
+        color: COLORS.primary,
+        marginBottom: 6,
+    },
+    updateText: {
+        fontSize: 13,
+        color: COLORS.textSecondary,
+        marginLeft: 8,
+        marginBottom: 4,
+        lineHeight: 18,
     },
 });

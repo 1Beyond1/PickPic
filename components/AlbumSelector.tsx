@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import React, { useEffect, useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
@@ -12,6 +11,8 @@ interface AlbumSelectorProps {
     onClose: () => void;
     onConfirm: (selectedIds: string[]) => void;
     initialSelection?: string[];
+    maxSelection?: number; // Optional max selection limit
+    titleKey?: string; // Optional custom title key
 }
 
 export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
@@ -19,6 +20,8 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     onClose,
     onConfirm,
     initialSelection = [],
+    maxSelection,
+    titleKey = 'album_selector_title',
 }) => {
     const { albums, loadAlbums } = useMediaStore();
     const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
@@ -35,22 +38,34 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     const toggleSelection = (id: string) => {
         if (selectedIds.includes(id)) {
             setSelectedIds(selectedIds.filter((item) => item !== id));
-        } else {
+        } else if (!maxSelection || selectedIds.length < maxSelection) {
             setSelectedIds([...selectedIds, id]);
         }
+    };
+
+    const handleClearAll = () => {
+        setSelectedIds([]);
     };
 
     return (
         <Modal visible={visible} transparent animationType="slide">
             <View style={styles.modalContainer}>
-                {/* Increased intensity and added backgroundColor for better visibility */}
-                <BlurView intensity={100} tint={isDark ? 'systemThickMaterialDark' : 'systemThickMaterialLight'} style={[styles.blurContainer, { backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : 'rgba(255,255,255,0.9)' }]}>
+                <View style={[styles.contentContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
                     <View style={styles.header}>
-                        <Text style={[styles.title, { color: colors.text }]}>{t('album_select_title')}</Text>
+                        <Text style={[styles.title, { color: colors.text }]}>{t(titleKey as any)}</Text>
                         <Pressable onPress={onClose}>
                             <Ionicons name="close" size={24} color={colors.textSecondary} />
                         </Pressable>
                     </View>
+
+                    {/* Clear selection button */}
+                    {selectedIds.length > 0 && (
+                        <Pressable style={styles.clearButton} onPress={handleClearAll}>
+                            <Text style={[styles.clearButtonText, { color: colors.textSecondary }]}>
+                                {t('album_filter_all' as any)}
+                            </Text>
+                        </Pressable>
+                    )}
 
                     <FlatList
                         data={albums}
@@ -58,22 +73,24 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
                         contentContainerStyle={styles.listContent}
                         renderItem={({ item }) => {
                             const isSelected = selectedIds.includes(item.id);
+                            const isDisabled = !!(maxSelection && selectedIds.length >= maxSelection && !isSelected);
                             return (
                                 <Pressable
                                     style={[
                                         styles.item,
                                         { backgroundColor: colors.surface },
-                                        isSelected && { borderColor: COLORS.primary, borderWidth: 1, backgroundColor: 'rgba(10, 132, 255, 0.15)' },
-                                        selectedIds.length >= 4 && !isSelected && styles.itemDisabled
+                                        isSelected && { borderColor: colors.primary, borderWidth: 1, backgroundColor: 'rgba(151, 115, 78, 0.15)' },
+                                        isDisabled && styles.itemDisabled
                                     ]}
                                     onPress={() => toggleSelection(item.id)}
+                                    disabled={isDisabled ? true : false}
                                 >
                                     <Text style={[styles.itemText, { color: colors.textSecondary }, isSelected && { color: colors.text, fontWeight: '500' }]}>
                                         {item.title}
                                     </Text>
                                     <Text style={[styles.itemCount, { color: colors.textSecondary }]}>{item.assetCount}</Text>
                                     {isSelected && (
-                                        <Ionicons name="checkmark-circle" size={20} color={COLORS.primary} />
+                                        <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
                                     )}
                                 </Pressable>
                             );
@@ -81,12 +98,12 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
                     />
 
                     <Pressable
-                        style={styles.confirmButton}
+                        style={[styles.confirmButton, { backgroundColor: colors.primary }]}
                         onPress={() => onConfirm(selectedIds)}
                     >
                         <Text style={styles.confirmButtonText}>{t('confirm')}</Text>
                     </Pressable>
-                </BlurView>
+                </View>
             </View>
         </Modal>
     );
@@ -97,7 +114,7 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'flex-end',
     },
-    blurContainer: {
+    contentContainer: {
         height: '70%',
         borderTopLeftRadius: BORDER_RADIUS.xl,
         borderTopRightRadius: BORDER_RADIUS.xl,
@@ -114,6 +131,14 @@ const styles = StyleSheet.create({
     title: {
         fontSize: 18,
         fontWeight: '600',
+    },
+    clearButton: {
+        paddingVertical: SPACING.s,
+        paddingHorizontal: SPACING.m,
+        marginBottom: SPACING.s,
+    },
+    clearButtonText: {
+        fontSize: 14,
     },
     listContent: {
         paddingBottom: SPACING.xl,

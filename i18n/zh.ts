@@ -34,6 +34,8 @@ export default {
     settings_change: '修改',
     settings_random: '随机展示内容',
     settings_theme: '主题',
+    theme_WarmTerra: 'Warm Terra',
+    theme_light: '浅色',
     settings_language: '语言',
 
     album_select_title: '选择收藏夹 (最多4个)',
@@ -63,4 +65,30 @@ export default {
     video_muted: '静音',
     video_sound: '有声',
     trash_empty: '空空如也',
+
+    // New keys v0.2.0
+    settings_display_order: '展示顺序',
+    display_order_newest: '最新优先',
+    display_order_oldest: '最旧优先',
+    display_order_random: '随机',
+    settings_album_filter: '整理范围',
+    album_filter_all: '全部相册',
+    album_filter_selected: '已选 {count} 个相册',
+    album_selector_title: '选择要整理的相册',
+    thumbnail_tap_undo: '点击撤销，长按查看',
+    no_delete_this_batch: '本组没有决定要删除的照片',
+    continue_next_batch: '继续下一组',
+
+    // Version history
+    announcement_update_title: '本次更新',
+    update_v030_1: '• 新增相册筛选：可选择仅整理指定相册内的照片',
+    update_v030_2: '• 新增展示顺序：支持最新优先 / 最旧优先 / 随机展示',
+    update_v030_3: '• UI 全新升级：新增 Warm Terra 暖陶主题，支持主题切换',
+    update_v030_4: '• 卡片优化：自适应图片比例，完整展示不裁剪',
+    update_v030_5: '• 安装包优化：仅保留 ARM64 架构，大幅减小包体积',
+
+    // Developer options
+    settings_dev_options: '开发者选项',
+    settings_dev_options_hint: '点击展开/收起',
+
 };

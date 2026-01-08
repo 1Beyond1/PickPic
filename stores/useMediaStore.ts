@@ -1,6 +1,6 @@
-import * as FileSystem from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
+import { DisplayOrder } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
     // Add any custom properties if needed later
@@ -33,8 +33,8 @@ interface MediaState {
     createAlbum: (name: string, asset: PhotoAsset) => Promise<void>;
     addAssetToAlbum: (albumId: string, asset: PhotoAsset) => Promise<void>;
 
-    loadPhotos: (count: number, randomize?: boolean) => Promise<void>;
-    loadVideos: (count: number, randomize?: boolean) => Promise<void>;
+    loadPhotos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[]) => Promise<void>;
+    loadVideos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[]) => Promise<void>;
 
     markForDeletion: (asset: PhotoAsset) => void;
     markForCollection: (asset: PhotoAsset) => void;
@@ -114,21 +114,42 @@ export const useMediaStore = create<MediaState>((set, get) => ({
         }
     },
 
-    loadPhotos: async (count, randomize = false) => {
+    loadPhotos: async (count, displayOrder = 'random', albumIds: string[] = []) => {
         set({ isLoading: true });
         try {
-            const result = await MediaLibrary.getAssetsAsync({
-                mediaType: 'photo',
-                first: 500,
-                sortBy: ['creationTime'],
-            });
-
             const { photoProcessedIds } = get();
-            set({ totalPhotos: result.totalCount });
+            let allAssets: MediaLibrary.Asset[] = [];
 
-            let filtered = result.assets.filter(a => !photoProcessedIds.includes(a.id));
+            // Determine sort order
+            const sortBy: MediaLibrary.SortByValue[] = displayOrder === 'oldest'
+                ? [[MediaLibrary.SortBy.creationTime, true]]
+                : [[MediaLibrary.SortBy.creationTime, false]];
 
-            if (randomize) {
+            if (albumIds.length > 0) {
+                // Load from specific albums
+                for (const albumId of albumIds) {
+                    const result = await MediaLibrary.getAssetsAsync({
+                        mediaType: 'photo',
+                        first: 500,
+                        sortBy,
+                        album: albumId,
+                    });
+                    allAssets.push(...result.assets);
+                }
+            } else {
+                // Load from all albums
+                const result = await MediaLibrary.getAssetsAsync({
+                    mediaType: 'photo',
+                    first: 500,
+                    sortBy,
+                });
+                allAssets = result.assets;
+                set({ totalPhotos: result.totalCount });
+            }
+
+            let filtered = allAssets.filter(a => !photoProcessedIds.includes(a.id));
+
+            if (displayOrder === 'random') {
                 filtered = shuffleArray(filtered);
             }
 
@@ -141,21 +162,39 @@ export const useMediaStore = create<MediaState>((set, get) => ({
         }
     },
 
-    loadVideos: async (count, randomize = false) => {
+    loadVideos: async (count, displayOrder = 'random', albumIds: string[] = []) => {
         set({ isLoading: true });
         try {
-            const result = await MediaLibrary.getAssetsAsync({
-                mediaType: 'video',
-                first: 200,
-                sortBy: ['creationTime'],
-            });
-
             const { videoProcessedIds } = get();
-            set({ totalVideos: result.totalCount });
+            let allAssets: MediaLibrary.Asset[] = [];
 
-            let filtered = result.assets.filter(a => !videoProcessedIds.includes(a.id));
+            const sortBy: MediaLibrary.SortByValue[] = displayOrder === 'oldest'
+                ? [[MediaLibrary.SortBy.creationTime, true]]
+                : [[MediaLibrary.SortBy.creationTime, false]];
 
-            if (randomize) {
+            if (albumIds.length > 0) {
+                for (const albumId of albumIds) {
+                    const result = await MediaLibrary.getAssetsAsync({
+                        mediaType: 'video',
+                        first: 200,
+                        sortBy,
+                        album: albumId,
+                    });
+                    allAssets.push(...result.assets);
+                }
+            } else {
+                const result = await MediaLibrary.getAssetsAsync({
+                    mediaType: 'video',
+                    first: 200,
+                    sortBy,
+                });
+                allAssets = result.assets;
+                set({ totalVideos: result.totalCount });
+            }
+
+            let filtered = allAssets.filter(a => !videoProcessedIds.includes(a.id));
+
+            if (displayOrder === 'random') {
                 filtered = shuffleArray(filtered);
             }
 
@@ -237,41 +276,15 @@ export const useMediaStore = create<MediaState>((set, get) => ({
         const { deleteQueue } = get();
         if (deleteQueue.length === 0) return;
 
-        let successCount = 0;
-        let failCount = 0;
-
-        for (const asset of deleteQueue) {
-            try {
-                const mlResult = await MediaLibrary.deleteAssetsAsync([asset.id]);
-
-                try {
-                    const check = await MediaLibrary.getAssetInfoAsync(asset.id);
-                    if (check) {
-                        const fileUri = check.localUri || check.uri;
-                        if (fileUri && fileUri.startsWith('file://')) {
-                            try {
-                                await FileSystem.deleteAsync(fileUri, { idempotent: true });
-                                const check2 = await MediaLibrary.getAssetInfoAsync(asset.id);
-                                if (!check2) successCount++;
-                                else failCount++;
-                            } catch {
-                                failCount++;
-                            }
-                        } else {
-                            failCount++;
-                        }
-                    } else {
-                        successCount++;
-                    }
-                } catch {
-                    successCount++;
-                }
-            } catch {
-                failCount++;
-            }
+        try {
+            // Batch delete all at once - system will show ONE permission dialog
+            const ids = deleteQueue.map(a => a.id);
+            await MediaLibrary.deleteAssetsAsync(ids);
+            console.log(`Batch deletion: ${ids.length} items deleted`);
+        } catch (e) {
+            console.error("Batch deletion failed", e);
         }
 
-        console.log(`Deletion: ${successCount} success, ${failCount} failed`);
         set({ deleteQueue: [] });
     },
 

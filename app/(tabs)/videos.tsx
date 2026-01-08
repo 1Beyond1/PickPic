@@ -26,7 +26,7 @@ export default function VideosScreen() {
         markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
         addAssetToAlbum
     } = useMediaStore();
-    const { activeCollectionIds, enableRandomDisplay } = useSettingsStore();
+    const { activeCollectionIds, displayOrder, selectedAlbumIds } = useSettingsStore();
 
     const [activeId, setActiveId] = useState<string | null>(null);
     const [isMuted, setIsMuted] = useState(true);
@@ -40,7 +40,7 @@ export default function VideosScreen() {
     const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
 
     useEffect(() => {
-        loadVideos(50, enableRandomDisplay);
+        loadVideos(50, displayOrder, selectedAlbumIds);
     }, []);
 
     useFocusEffect(
@@ -97,7 +97,7 @@ export default function VideosScreen() {
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                 <Text style={[styles.emptyText, { color: colors.text }]}>{t('video_empty')}</Text>
-                <Pressable onPress={() => loadVideos(50, enableRandomDisplay)} style={styles.actionButton}>
+                <Pressable onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)} style={[styles.actionButton, { backgroundColor: colors.primary }]}>
                     <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
                 </Pressable>
             </View>

@@ -2,7 +2,7 @@
   "expo": {
     "name": "PickPic",
     "slug": "PickPic",
-    "version": "0.1.1",
+    "version": "0.2.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon_new.jpg",
     "scheme": "pickpic",
@@ -54,6 +54,16 @@
           "photosPermission": "Allow $(PRODUCT_NAME) to access your photos.",
           "savePhotosPermission": "Allow $(PRODUCT_NAME) to save photos.",
           "isAccessMediaLocationEnabled": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 29,
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
         }
       ]
     ],

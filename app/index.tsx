@@ -5,11 +5,13 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GlassContainer } from '../components/GlassContainer';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
+import { useThemeColor } from '../hooks/useThemeColor';
 
 export default function Index() {
     const router = useRouter();
     const [permissionResponse, requestPermission] = MediaLibrary.usePermissions();
     const [checking, setChecking] = useState(true);
+    const { colors } = useThemeColor();
 
     useEffect(() => {
         checkPermissions();
@@ -42,7 +44,7 @@ export default function Index() {
         return (
             <View style={styles.container}>
                 <StatusBar style="light" />
-                <ActivityIndicator size="large" color={COLORS.primary} />
+                <ActivityIndicator size="large" color={colors.primary} />
             </View>
         );
     }
@@ -50,7 +52,7 @@ export default function Index() {
     return (
         <View style={styles.container}>
             <StatusBar style="light" />
-            <GlassContainer style={styles.card} intensity={40}>
+            <GlassContainer style={styles.card}>
                 <Text style={styles.title}>需访问权限</Text>
                 <Text style={styles.description}>
                     PickPic 需要访问您的照片库以帮助您整理照片和视频。
@@ -58,7 +60,7 @@ export default function Index() {
                 <Pressable
                     style={({ pressed }) => [
                         styles.button,
-                        { opacity: pressed ? 0.8 : 1 },
+                        { opacity: pressed ? 0.8 : 1, backgroundColor: colors.primary },
                     ]}
                     onPress={handleRequestPermission}
                 >
