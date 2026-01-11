@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 // import { BlurView } from 'expo-blur';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Dimensions, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
 import { PhotoCard } from '../../components/PhotoCard';
@@ -117,7 +117,10 @@ export default function PhotosScreen() {
         }
 
         return (
-            <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+            <ScrollView
+                style={{ flex: 1, width: '100%' }}
+                contentContainerStyle={[styles.centerContainer, { backgroundColor: colors.background, flexGrow: 1, paddingVertical: 40 }]}
+            >
                 <Text style={[styles.emptyText, { color: colors.text }]}>{t('photos_finished')}</Text>
 
                 <GlassContainer style={styles.statsContainer}>
@@ -163,7 +166,7 @@ export default function PhotosScreen() {
                 }}>
                     <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('photos_skip')}</Text>
                 </Pressable>
-            </View>
+            </ScrollView>
         )
     };
 

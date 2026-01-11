@@ -2,7 +2,7 @@
   "expo": {
     "name": "PickPic",
     "slug": "PickPic",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon_new.jpg",
     "scheme": "pickpic",

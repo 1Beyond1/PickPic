@@ -2,7 +2,7 @@
 
 > 基于液态玻璃美学的沉浸式相册整理工具，让清理内存变得解压。
 
-![Version](https://img.shields.io/badge/version-0.1.1-blue)
+![Version](https://img.shields.io/badge/version-0.2.2-blue)
 ![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS-green)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-orange)
 
@@ -65,7 +65,7 @@ eas build --platform android --profile preview --local
 
 1. **永久删除风险**：部分机型（如小米）删除的文件会被直接清除，无法恢复！
 2. **云同步限制**：如开启小米云/iCloud，本应用只能删除本机文件，云端会自动恢复。
-3. **测试版本**：目前为 v0.1.1，如遇 Bug 欢迎反馈！
+3. **测试版本**：目前为 v0.2.2，如遇 Bug 欢迎反馈！
 
 ---
 
