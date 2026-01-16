@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 // App version for announcement tracking
-export const APP_VERSION = 'v0.2.1';
+export const APP_VERSION = 'v0.3.1';
 
 export type DisplayOrder = 'newest' | 'oldest' | 'random';
 
@@ -21,7 +21,7 @@ interface SettingsState {
 
     // Developer options
     showDevOptions: boolean;
-
+    enableAIClassification: boolean; // AI image labeling (slower scan)
 
     // Actions
     setGroupSize: (size: 10 | 20 | 30) => void;
@@ -33,6 +33,13 @@ interface SettingsState {
     setSelectedAlbums: (ids: string[]) => void;
     dismissAnnouncement: (version: string) => void;
     toggleDevOptions: () => void;
+    setEnableAIClassification: (enabled: boolean) => void;
+
+    // AI Guide and Prompts
+    aiGuideShownVersion: string | null;
+    aiScanPromptDismissedVersion: string | null;
+    dismissAIGuide: (version: string) => void;
+    dismissAIScanPrompt: (version: string) => void;
 
 }
 
@@ -50,7 +57,7 @@ export const useSettingsStore = create<SettingsState>()(
 
             // Developer options (default off)
             showDevOptions: false,
-
+            enableAIClassification: false, // Default: OFF for faster scanning
 
             setGroupSize: (size) => set({ groupSize: size }),
             toggleCollections: () => set((state) => ({ enableCollections: !state.enableCollections })),
@@ -61,6 +68,13 @@ export const useSettingsStore = create<SettingsState>()(
             setSelectedAlbums: (ids) => set({ selectedAlbumIds: ids }),
             dismissAnnouncement: (version) => set({ dismissedAnnouncementVersion: version }),
             toggleDevOptions: () => set((state) => ({ showDevOptions: !state.showDevOptions })),
+            setEnableAIClassification: (enabled) => set({ enableAIClassification: enabled }),
+
+            // AI Guide and Prompts
+            aiGuideShownVersion: null,
+            aiScanPromptDismissedVersion: null,
+            dismissAIGuide: (version) => set({ aiGuideShownVersion: version }),
+            dismissAIScanPrompt: (version) => set({ aiScanPromptDismissedVersion: version }),
         }),
         {
             name: 'photoapp-settings',

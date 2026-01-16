@@ -59,12 +59,10 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
 
                             <Text style={styles.sectionTitle}>🆕 {t('announcement_update_title' as any)}</Text>
                             <View style={styles.updateItem}>
-                                <Text style={styles.updateVersion}>v0.2.1</Text>
+                                <Text style={styles.updateVersion}>v0.3.1</Text>
                                 <Text style={styles.updateText}>{t('update_v030_1' as any)}</Text>
                                 <Text style={styles.updateText}>{t('update_v030_2' as any)}</Text>
                                 <Text style={styles.updateText}>{t('update_v030_3' as any)}</Text>
-                                <Text style={styles.updateText}>{t('update_v030_4' as any)}</Text>
-                                <Text style={styles.updateText}>{t('update_v030_5' as any)}</Text>
                             </View>
 
                             <View style={styles.divider} />

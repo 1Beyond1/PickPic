@@ -15,8 +15,8 @@ import { useThemeColor } from '../hooks/useThemeColor';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-const TAB_BAR_WIDTH = SCREEN_WIDTH * 0.88;
-const TAB_COUNT = 3;
+const TAB_BAR_WIDTH = SCREEN_WIDTH * 0.92;
+const TAB_COUNT = 4;
 const TAB_WIDTH = TAB_BAR_WIDTH / TAB_COUNT;
 const BAR_HEIGHT = 60;
 const LENS_WIDTH = TAB_WIDTH - 12;
@@ -25,6 +25,7 @@ const LENS_HEIGHT = BAR_HEIGHT - 12;
 const TABS = [
     { name: 'photos', icon: 'images', labelKey: 'tab_photos', path: '/(tabs)/photos' },
     { name: 'videos', icon: 'videocam', labelKey: 'tab_videos', path: '/(tabs)/videos' },
+    { name: 'scanResults', icon: 'analytics', labelKey: 'tab_scan_results', path: '/(tabs)/scanResults' },
     { name: 'settings', icon: 'settings-sharp', labelKey: 'tab_settings', path: '/(tabs)/settings' },
 ];
 

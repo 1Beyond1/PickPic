@@ -1,0 +1,3 @@
+# PLACEHOLDER - Replace with actual labels.txt file
+# Download from: https://storage.googleapis.com/download.tensorflow.org/models/tflite/mobilenet_v1_1.0_224_quant_and_labels.zip
+# Extract labels.txt from the zip file

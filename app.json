@@ -2,12 +2,16 @@
   "expo": {
     "name": "PickPic",
     "slug": "PickPic",
-    "version": "0.2.2",
+    "version": "0.3.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon_new.jpg",
     "scheme": "pickpic",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "assetBundlePatterns": [
+      "**/*",
+      "assets/ml/**/*"
+    ],
     "ios": {
       "supportsTablet": true
     },
@@ -65,7 +69,8 @@
             "enableShrinkResourcesInReleaseBuilds": true
           }
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,

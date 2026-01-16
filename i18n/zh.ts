@@ -1,6 +1,7 @@
 export default {
     tab_photos: '图片',
     tab_videos: '视频',
+    tab_scan_results: 'AI扫描',
     tab_settings: '设置',
 
     permission_title: '需访问权限',
@@ -47,8 +48,8 @@ export default {
     // New keys v0.1.1
     settings_progress_photos: '已整理: {processed} 张 / 共 {total} 张',
     settings_progress_videos: '已整理: {processed} 个 / 共 {total} 个',
-    settings_reset_photos: '重置图片进度',
-    settings_reset_videos: '重置视频进度',
+    settings_reset_photos: '重置图片整理进度',
+    settings_reset_videos: '重置视频整理进度',
     settings_reset_confirm: '确认重置?',
     settings_reset_desc: '这将清除当前进度的记录。',
     random_display_hint: '对图片和视频都生效',
@@ -81,14 +82,63 @@ export default {
 
     // Version history
     announcement_update_title: '本次更新',
-    update_v030_1: '• 新增相册筛选：可选择仅整理指定相册内的照片',
-    update_v030_2: '• 新增展示顺序：支持最新优先 / 最旧优先 / 随机展示',
-    update_v030_3: '• UI 全新升级：新增 Warm Terra 暖陶主题，支持主题切换',
-    update_v030_4: '• 卡片优化：自适应图片比例，完整展示不裁剪',
-    update_v030_5: '• 安装包优化：仅保留 ARM64 架构，大幅减小包体积',
+    update_v030_1: '🔍 新增 AI 扫描引擎：自动识别模糊照片、重复照片，开发者选项可开启智能分类（Beta，完全本地化，无隐私泄露）',
+    update_v030_2: '🎨 统一弹窗 UI 风格：全新视觉体验，操作更流畅',
+    update_v030_3: '⚡ 软件性能优化：启动更快，扫描更流畅',
 
     // Developer options
     settings_dev_options: '开发者选项',
     settings_dev_options_hint: '点击展开/收起',
+    settings_enable_ai_classification: '启用 AI 图片分类',
+    settings_enable_ai_classification_hint: '开启后扫描时进行智能分类（较慢）',
+
+    // AI Scanner labels
+    ai_scanner_failed: '失败',
+    ai_scanner_error: '错误',
+    scan_batch: '扫描一批',
+    scan_batch_by_album: '按相册扫描',
+    scan_batch_by_count: '按数量扫描',
+    scan_batch_count_label: '{count} 张',
+    scan_batch_start: '开始扫描',
+
+    // Similar photos
+    similar_group_processed: '已整理',
+    similar_group_detail_title: '相似照片组',
+    similar_select_hint: '长按选中，单击查看详情',
+    similar_delete_selected: '删除选中',
+
+    // Scan Results tabs
+    scan_tab_blur: '模糊',
+    scan_tab_similar: '相似',
+    scan_tab_ai: '智能分类',
+
+    // AI Categories
+    ai_category_people: '人物',
+    ai_category_people_single: '单人照',
+    ai_category_people_group: '多人合影',
+    ai_category_cat: '猫',
+    ai_category_dog: '狗',
+    ai_category_bird: '鸟',
+    ai_category_screenshot: '截图 & 文档',
+    ai_category_other: '其他',
+
+    // AI Scan Guide Modal
+    ai_guide_title: '新功能：AI 扫描引擎',
+    ai_guide_message: 'v0.3.1 新增 AI 扫描引擎,可自动分析模糊和重复照片。是否现在开始后台静默扫描?',
+    ai_guide_privacy: '🔒 完全本地化，无需联网，隐私安全',
+    ai_guide_start: '立即开始',
+    ai_guide_dismiss: '此版本不再提示',
+    ai_guide_classification_hint: '💡 提示：您可以在“设置 -> 开发者选项”中开启更强大的【AI 智能识图分类】功能。',
+
+    // AI Scan Empty Prompt
+    ai_scan_empty_title: '尚未进行扫描',
+    ai_scan_empty_message: '请前往"设置"页面开始 AI 扫描，以查看分类结果。',
+    ai_scan_empty_close: '关闭',
+    ai_scan_empty_dismiss_version: '此版本不再提示',
+
+    ai_classification_warning_title: '开启 AI 智能分类',
+    ai_classification_warning_message: '开启此功能后，扫描速度会变慢。\n\n注意：如需对已有照片应用分类，请手动点击"重置扫描进度"并重新扫描。',
+    ai_classification_warning_confirm: '开启',
+    ai_classification_warning_cancel: '取消',
 
 };

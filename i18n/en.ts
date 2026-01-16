@@ -1,6 +1,7 @@
 export default {
     tab_photos: 'Photos',
     tab_videos: 'Videos',
+    tab_scan_results: 'AI Scan',
     tab_settings: 'Settings',
 
     permission_title: 'Access Required',
@@ -47,8 +48,8 @@ export default {
     // New keys v0.1.1
     settings_progress_photos: 'Photos Organized: {processed} / {total}',
     settings_progress_videos: 'Videos Organized: {processed} / {total}',
-    settings_reset_photos: 'Reset Photo Progress',
-    settings_reset_videos: 'Reset Video Progress',
+    settings_reset_photos: 'Reset Photo Review Progress',
+    settings_reset_videos: 'Reset Video Review Progress',
     settings_reset_confirm: 'Confirm Reset?',
     settings_reset_desc: 'This will reset your progress tracking.',
     random_display_hint: 'Applies to both photos and videos',
@@ -81,14 +82,63 @@ export default {
 
     // Version history
     announcement_update_title: "What's New",
-    update_v030_1: '• Album Filter: Choose specific albums to organize',
-    update_v030_2: '• Display Order: Newest / Oldest / Random options',
-    update_v030_3: '• UI Refresh: New Warm Terra theme with theme switching',
-    update_v030_4: '• Card Optimization: Auto-fit image ratio, no cropping',
-    update_v030_5: '• APK Optimization: ARM64-only build for reduced file size',
+    update_v030_1: '🔍 AI Scanning Engine: Auto-detect blurry & duplicate photos, with smart classification in Dev Options (Beta, fully offline, privacy-safe)',
+    update_v030_2: '🎨 Unified Dialog UI: Refreshed visual experience with smoother interactions',
+    update_v030_3: '⚡ Performance Boost: Faster startup and smoother scanning',
 
     // Developer options
     settings_dev_options: 'Developer Options',
     settings_dev_options_hint: 'Tap to expand/collapse',
+    settings_enable_ai_classification: 'Enable AI Classification',
+    settings_enable_ai_classification_hint: 'Classify images during scan (slower)',
+
+    // AI Scanner labels
+    ai_scanner_failed: 'Failed',
+    ai_scanner_error: 'Error',
+    scan_batch: 'Scan Batch',
+    scan_batch_by_album: 'By Album',
+    scan_batch_by_count: 'By Count',
+    scan_batch_count_label: '{count} photos',
+    scan_batch_start: 'Start Scan',
+
+    // Similar photos
+    similar_group_processed: 'Processed',
+    similar_group_detail_title: 'Similar Photos',
+    similar_select_hint: 'Long press to select, tap to preview',
+    similar_delete_selected: 'Delete Selected',
+
+    // Scan Results tabs
+    scan_tab_blur: 'Blurry',
+    scan_tab_similar: 'Similar',
+    scan_tab_ai: 'AI Categories',
+
+    // AI Categories
+    ai_category_people: 'People',
+    ai_category_people_single: 'Single Person',
+    ai_category_people_group: 'Group Photo',
+    ai_category_cat: 'Cat',
+    ai_category_dog: 'Dog',
+    ai_category_bird: 'Bird',
+    ai_category_screenshot: 'Screenshots & Docs',
+    ai_category_other: 'Other',
+
+    // AI Scan Guide Modal
+    ai_guide_title: 'New Feature: AI Scanning Engine',
+    ai_guide_message: 'v0.3.1 introduces AI Scanning Engine to automatically analyze blurry and duplicate photos. Start background scan now?',
+    ai_guide_privacy: '🔒 Fully offline, no internet required, privacy-safe',
+    ai_guide_start: 'Start Now',
+    ai_guide_dismiss: 'Don\'t Show for This Version',
+
+    // AI Scan Empty Prompt
+    ai_guide_classification_hint: '💡 Tip: You can enable powerful "AI Smart Classification" in "Settings -> Developer Options".',
+    ai_scan_empty_title: 'No Scan Results',
+    ai_scan_empty_message: 'Please go to Settings to start AI scanning to view classification results.',
+    ai_scan_empty_close: 'Close',
+    ai_scan_empty_dismiss_version: 'Don\'t Show for This Version',
+
+    ai_classification_warning_title: 'Enable AI Classification',
+    ai_classification_warning_message: 'Scan speed will be slower when enabled.\n\nNote: To apply this to existing photos, you must manually reset "Reset Scan Progress" and restart scan.',
+    ai_classification_warning_confirm: 'Enable',
+    ai_classification_warning_cancel: 'Cancel',
 
 };

@@ -16,6 +16,7 @@ export default function TabLayout() {
       >
         <Tabs.Screen name="photos" />
         <Tabs.Screen name="videos" />
+        <Tabs.Screen name="scanResults" />
         <Tabs.Screen name="settings" />
       </Tabs>
 

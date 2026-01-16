@@ -48,6 +48,8 @@ interface MediaState {
     confirmDeletion: () => Promise<void>;
     confirmVideoTrash: () => Promise<void>;
 
+    refreshTotalCounts: () => Promise<void>;
+
     resetBatch: () => void;
     resetPhotoProgress: () => void;
     resetVideoProgress: () => void;
@@ -296,6 +298,26 @@ export const useMediaStore = create<MediaState>((set, get) => ({
             set({ videoTrashBin: [] });
         } catch (e) {
             console.error("Video deletion failed", e);
+        }
+    },
+
+    refreshTotalCounts: async () => {
+        try {
+            const photoResult = await MediaLibrary.getAssetsAsync({
+                mediaType: 'photo',
+                first: 1,
+            });
+            const videoResult = await MediaLibrary.getAssetsAsync({
+                mediaType: 'video',
+                first: 1,
+            });
+            set({
+                totalPhotos: photoResult.totalCount,
+                totalVideos: videoResult.totalCount,
+            });
+            console.log(`[MediaStore] Refreshed counts: ${photoResult.totalCount} photos, ${videoResult.totalCount} videos`);
+        } catch (e) {
+            console.error("Failed to refresh total counts", e);
         }
     }
 }));
