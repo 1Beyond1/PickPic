@@ -4,7 +4,7 @@
 
 ![Version](https://img.shields.io/badge/version-0.3.1-blue)
 ![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS-green)
-![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-orange)
+![License](https://img.shields.io/badge/license-MIT-yellow)
 
 ---
 
@@ -119,7 +119,7 @@ eas build --platform android --profile preview --local
 
 ## 📝 许可协议
 
-本项目基于 [CC BY-NC 4.0](LICENSE) 许可，仅限非商业用途。
+本项目基于 [MIT](LICENSE) 许可证开源。
 
 ---
 
