@@ -8,16 +8,36 @@
 
 ---
 
+## 📱 应用截图
+
+<p align="center">
+  <a href="assets/screenshots/photo-organizer.jpg">
+    <img src="assets/screenshots/photo-organizer.jpg" alt="卡片式照片整理界面" width="42%" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="assets/screenshots/ai-scan-settings.jpg">
+    <img src="assets/screenshots/ai-scan-settings.jpg" alt="AI 扫描与整理进度设置界面" width="42%" />
+  </a>
+</p>
+
+<p align="center">
+  <sub>卡片式照片整理 &nbsp;·&nbsp; AI 扫描与整理进度</sub>
+</p>
+
+---
+
 ## ✨ 功能亮点
 
 ### 📷 卡片式照片整理
 像刷探探一样整理相册！
+
 - ⬆️ **上滑删除** - 不想要的照片一划即走
 - ⬇️ **下滑保留** - 珍贵回忆安全跳过
 - 批量确认，避免误删
 
 ### 🎬 抖音风格视频浏览
 全屏沉浸式刷自己的视频库
+
 - 一键删除 / 收藏 / 分享
 - 废纸篓二次确认机制
 - 长按进入全屏模式
