@@ -63,51 +63,92 @@ interface MediaState {
 type MediaType = 'photo' | 'video';
 
 /**
- * Load every page for a media query. The old implementation only requested
- * the first page, which silently hid assets in larger libraries.
+ * Load enough pages to fill the current review batch. Random mode uses
+ * reservoir sampling so it does not need to retain the whole media library
+ * in memory.
  */
-async function loadAllAssets(
+async function loadAssetsForReview(
     mediaType: MediaType,
     sortBy: MediaLibrary.SortByValue[],
-    albumId?: string
-): Promise<MediaLibrary.Asset[]> {
-    const assets: MediaLibrary.Asset[] = [];
-    let after: string | undefined;
+    count: number,
+    displayOrder: DisplayOrder,
+    processedIds: readonly string[],
+    albumIds: readonly string[]
+): Promise<{ assets: MediaLibrary.Asset[]; totalCount: number | null }> {
+    if (count <= 0) {
+        return { assets: [], totalCount: 0 };
+    }
 
-    while (true) {
-        const result = await MediaLibrary.getAssetsAsync({
-            mediaType,
-            first: 100,
-            sortBy,
-            ...(albumId ? { album: albumId } : {}),
-            ...(after ? { after } : {}),
-        });
+    const processed = new Set(processedIds);
+    const seenAssetIds = albumIds.length > 0 ? new Set<string>() : null;
+    const selected: MediaLibrary.Asset[] = [];
+    let eligibleCount = 0;
+    let totalCount: number | null = null;
 
-        assets.push(...result.assets);
+    const queryAlbums: Array<string | undefined> = albumIds.length > 0
+        ? Array.from(new Set(albumIds))
+        : [undefined];
 
-        if (!result.hasNextPage || !result.endCursor || result.endCursor === after) {
-            break;
+    for (const albumId of queryAlbums) {
+        let after: string | undefined;
+
+        while (true) {
+            const result = await MediaLibrary.getAssetsAsync({
+                mediaType,
+                first: 100,
+                sortBy,
+                ...(albumId ? { album: albumId } : {}),
+                ...(after ? { after } : {}),
+            });
+
+            if (totalCount === null && albumIds.length === 0) {
+                totalCount = result.totalCount;
+            }
+
+            for (const asset of result.assets) {
+                if (seenAssetIds?.has(asset.id)) continue;
+                seenAssetIds?.add(asset.id);
+                if (processed.has(asset.id)) continue;
+
+                if (displayOrder === 'random') {
+                    eligibleCount++;
+                    if (selected.length < count) {
+                        selected.push(asset);
+                    } else {
+                        const replacementIndex = Math.floor(Math.random() * eligibleCount);
+                        if (replacementIndex < count) {
+                            selected[replacementIndex] = asset;
+                        }
+                    }
+                } else if (selected.length < count) {
+                    selected.push(asset);
+                }
+            }
+
+            // Ordered queries can stop as soon as this batch is full. Random
+            // queries must inspect every page to sample uniformly.
+            if (displayOrder !== 'random' && selected.length >= count) {
+                break;
+            }
+
+            const nextCursor = result.endCursor;
+            if (!result.hasNextPage || !nextCursor || nextCursor === after) {
+                break;
+            }
+            after = nextCursor;
         }
 
-        after = result.endCursor;
+        if (displayOrder !== 'random' && selected.length >= count) {
+            break;
+        }
     }
 
-    return assets;
+    return { assets: selected.slice(0, count), totalCount };
 }
 
-function deduplicateAssets(assets: MediaLibrary.Asset[]): MediaLibrary.Asset[] {
-    return Array.from(new Map(assets.map(asset => [asset.id, asset])).values());
-}
-
-// Fisher-Yates shuffle algorithm
-function shuffleArray<T>(array: T[]): T[] {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-}
+let activeMediaLoads = 0;
+let photoLoadRequestId = 0;
+let videoLoadRequestId = 0;
 
 export const useMediaStore = create<MediaState>()(
     persist(
@@ -163,80 +204,75 @@ export const useMediaStore = create<MediaState>()(
     },
 
     loadPhotos: async (count, displayOrder = 'random', albumIds: string[] = []) => {
+        const requestId = ++photoLoadRequestId;
+        activeMediaLoads++;
         set({ isLoading: true });
         try {
             const { photoProcessedIds } = get();
-            let allAssets: MediaLibrary.Asset[] = [];
 
             // Determine sort order
             const sortBy: MediaLibrary.SortByValue[] = displayOrder === 'oldest'
                 ? [[MediaLibrary.SortBy.creationTime, true]]
                 : [[MediaLibrary.SortBy.creationTime, false]];
 
-            if (albumIds.length > 0) {
-                // Load from specific albums
-                for (const albumId of albumIds) {
-                    allAssets.push(...await loadAllAssets('photo', sortBy, albumId));
-                }
-            } else {
-                // Load from all albums
-                allAssets = await loadAllAssets('photo', sortBy);
+            const result = await loadAssetsForReview(
+                'photo',
+                sortBy,
+                count,
+                displayOrder,
+                photoProcessedIds,
+                albumIds
+            );
+
+            // A newer request owns the visible list. Older requests may
+            // finish later after a fast settings change.
+            if (requestId !== photoLoadRequestId) return;
+
+            if (albumIds.length === 0 && result.totalCount !== null) {
+                set({ totalPhotos: result.totalCount });
             }
 
-            allAssets = deduplicateAssets(allAssets);
-            if (albumIds.length === 0) {
-                set({ totalPhotos: allAssets.length });
-            }
-
-            let filtered = allAssets.filter(a => !photoProcessedIds.includes(a.id));
-
-            if (displayOrder === 'random') {
-                filtered = shuffleArray(filtered);
-            }
-
-            const newPhotos = filtered.slice(0, count);
-            set({ photos: newPhotos, currentIndex: 0, deleteQueue: [], collectionQueue: [] });
+            set({ photos: result.assets, currentIndex: 0 });
         } catch (error) {
             console.error("Failed to load photos", error);
         } finally {
-            set({ isLoading: false });
+            activeMediaLoads--;
+            if (activeMediaLoads === 0) set({ isLoading: false });
         }
     },
 
     loadVideos: async (count, displayOrder = 'random', albumIds: string[] = []) => {
+        const requestId = ++videoLoadRequestId;
+        activeMediaLoads++;
         set({ isLoading: true });
         try {
             const { videoProcessedIds } = get();
-            let allAssets: MediaLibrary.Asset[] = [];
 
             const sortBy: MediaLibrary.SortByValue[] = displayOrder === 'oldest'
                 ? [[MediaLibrary.SortBy.creationTime, true]]
                 : [[MediaLibrary.SortBy.creationTime, false]];
 
-            if (albumIds.length > 0) {
-                for (const albumId of albumIds) {
-                    allAssets.push(...await loadAllAssets('video', sortBy, albumId));
-                }
-            } else {
-                allAssets = await loadAllAssets('video', sortBy);
+            const result = await loadAssetsForReview(
+                'video',
+                sortBy,
+                count,
+                displayOrder,
+                videoProcessedIds,
+                albumIds
+            );
+
+            if (requestId !== videoLoadRequestId) return;
+
+            if (albumIds.length === 0 && result.totalCount !== null) {
+                set({ totalVideos: result.totalCount });
             }
 
-            allAssets = deduplicateAssets(allAssets);
-            if (albumIds.length === 0) {
-                set({ totalVideos: allAssets.length });
-            }
-
-            let filtered = allAssets.filter(a => !videoProcessedIds.includes(a.id));
-
-            if (displayOrder === 'random') {
-                filtered = shuffleArray(filtered);
-            }
-
-            set({ videos: filtered.slice(0, count) });
+            set({ videos: result.assets });
         } catch (error) {
             console.error("Failed to load videos", error);
         } finally {
-            set({ isLoading: false });
+            activeMediaLoads--;
+            if (activeMediaLoads === 0) set({ isLoading: false });
         }
     },
 

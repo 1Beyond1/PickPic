@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 // import { BlurView } from 'expo-blur';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -32,11 +32,11 @@ export default function PhotosScreen() {
     const [newAlbumName, setNewAlbumName] = useState('');
     const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
 
-    useEffect(() => {
+    useFocusEffect(useCallback(() => {
         if (!hasHydrated) return;
-        loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-        loadAlbums();
-    }, [groupSize, displayOrder, selectedAlbumIds, hasHydrated, loadPhotos, loadAlbums]);
+        void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+        void loadAlbums();
+    }, [groupSize, displayOrder, selectedAlbumIds, hasHydrated, loadPhotos, loadAlbums]));
 
     const visiblePhotos = photos.filter(p => !removedIds.includes(p.id));
 

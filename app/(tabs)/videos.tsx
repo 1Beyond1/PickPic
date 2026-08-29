@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Alert, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
@@ -39,10 +39,10 @@ export default function VideosScreen() {
     // Dynamic height state
     const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
 
-    useEffect(() => {
+    useFocusEffect(useCallback(() => {
         if (!hasHydrated) return;
-        loadVideos(50, displayOrder, selectedAlbumIds);
-    }, [displayOrder, selectedAlbumIds, hasHydrated, loadVideos]);
+        void loadVideos(50, displayOrder, selectedAlbumIds);
+    }, [displayOrder, selectedAlbumIds, hasHydrated, loadVideos]));
 
     useFocusEffect(
         useCallback(() => {
