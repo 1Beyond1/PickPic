@@ -52,7 +52,7 @@ export const LiquidFloatingTabBar = () => {
 
     const navigateTo = (index: number) => {
         if (index !== safeIndex) {
-            router.push(TABS[index].path as any);
+            router.navigate(TABS[index].path as any);
         }
     };
 
@@ -92,47 +92,47 @@ export const LiquidFloatingTabBar = () => {
     return (
         <View style={styles.container}>
             {/* Background Pill - Warm Terra clean white/dark */}
-            <View style={[styles.backgroundPill, {
-                backgroundColor: bgColor,
-                borderColor: borderColor,
-            }]}>
-                <View style={styles.tabRow}>
-                    {TABS.map((tab, index) => {
-                        const isActive = index === safeIndex;
-                        return (
-                            <Pressable
-                                key={tab.name}
-                                style={styles.tabItem}
-                                onPress={() => navigateTo(index)}
-                                hitSlop={10}
-                            >
-                                <Ionicons
-                                    name={tab.icon as any}
-                                    size={22}
-                                    color={isActive ? activeColor : inactiveColor}
-                                />
-                                <Text style={[
-                                    styles.label,
-                                    {
-                                        color: isActive ? activeColor : inactiveColor,
-                                        fontWeight: '500',
-                                    }
-                                ]}>
-                                    {t(tab.labelKey as any)}
-                                </Text>
-                            </Pressable>
-                        )
-                    })}
+            <GestureDetector gesture={panGesture}>
+                <View style={[styles.backgroundPill, {
+                    backgroundColor: bgColor,
+                    borderColor: borderColor,
+                }]}>
+                    <View style={styles.tabRow}>
+                        {TABS.map((tab, index) => {
+                            const isActive = index === safeIndex;
+                            return (
+                                <Pressable
+                                    key={tab.name}
+                                    style={styles.tabItem}
+                                    onPress={() => navigateTo(index)}
+                                    hitSlop={10}
+                                >
+                                    <Ionicons
+                                        name={tab.icon as any}
+                                        size={22}
+                                        color={isActive ? activeColor : inactiveColor}
+                                    />
+                                    <Text style={[
+                                        styles.label,
+                                        {
+                                            color: isActive ? activeColor : inactiveColor,
+                                            fontWeight: '500',
+                                        }
+                                    ]}>
+                                        {t(tab.labelKey as any)}
+                                    </Text>
+                                </Pressable>
+                            )
+                        })}
+                    </View>
                 </View>
-            </View>
+            </GestureDetector>
 
             {/* Selection Lens - uses theme accent color */}
-            <GestureDetector gesture={panGesture}>
-                <Animated.View style={[styles.lens, lensStyle, {
-                    backgroundColor: `${activeColor}15`,
-                    borderColor: activeColor,
-                }]} />
-            </GestureDetector>
+            <Animated.View pointerEvents="none" style={[styles.lens, lensStyle, {
+                backgroundColor: `${activeColor}15`,
+                borderColor: activeColor,
+            }]} />
         </View>
     );
 };
