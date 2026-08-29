@@ -54,7 +54,7 @@ export default function ScanResultsScreen() {
     const [processedGroupIds, setProcessedGroupIds] = useState<Set<string>>(new Set());
 
     // AI Categories Hook
-    const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, refresh: refreshAI } = useAICategories();
+    const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, refresh: refreshAI } = useAICategories(enableAIClassification);
 
     const loadResults = useCallback(async () => {
         // ... (existing loadResults code) ...
@@ -247,25 +247,31 @@ export default function ScanResultsScreen() {
     const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
     // Render AI Category Card
-    const renderCategoryCard = ({ item }: { item: CategoryGroup }) => (
-        <Pressable
-            style={styles.categoryCard}
-            disabled={item.assets.length === 0}
-            onPress={() => {
-                if (item.assets.length > 0) {
-                    setSelectedCategory(item);
-                }
-            }}
-        >
-            <CategoryThumbnail assetId={item.coverAsset?.asset_id} />
-            <View style={styles.categoryInfoOverlay}>
-                <Text style={styles.categoryTitle} numberOfLines={1}>
-                    {t(('ai_category_' + item.title) as any) || item.title}
-                </Text>
-                <Text style={styles.categoryCount}>{item.count}</Text>
-            </View>
-        </Pressable>
-    );
+    const renderCategoryCard = ({ item }: { item: CategoryGroup }) => {
+        const categoryTitleKey = `ai_category_${item.title}`;
+        const translatedTitle = t(categoryTitleKey as any);
+        const categoryTitle = translatedTitle === categoryTitleKey ? item.title : translatedTitle;
+
+        return (
+            <Pressable
+                style={styles.categoryCard}
+                disabled={item.assets.length === 0}
+                onPress={() => {
+                    if (item.assets.length > 0) {
+                        setSelectedCategory(item);
+                    }
+                }}
+            >
+                <CategoryThumbnail assetId={item.coverAsset?.asset_id} />
+                <View style={styles.categoryInfoOverlay}>
+                    <Text style={styles.categoryTitle} numberOfLines={1}>
+                        {categoryTitle}
+                    </Text>
+                    <Text style={styles.categoryCount}>{item.count}</Text>
+                </View>
+            </Pressable>
+        );
+    };
 
     return (
         <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>

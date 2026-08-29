@@ -21,7 +21,7 @@ export interface AICategoriesState {
     refresh: () => Promise<void>;
 }
 
-export function useAICategories(): AICategoriesState {
+export function useAICategories(enabled = true): AICategoriesState {
     const { language } = useI18n();
     const [peopleGroups, setPeopleGroups] = useState<CategoryGroup[]>([]);
     const [objectGroups, setObjectGroups] = useState<CategoryGroup[]>([]);
@@ -263,8 +263,16 @@ export function useAICategories(): AICategoriesState {
     }, [language]);
 
     useEffect(() => {
-        loadCategories();
-    }, [language, loadCategories]);
+        if (!enabled) {
+            setPeopleGroups([]);
+            setObjectGroups([]);
+            setUncategorizedGroup(null);
+            setIsLoading(false);
+            return;
+        }
+
+        void loadCategories();
+    }, [enabled, loadCategories]);
 
     return {
         peopleGroups,
