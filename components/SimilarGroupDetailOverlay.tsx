@@ -23,6 +23,7 @@ import Animated, {
     withTiming
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AssetRepository } from '../database';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 
@@ -161,7 +162,15 @@ export function SimilarGroupDetailOverlay({
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await MediaLibrary.deleteAssetsAsync(Array.from(selectedIds));
+                            const assetIds = Array.from(selectedIds);
+                            await MediaLibrary.deleteAssetsAsync(assetIds);
+                            for (const assetId of assetIds) {
+                                try {
+                                    await AssetRepository.removeAssetAndDerivedData(assetId);
+                                } catch (cleanupError) {
+                                    console.error('[SimilarGroupDetailOverlay] Index cleanup failed:', cleanupError);
+                                }
+                            }
                             setPhotos(prev => prev.filter(p => !selectedIds.has(p.assetId)));
                             setSelectedIds(new Set());
 
@@ -186,6 +195,11 @@ export function SimilarGroupDetailOverlay({
         if (!previewPhoto) return;
         try {
             await MediaLibrary.deleteAssetsAsync([previewPhoto.assetId]);
+            try {
+                await AssetRepository.removeAssetAndDerivedData(previewPhoto.assetId);
+            } catch (cleanupError) {
+                console.error('[SimilarGroupDetailOverlay] Index cleanup failed:', cleanupError);
+            }
             setPhotos(prev => prev.filter(p => p.assetId !== previewPhoto.assetId));
             setPreviewPhoto(null);
 

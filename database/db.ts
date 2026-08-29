@@ -9,6 +9,7 @@ import { DB_NAME } from './schema';
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 let initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+let transactionQueue: Promise<void> = Promise.resolve();
 
 /**
  * Get or initialize the database instance
@@ -61,18 +62,25 @@ export async function closeDatabase(): Promise<void> {
 /**
  * Execute a transaction with automatic rollback on error
  */
-export async function withTransaction<T>(
+export function withTransaction<T>(
     fn: (db: SQLite.SQLiteDatabase) => Promise<T>
 ): Promise<T> {
-    const db = await getDatabase();
+    const operation = transactionQueue.then(async () => {
+        const db = await getDatabase();
 
-    await db.execAsync('BEGIN TRANSACTION;');
-    try {
-        const result = await fn(db);
-        await db.execAsync('COMMIT;');
-        return result;
-    } catch (error) {
-        await db.execAsync('ROLLBACK;');
-        throw error;
-    }
+        await db.execAsync('BEGIN TRANSACTION;');
+        try {
+            const result = await fn(db);
+            await db.execAsync('COMMIT;');
+            return result;
+        } catch (error) {
+            await db.execAsync('ROLLBACK;');
+            throw error;
+        }
+    });
+
+    // Keep the queue usable after a failed transaction while preserving the
+    // original error for the caller of this operation.
+    transactionQueue = operation.then(() => undefined, () => undefined);
+    return operation;
 }

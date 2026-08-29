@@ -13,7 +13,7 @@ import { GlassContainer } from '../../components/GlassContainer';
 import { SimilarGroupCard } from '../../components/SimilarGroupCard';
 import { SimilarGroupDetailOverlay } from '../../components/SimilarGroupDetailOverlay';
 import { SPACING } from '../../constants/theme';
-import { DupGroupRepository } from '../../database';
+import { AssetRepository, DupGroupRepository } from '../../database';
 import { CategoryGroup, useAICategories } from '../../hooks/useAICategories';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
@@ -56,20 +56,7 @@ export default function ScanResultsScreen() {
     // AI Categories Hook
     const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, refresh: refreshAI } = useAICategories();
 
-    useFocusEffect(
-        useCallback(() => {
-            loadResults();
-        }, [])
-    );
-
-    // Refresh AI categories when tab changes to 'ai'
-    useEffect(() => {
-        if (activeTab === 'ai') {
-            refreshAI();
-        }
-    }, [activeTab, refreshAI]);
-
-    const loadResults = async () => {
+    const loadResults = useCallback(async () => {
         // ... (existing loadResults code) ...
         setLoading(true);
         try {
@@ -106,33 +93,59 @@ export default function ScanResultsScreen() {
             const groupsWithCount = await Promise.all(
                 groups.map(async (group) => {
                     const members = await DupGroupRepository.getGroupMembers(group.group_id);
-                    let representativeUri: string | undefined;
-                    try {
-                        const assetId = group.representative_asset_id || members[0]?.asset_id;
-                        if (assetId) {
-                            const info = await MediaLibrary.getAssetInfoAsync(assetId);
-                            representativeUri = info.localUri || info.uri;
-                        }
-                    } catch {
-                        // Ignore
-                    }
+                    const availableMembers = (await Promise.all(
+                        members.map(async member => {
+                            try {
+                                const info = await MediaLibrary.getAssetInfoAsync(member.asset_id);
+                                const uri = info.localUri || info.uri;
+                                return uri ? { member, uri } : null;
+                            } catch {
+                                return null;
+                            }
+                        })
+                    )).filter((member): member is { member: typeof members[number]; uri: string } => member !== null);
+
+                    // A group with a deleted/inaccessible member should not
+                    // remain actionable in the results screen.
+                    if (availableMembers.length < 2) return null;
+
+                    const representative = availableMembers.find(
+                        item => item.member.asset_id === group.representative_asset_id
+                    ) ?? availableMembers[0];
+                    const bestAssetId = availableMembers.some(
+                        item => item.member.asset_id === group.best_asset_id
+                    )
+                        ? group.best_asset_id
+                        : availableMembers[0].member.asset_id;
+
                     return {
                         groupId: group.group_id,
-                        memberCount: members.length,
-                        memberAssetIds: members.map(m => m.asset_id),
-                        bestAssetId: group.best_asset_id,
-                        representativeUri,
+                        memberCount: availableMembers.length,
+                        memberAssetIds: availableMembers.map(item => item.member.asset_id),
+                        bestAssetId,
+                        representativeUri: representative.uri,
                     };
                 })
             );
 
-            setSimilarGroups(groupsWithCount.filter(g => g.memberCount > 1));
+            setSimilarGroups(groupsWithCount.filter((group): group is NonNullable<typeof group> => (
+                group !== null && group.memberCount > 1
+            )));
         } catch (error) {
             console.error('[ScanResults] Load error:', error);
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
+
+    useFocusEffect(
+        useCallback(() => {
+            void loadResults();
+            if (activeTab === 'ai' && enableAIClassification) {
+                void refreshAI();
+            }
+        }, [activeTab, enableAIClassification, loadResults, refreshAI])
+    );
 
     const handleDeleteBlurry = async (assetId: string) => {
         Alert.alert(
@@ -146,6 +159,11 @@ export default function ScanResultsScreen() {
                     onPress: async () => {
                         try {
                             await MediaLibrary.deleteAssetsAsync([assetId]);
+                            try {
+                                await AssetRepository.removeAssetAndDerivedData(assetId);
+                            } catch (cleanupError) {
+                                console.error('[ScanResults] Failed to clean deleted asset from index:', cleanupError);
+                            }
                             setBlurryPhotos(prev => prev.filter(p => p.assetId !== assetId));
                         } catch (error) {
                             Alert.alert('删除失败', String(error));

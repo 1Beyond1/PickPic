@@ -2,6 +2,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AssetRepository } from '../database';
 import { DisplayOrder } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
@@ -361,6 +362,15 @@ export const useMediaStore = create<MediaState>()(
             // Batch delete all at once - system will show ONE permission dialog
             const ids = deleteQueue.map(a => a.id);
             await MediaLibrary.deleteAssetsAsync(ids);
+            for (const id of ids) {
+                try {
+                    await AssetRepository.removeAssetAndDerivedData(id);
+                } catch (cleanupError) {
+                    // The media is already deleted; a later scanner sync can
+                    // repair the local index if this best-effort cleanup fails.
+                    console.error("Failed to clean deleted photo from scan index", cleanupError);
+                }
+            }
             console.log(`Batch deletion: ${ids.length} items deleted`);
         } catch (e) {
             // Keep the queue so the user can retry after fixing permissions or
