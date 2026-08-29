@@ -164,7 +164,6 @@ export function ScanBatchModal({ visible, onClose, onStartScan }: ScanBatchModal
                 visible={showAlbumSelector}
                 onClose={() => setShowAlbumSelector(false)}
                 onConfirm={handleAlbumConfirm}
-                initialSelection={[]}
             />
         </>
     );

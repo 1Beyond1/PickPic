@@ -81,7 +81,7 @@ export default function SettingsScreen() {
     const [showScanBatchModal, setShowScanBatchModal] = useState(false);
 
     // AI Scanner hook
-    const { progress, isRunning, lastError, start, stop, resumeOnce, resetScan, refreshStatus } = useAIScanner();
+    const { progress, isRunning, lastError, start, stop, resumeOnce, resetScan } = useAIScanner();
 
     const handleResetPhotoProgress = () => {
         setShowResetPhotosConfirm(true);
@@ -115,8 +115,6 @@ export default function SettingsScreen() {
         setShowResetConfirm(false);
         resetScan();
     };
-
-    const glassTint = isDark ? 'dark' : 'light';
 
     const handleScanBatch = (options: { mode: 'album' | 'count'; albumIds?: string[]; count?: number }) => {
         // Start scan with options

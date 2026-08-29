@@ -4,7 +4,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
@@ -35,11 +35,7 @@ export function SimilarGroupCard({
         });
     };
 
-    useEffect(() => {
-        loadThumbnails();
-    }, [memberAssetIds]);
-
-    const loadThumbnails = async () => {
+    const loadThumbnails = useCallback(async () => {
         const uris: string[] = [];
         // Load up to 4 thumbnails for stacking effect
         const idsToLoad = memberAssetIds.slice(0, 4);
@@ -54,7 +50,11 @@ export function SimilarGroupCard({
             }
         }
         setThumbnails(uris);
-    };
+    }, [memberAssetIds]);
+
+    useEffect(() => {
+        loadThumbnails();
+    }, [loadThumbnails]);
 
     const renderStackedCards = () => {
         const stackCount = Math.min(thumbnails.length, 3);

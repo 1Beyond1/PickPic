@@ -4,7 +4,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
     Dimensions,
@@ -54,26 +54,17 @@ export function SimilarGroupDetailModal({
     onComplete,
 }: SimilarGroupDetailModalProps) {
     const insets = useSafeAreaInsets();
-    const { colors, isDark } = useThemeColor();
+    const { colors } = useThemeColor();
     const { t, language } = useI18n();
 
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [previewPhoto, setPreviewPhoto] = useState<PhotoItem | null>(null);
-    const [loading, setLoading] = useState(true);
-
     // Animation state
     const [isAnimating, setIsAnimating] = useState(false);
     const animProgress = useSharedValue(0);
 
-    useEffect(() => {
-        if (visible && memberAssetIds.length > 0) {
-            loadPhotos();
-        }
-    }, [visible, memberAssetIds]);
-
-    const loadPhotos = async () => {
-        setLoading(true);
+    const loadPhotos = useCallback(async () => {
         const items: PhotoItem[] = [];
         for (const assetId of memberAssetIds) {
             try {
@@ -89,7 +80,6 @@ export function SimilarGroupDetailModal({
             }
         }
         setPhotos(items);
-        setLoading(false);
 
         if (items.length > 0) {
             setIsAnimating(true);
@@ -103,7 +93,13 @@ export function SimilarGroupDetailModal({
                 }
             });
         }
-    };
+    }, [memberAssetIds, animProgress]);
+
+    useEffect(() => {
+        if (visible && memberAssetIds.length > 0) {
+            loadPhotos();
+        }
+    }, [visible, memberAssetIds, loadPhotos]);
 
     const handleLongPress = (assetId: string) => {
         setSelectedIds((prev) => {

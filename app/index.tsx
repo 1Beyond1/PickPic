@@ -1,7 +1,7 @@
 import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GlassContainer } from '../components/GlassContainer';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
@@ -13,11 +13,7 @@ export default function Index() {
     const [checking, setChecking] = useState(true);
     const { colors } = useThemeColor();
 
-    useEffect(() => {
-        checkPermissions();
-    }, [permissionResponse]);
-
-    const checkPermissions = async () => {
+    const checkPermissions = useCallback(() => {
         if (!permissionResponse) {
             // Permissions are still loading
             return;
@@ -25,13 +21,16 @@ export default function Index() {
 
         if (permissionResponse.granted) {
             // Small delay for smooth transition
-            setTimeout(() => {
+            const timer = setTimeout(() => {
                 router.replace('/(tabs)/photos');
             }, 500);
+            return () => clearTimeout(timer);
         } else {
             setChecking(false);
         }
-    };
+    }, [permissionResponse, router]);
+
+    useEffect(() => checkPermissions(), [checkPermissions]);
 
     const handleRequestPermission = async () => {
         const { granted } = await requestPermission();

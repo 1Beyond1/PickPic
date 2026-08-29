@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AssetRecord, AssetRepository } from '../database';
 import { getCategoryGroup } from '../services/ml/CategoryGrouper';
 import { translateLabel } from '../services/ml/LabelTranslator';
@@ -28,7 +28,7 @@ export function useAICategories(): AICategoriesState {
     const [uncategorizedGroup, setUncategorizedGroup] = useState<CategoryGroup | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
-    const loadCategories = async () => {
+    const loadCategories = useCallback(async () => {
         setIsLoading(true);
         try {
             // 1. Load People Assets
@@ -260,11 +260,11 @@ export function useAICategories(): AICategoriesState {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [language]);
 
     useEffect(() => {
         loadCategories();
-    }, [language]);
+    }, [language, loadCategories]);
 
     return {
         peopleGroups,

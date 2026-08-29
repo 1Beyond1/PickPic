@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 // import { BlurView } from 'expo-blur';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Dimensions, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
 import { PhotoCard } from '../../components/PhotoCard';
@@ -12,8 +12,6 @@ import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 export default function PhotosScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -22,7 +20,7 @@ export default function PhotosScreen() {
 
     const {
         photos, albums, loadPhotos, isLoading, hasHydrated,
-        markForDeletion, markForCollection, markAsSkipped,
+        markForDeletion, markAsSkipped,
         confirmDeletion, deleteQueue, resetBatch,
         createAlbum, addAssetToAlbum, loadAlbums
     } = useMediaStore();
@@ -33,7 +31,6 @@ export default function PhotosScreen() {
     const [showNewAlbumModal, setShowNewAlbumModal] = useState(false);
     const [newAlbumName, setNewAlbumName] = useState('');
     const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
-    const [activeHoverZone, setActiveHoverZone] = useState<string | null>(null);
 
     useEffect(() => {
         if (!hasHydrated) return;
@@ -76,7 +73,6 @@ export default function PhotosScreen() {
             markAsSkipped(photo);
             setRemovedIds(prev => [...prev, photo.id]);
         }
-        setActiveHoverZone(null);
     };
 
     const handleCreateAlbum = async () => {
@@ -249,7 +245,6 @@ export default function PhotosScreen() {
                             onSwipeUp={() => handleSwipeUp(photo)}
                             onSwipeDown={(zoneId) => handleSwipeDown(photo, zoneId)}
                             onTap={() => handleTap(photo)}
-                            onHoverZone={index === 0 ? setActiveHoverZone : undefined}
                             enableCollections={false}
                             dropZones={dropZones}
                         />

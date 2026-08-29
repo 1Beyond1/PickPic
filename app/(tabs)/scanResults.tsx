@@ -36,7 +36,7 @@ interface SimilarGroup {
 
 export default function ScanResultsScreen() {
     const insets = useSafeAreaInsets();
-    const { colors, isDark } = useThemeColor();
+    const { colors } = useThemeColor();
     const { t } = useI18n();
 
     const { enableAIClassification, language } = useSettingsStore();
@@ -67,7 +67,7 @@ export default function ScanResultsScreen() {
         if (activeTab === 'ai') {
             refreshAI();
         }
-    }, [activeTab]);
+    }, [activeTab, refreshAI]);
 
     const loadResults = async () => {
         // ... (existing loadResults code) ...

@@ -181,6 +181,8 @@ function MLBridgeInner() {
 export function MLBridge() {
     const models = useImageLabelingModels({
         efficientnet: {
+            // Expo requires a statically analyzable require for bundled TFLite assets.
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
             model: require('../assets/ml/efficientnet-lite4.tflite'),
             options: {
                 maxResultCount: 5,

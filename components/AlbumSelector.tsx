@@ -6,6 +6,8 @@ import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { useMediaStore } from '../stores/useMediaStore';
 
+const EMPTY_SELECTION: string[] = [];
+
 interface AlbumSelectorProps {
     visible: boolean;
     onClose: () => void;
@@ -19,21 +21,21 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     visible,
     onClose,
     onConfirm,
-    initialSelection = [],
+    initialSelection = EMPTY_SELECTION,
     maxSelection,
     titleKey = 'album_selector_title',
 }) => {
     const { albums, loadAlbums } = useMediaStore();
     const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
     const { t } = useI18n();
-    const { colors, isDark } = useThemeColor();
+    const { colors } = useThemeColor();
 
     useEffect(() => {
         if (visible) {
             loadAlbums();
             setSelectedIds(initialSelection);
         }
-    }, [visible]);
+    }, [visible, initialSelection, loadAlbums]);
 
     const toggleSelection = (id: string) => {
         if (selectedIds.includes(id)) {

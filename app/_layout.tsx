@@ -17,7 +17,13 @@ import { APP_VERSION, useSettingsStore } from '../stores/useSettingsStore';
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
-  const { dismissedAnnouncementVersion, dismissAnnouncement, aiGuideShownVersion, dismissAIGuide } = useSettingsStore();
+  const {
+    dismissedAnnouncementVersion,
+    dismissAnnouncement,
+    aiGuideShownVersion,
+    dismissAIGuide,
+    hasHydrated: settingsHydrated,
+  } = useSettingsStore();
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
@@ -38,7 +44,7 @@ export default function RootLayout() {
   const initialCheckDone = useRef(false);
 
   useEffect(() => {
-    if (!appReady || initialCheckDone.current) return;
+    if (!appReady || !settingsHydrated || initialCheckDone.current) return;
 
     initialCheckDone.current = true;
 
@@ -55,7 +61,12 @@ export default function RootLayout() {
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [appReady]); // Remove dependencies on store versions so it doesn't re-run on reset
+  }, [
+    appReady,
+    settingsHydrated,
+    dismissedAnnouncementVersion,
+    aiGuideShownVersion,
+  ]);
 
   const handleDismissOnce = () => {
     setShowAnnouncement(false);

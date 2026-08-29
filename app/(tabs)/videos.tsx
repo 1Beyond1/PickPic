@@ -67,7 +67,7 @@ export default function VideosScreen() {
             }
             setLastActiveId(newActiveId);
         }
-    }, [lastActiveId, markVideoAsProcessed]);
+    }, [lastActiveId, markVideoAsProcessed, videos]);
 
     // View config ref
     const viewabilityConfig = useRef({
@@ -216,7 +216,6 @@ export default function VideosScreen() {
                 visible={showAlbumSelector}
                 onClose={() => setShowAlbumSelector(false)}
                 onConfirm={handleConfirmCollection}
-                initialSelection={[]}
             />
         </View>
     );

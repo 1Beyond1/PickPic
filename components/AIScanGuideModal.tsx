@@ -5,7 +5,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Dimensions, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BORDER_RADIUS, SPACING } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
@@ -19,7 +18,6 @@ interface AIScanGuideModalProps {
 }
 
 export function AIScanGuideModal({ visible, onStartScan, onDismiss }: AIScanGuideModalProps) {
-    const insets = useSafeAreaInsets();
     const { colors, isDark } = useThemeColor();
     const { t } = useI18n();
 

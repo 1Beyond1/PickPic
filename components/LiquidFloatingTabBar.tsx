@@ -48,7 +48,7 @@ export const LiquidFloatingTabBar = () => {
             lensX.value = withTiming(safeIndex * TAB_WIDTH + (TAB_WIDTH - LENS_WIDTH) / 2, { duration: 200 });
             lastIndex.current = safeIndex;
         }
-    }, [safeIndex]);
+    }, [safeIndex, lensX]);
 
     const navigateTo = (index: number) => {
         if (index !== safeIndex) {

@@ -36,7 +36,6 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     itemHeight
 }) => {
     const videoRef = useRef<Video>(null);
-    const [status, setStatus] = useState<any>({});
     const [locationName, setLocationName] = useState('Loading...');
     const insets = useSafeAreaInsets(); // Add safe area insets
 
@@ -85,7 +84,6 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                     isLooping
                     isMuted={isMuted}
                     shouldPlay={shouldPlay}
-                    onPlaybackStatusUpdate={status => setStatus(() => status)}
                 />
             </ScalablePressable>
 

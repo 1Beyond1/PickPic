@@ -15,6 +15,7 @@ interface SettingsState {
     language: 'zh' | 'en';
     activeCollectionIds: string[];
     selectedAlbumIds: string[]; // Empty = all albums
+    hasHydrated: boolean;
 
     // Announcement tracking
     dismissedAnnouncementVersion: string | null;
@@ -31,6 +32,7 @@ interface SettingsState {
     setTheme: (theme: 'WarmTerra' | 'light' | 'dark') => void;
     setLanguage: (lang: 'zh' | 'en') => void;
     setSelectedAlbums: (ids: string[]) => void;
+    setHasHydrated: (hasHydrated: boolean) => void;
     dismissAnnouncement: (version: string) => void;
     toggleDevOptions: () => void;
     setEnableAIClassification: (enabled: boolean) => void;
@@ -53,6 +55,7 @@ export const useSettingsStore = create<SettingsState>()(
             language: 'zh',
             activeCollectionIds: [],
             selectedAlbumIds: [], // Empty = organize all albums
+            hasHydrated: false,
             dismissedAnnouncementVersion: null,
 
             // Developer options (default off)
@@ -66,6 +69,7 @@ export const useSettingsStore = create<SettingsState>()(
             setTheme: (theme) => set({ theme }),
             setLanguage: (lang) => set({ language: lang }),
             setSelectedAlbums: (ids) => set({ selectedAlbumIds: ids }),
+            setHasHydrated: (hasHydrated) => set({ hasHydrated }),
             dismissAnnouncement: (version) => set({ dismissedAnnouncementVersion: version }),
             toggleDevOptions: () => set((state) => ({ showDevOptions: !state.showDevOptions })),
             setEnableAIClassification: (enabled) => set({ enableAIClassification: enabled }),
@@ -84,6 +88,7 @@ export const useSettingsStore = create<SettingsState>()(
                 if (state && ((state.theme as any) === 'claude' || (state.theme as any) === 'PPstyle')) {
                     state.setTheme('WarmTerra');
                 }
+                state?.setHasHydrated(true);
             },
         }
     )

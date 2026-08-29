@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { APP_VERSION } from '../stores/useSettingsStore';
@@ -15,7 +14,6 @@ interface AnnouncementModalProps {
 }
 
 export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion }: AnnouncementModalProps) {
-    const insets = useSafeAreaInsets();
     const { t } = useI18n();
 
     return (

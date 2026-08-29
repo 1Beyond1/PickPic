@@ -1,7 +1,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
     Alert,
     BackHandler,
@@ -59,12 +59,38 @@ export function SimilarGroupDetailOverlay({
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [previewPhoto, setPreviewPhoto] = useState<PhotoItem | null>(null);
-    const [loading, setLoading] = useState(true);
 
     // Animation state
     const [isAnimating, setIsAnimating] = useState(false);
     const animProgress = useSharedValue(0); // 0 (Origin) -> 1 (Spread) -> 2 (Grid)
     const overlayOpacity = useSharedValue(0);
+
+    const loadPhotos = useCallback(async () => {
+        const items: PhotoItem[] = [];
+        for (const assetId of memberAssetIds) {
+            try {
+                const info = await MediaLibrary.getAssetInfoAsync(assetId);
+                if (info.localUri || info.uri) {
+                    items.push({
+                        assetId,
+                        uri: info.localUri || info.uri,
+                    });
+                }
+            } catch {
+                // Skip
+            }
+        }
+        setPhotos(items);
+    }, [memberAssetIds]);
+
+    const handleClose = useCallback(() => {
+        // Exit animation
+        overlayOpacity.value = withTiming(0, { duration: 250 }, (finished) => {
+            if (finished) {
+                runOnJS(onClose)();
+            }
+        });
+    }, [onClose, overlayOpacity]);
 
     useEffect(() => {
         if (visible && memberAssetIds.length > 0) {
@@ -86,7 +112,7 @@ export function SimilarGroupDetailOverlay({
         } else if (!visible) {
             setPhotos([]); // Clear on close to avoid flash
         }
-    }, [visible, memberAssetIds]);
+    }, [visible, memberAssetIds, loadPhotos, overlayOpacity, animProgress]);
 
     // Handle Back Button
     useEffect(() => {
@@ -100,36 +126,7 @@ export function SimilarGroupDetailOverlay({
         const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
 
         return () => subscription.remove();
-    }, [visible]);
-
-    const loadPhotos = async () => {
-        setLoading(true);
-        const items: PhotoItem[] = [];
-        for (const assetId of memberAssetIds) {
-            try {
-                const info = await MediaLibrary.getAssetInfoAsync(assetId);
-                if (info.localUri || info.uri) {
-                    items.push({
-                        assetId,
-                        uri: info.localUri || info.uri,
-                    });
-                }
-            } catch {
-                // Skip
-            }
-        }
-        setPhotos(items);
-        setLoading(false);
-    };
-
-    const handleClose = () => {
-        // Exit animation
-        overlayOpacity.value = withTiming(0, { duration: 250 }, (finished) => {
-            if (finished) {
-                runOnJS(onClose)();
-            }
-        });
-    };
+    }, [visible, handleClose]);
 
     const handleLongPress = (assetId: string) => {
         setSelectedIds((prev) => {
