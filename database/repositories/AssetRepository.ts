@@ -336,6 +336,10 @@ export const AssetRepository = {
         await db.runAsync(
             `UPDATE assets SET 
              status = ?, 
+             algo_version = NULL,
+             blur_score = NULL,
+             mean_luma = NULL,
+             phash = NULL,
              face_count = NULL, 
              labels_json = NULL,
              error_message = NULL,
@@ -350,7 +354,10 @@ export const AssetRepository = {
     async resetErrors(): Promise<number> {
         const db = await getDatabase();
         const result = await db.runAsync(
-            `UPDATE assets SET status = ?, error_message = NULL, updated_at = ?
+            `UPDATE assets SET
+             status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
+             face_count = NULL, labels_json = NULL, error_message = NULL,
+             updated_at = ?
              WHERE status = ?`,
             [AssetStatus.PENDING, Date.now(), AssetStatus.ERROR]
         );

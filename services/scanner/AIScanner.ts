@@ -320,14 +320,13 @@ async function processAsset(assetId: string): Promise<boolean> {
         // Mark as done (with face count)
         await AssetRepository.markDone(assetId, blurScore, meanLuma, phash, GLOBAL_ALGO_VERSION);
 
-        // Update face count and labels if detected
+        // Always overwrite derived ML fields so a re-scan cannot retain stale
+        // labels or face counts from a previous image/version.
         const db = await import('../../database').then(m => m.getDatabase());
-        if (faceCount > 0 || labelsJson) {
-            await db.runAsync(
-                'UPDATE assets SET face_count = ?, labels_json = ? WHERE asset_id = ?',
-                [faceCount, labelsJson, assetId]
-            );
-        }
+        await db.runAsync(
+            'UPDATE assets SET face_count = ?, labels_json = ? WHERE asset_id = ?',
+            [faceCount, labelsJson, assetId]
+        );
 
         // Find similar photos
         const asset = await AssetRepository.getById(assetId);

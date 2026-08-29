@@ -4,7 +4,6 @@
 
 import { FaceDetectionProvider, useFacesInPhoto } from '@infinitered/react-native-mlkit-face-detection';
 import { useImageLabeling, useImageLabelingModels, useImageLabelingProvider } from '@infinitered/react-native-mlkit-image-labeling';
-import { Asset } from 'expo-asset';
 import { useEffect, useRef, useState } from 'react';
 import { IMAGENET_LABELS } from '../services/ml/ImageNetLabels';
 import type { DetectedFace, ImageLabel } from '../services/ml/MLKitService';
@@ -26,6 +25,10 @@ class MLBridgeQueue {
         this.isReady = true;
     }
 
+    markUnavailable() {
+        this.isReady = false;
+    }
+
     push(request: MLRequest) {
         this.queue.push(request);
     }
@@ -36,6 +39,14 @@ class MLBridgeQueue {
 
     hasWork(): boolean {
         return this.queue.length > 0;
+    }
+
+    cancel(requestId: string): boolean {
+        const index = this.queue.findIndex(request => request.id === requestId);
+        if (index === -1) return false;
+
+        this.queue.splice(index, 1);
+        return true;
     }
 
     isAvailable(): boolean {
@@ -51,7 +62,6 @@ export const mlBridgeQueue = new MLBridgeQueue();
  */
 function MLBridgeInner() {
     const [currentRequest, setCurrentRequest] = useState<MLRequest | null>(null);
-    const [modelPath, setModelPath] = useState<string | null>(null);
     const requestStartTimeRef = useRef<number>(0);
 
     // Face Detection
@@ -64,31 +74,19 @@ function MLBridgeInner() {
 
     const processedRef = useRef(new Set<string>());
 
-    // Load model on mount
+    // The queue becomes available only after the labeling hook has a usable
+    // model. This prevents requests from being accepted during model startup.
     useEffect(() => {
-        console.log('[MLBridge] Component Mounted');
-        (async () => {
-            try {
-                const [modelAsset] = await Asset.loadAsync(
-                    require('../assets/ml/efficientnet-lite4.tflite')
-                );
+        if (!labeler) {
+            mlBridgeQueue.markUnavailable();
+            return;
+        }
 
-                if (modelAsset.localUri) {
-                    setModelPath(modelAsset.localUri);
-                    console.log('[MLBridge] Model loaded:', modelAsset.localUri);
-                }
-            } catch (error) {
-                console.error('[MLBridge] Failed to load model:', error);
-            }
-        })();
-        return () => console.log('[MLBridge] Unmounted');
-    }, []);
-
-    // Mark ready
-    useEffect(() => {
         mlBridgeQueue.markReady();
         console.log('[MLBridge] Ready state set');
-    }, []);
+
+        return () => mlBridgeQueue.markUnavailable();
+    }, [labeler]);
 
     // Poll for new requests
     useEffect(() => {
@@ -181,18 +179,8 @@ function MLBridgeInner() {
  * MLBridge - Must be mounted at app root
  */
 export function MLBridge() {
-    const [modelReady, setModelReady] = useState(false);
-
-    // Use useImageLabelingModels with dynamic model path
     const models = useImageLabelingModels({
-        efficientnet: { // Keep key as 'efficientnet' for now to avoid refactoring hooks, or rename?
-            // Better to keep key 'efficientnet' or change to 'mobilenet_v3'?
-            // The hook usage is `useImageLabeling('efficientnet')` at line 62.
-            // I will keep the key 'efficientnet' but load the new model 
-            // to minimize disruption, or better, change key to 'mobilenet_v3'.
-            // Let's keep key 'efficientnet' but comment it clearly.
-            // Actually, let's rename key to 'current_model' or just keep 'efficientnet' 
-            // but logic inside loadAsync uses specific file.
+        efficientnet: {
             model: require('../assets/ml/efficientnet-lite4.tflite'),
             options: {
                 maxResultCount: 5,

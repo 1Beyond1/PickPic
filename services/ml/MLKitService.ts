@@ -34,6 +34,45 @@ function getBridgeQueue() {
     return mlBridgeQueue;
 }
 
+function enqueueRequest<T>(
+    queue: any,
+    type: 'detectFaces' | 'labelImage',
+    imageUri: string,
+    timeoutFallback: T
+): Promise<T> {
+    const requestId = `${Date.now()}-${Math.random()}`;
+
+    return new Promise<T>((resolve, reject) => {
+        let settled = false;
+        const timeout = setTimeout(() => {
+            if (settled) return;
+
+            settled = true;
+            queue.cancel?.(requestId);
+            console.warn(`[MLKit] ${type} timed out`);
+            resolve(timeoutFallback);
+        }, 5000);
+
+        queue.push({
+            id: requestId,
+            type,
+            imageUri,
+            resolve: (result: T) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                resolve(result);
+            },
+            reject: (error: Error) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeout);
+                reject(error);
+            },
+        });
+    });
+}
+
 export const MLKitService = {
     /**
      * Check if ML Kit bridge is available
@@ -53,24 +92,7 @@ export const MLKitService = {
                 return [];
             }
 
-            // Push request and wait for result with timeout
-            return Promise.race([
-                new Promise<DetectedFace[]>((resolve, reject) => {
-                    queue.push({
-                        id: `${Date.now()}-${Math.random()}`,
-                        type: 'detectFaces',
-                        imageUri,
-                        resolve,
-                        reject,
-                    });
-                }),
-                new Promise<DetectedFace[]>((resolve) =>
-                    setTimeout(() => {
-                        console.warn('[MLKit] Face detection timed out');
-                        resolve([]);
-                    }, 5000)
-                )
-            ]);
+            return await enqueueRequest(queue, 'detectFaces', imageUri, []);
         } catch (error) {
             console.error('[MLKit] Face detection error:', error);
             return [];
@@ -88,24 +110,7 @@ export const MLKitService = {
                 return [];
             }
 
-            // Push request and wait for result with timeout
-            return Promise.race([
-                new Promise<ImageLabel[]>((resolve, reject) => {
-                    queue.push({
-                        id: `${Date.now()}-${Math.random()}`,
-                        type: 'labelImage',
-                        imageUri,
-                        resolve,
-                        reject,
-                    });
-                }),
-                new Promise<ImageLabel[]>((resolve) =>
-                    setTimeout(() => {
-                        console.warn('[MLKit] Label detection timed out');
-                        resolve([]);
-                    }, 5000)
-                )
-            ]);
+            return await enqueueRequest(queue, 'labelImage', imageUri, []);
         } catch (error) {
             console.error('[MLKit] Image labeling error:', error);
             return [];

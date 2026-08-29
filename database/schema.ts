@@ -1,11 +1,11 @@
 /**
  * Database Schema Constants for AI Scanner Engine
- * Version: 3 (global_algo_version)
+ * Version: 4 (real pixel-based image analysis)
  */
 
 export const DB_NAME = 'pickpic_scanner.db';
 
-export const GLOBAL_ALGO_VERSION = 3;
+export const GLOBAL_ALGO_VERSION = 4;
 
 // Asset status enum
 export const AssetStatus = {

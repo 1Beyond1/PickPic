@@ -9,8 +9,9 @@ import { IImageOps } from './IImageOps';
 import { getImageOpsJS } from './ImageOpsJS';
 
 /**
- * Get the current IImageOps implementation
- * Currently returns JS fallback; can be swapped for native implementation
+ * Get the current IImageOps implementation.
+ * The current implementation performs real pixel analysis in JavaScript;
+ * a native implementation can still replace it later for better throughput.
  */
 export function getImageOps(): IImageOps {
     // TODO: Add native implementation detection

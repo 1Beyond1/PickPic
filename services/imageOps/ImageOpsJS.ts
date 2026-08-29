@@ -1,141 +1,173 @@
 /**
  * ImageOpsJS - JavaScript Fallback Implementation
  * 
- * IMPORTANT: This is a PLACEHOLDER implementation.
- * expo-image-manipulator cannot provide raw pixel data directly.
- * This implementation provides the interface structure and basic algorithms,
- * but the actual pixel extraction would require a native module.
- * 
- * For production, replace with:
- * - react-native-skia
- * - Custom native module with JSI
- * - WebAssembly-based solution
+ * The image manipulator produces a small JPEG and jpeg-js decodes it into
+ * actual RGBA pixels. The calculations below therefore operate on image data,
+ * rather than on Base64 length or encoded characters.
  */
 
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system';
+import * as jpeg from 'jpeg-js';
 import { GrayImageRef, IImageOps } from './IImageOps';
 
-/**
- * JavaScript fallback implementation of IImageOps
- * Note: computeLaplacianVar returns placeholder values
- */
+const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function base64ToBytes(value: string): Uint8Array {
+    const base64 = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
+    const normalized = base64.replace(/[^A-Za-z0-9+/=]/g, '');
+    const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0;
+    const output = new Uint8Array(Math.max(0, Math.floor((normalized.length * 3) / 4) - padding));
+
+    let accumulator = 0;
+    let bits = 0;
+    let offset = 0;
+
+    for (const character of normalized) {
+        if (character === '=') break;
+
+        const value = BASE64_ALPHABET.indexOf(character);
+        if (value < 0) continue;
+
+        accumulator = (accumulator << 6) | value;
+        bits += 6;
+
+        if (bits >= 8) {
+            bits -= 8;
+            if (offset < output.length) {
+                output[offset++] = (accumulator >> bits) & 0xff;
+            }
+        }
+    }
+
+    return output;
+}
+
 export class ImageOpsJS implements IImageOps {
     /**
-     * Resize image to 256x256
-     * Note: Cannot extract actual pixel data with expo-image-manipulator
+     * Decode a resized JPEG into a 256x256 grayscale pixel buffer.
      */
     async resizeToGray256(assetUri: string): Promise<GrayImageRef> {
+        let resizedUri: string | null = null;
+
         try {
-            // Resize to 256x256 using expo-image-manipulator
             const result = await ImageManipulator.manipulateAsync(
                 assetUri,
                 [{ resize: { width: 256, height: 256 } }],
-                { format: ImageManipulator.SaveFormat.JPEG, base64: true }
+                { format: ImageManipulator.SaveFormat.JPEG, base64: true, compress: 0.85 }
             );
+            resizedUri = result.uri;
 
-            // Since we can't get actual pixel data, we'll use the base64 length
-            // as a proxy for "image complexity" (very rough approximation)
-            const base64 = result.base64 || '';
+            if (!result.base64) {
+                throw new Error('Image resize did not return Base64 data');
+            }
 
-            // Create placeholder GrayImageRef
-            // In a real implementation, this would contain actual pixel data
-            return {
-                width: 256,
-                height: 256,
-                data: null, // Cannot extract pixels in JS
-                // Store base64 in a custom property for our approximations
-                _base64: base64,
-                _uri: result.uri,
-            } as GrayImageRef & { _base64: string; _uri: string };
-        } catch (error) {
-            console.error('[ImageOpsJS] Failed to resize image:', error);
-            throw error;
+            const decoded = jpeg.decode(base64ToBytes(result.base64), { useTArray: true });
+            if (!decoded.width || !decoded.height || decoded.data.length < decoded.width * decoded.height * 4) {
+                throw new Error('Decoded image has invalid pixel data');
+            }
+
+            // ImageManipulator normally already returns 256x256. Keep this
+            // resampling step defensive in case a platform returns another size.
+            const grayscale = new Uint8Array(256 * 256);
+            for (let y = 0; y < 256; y++) {
+                const sourceY = Math.min(decoded.height - 1, Math.floor((y * decoded.height) / 256));
+                for (let x = 0; x < 256; x++) {
+                    const sourceX = Math.min(decoded.width - 1, Math.floor((x * decoded.width) / 256));
+                    const sourceIndex = (sourceY * decoded.width + sourceX) * 4;
+                    const alpha = decoded.data[sourceIndex + 3] ?? 255;
+                    const red = decoded.data[sourceIndex] ?? 0;
+                    const green = decoded.data[sourceIndex + 1] ?? 0;
+                    const blue = decoded.data[sourceIndex + 2] ?? 0;
+                    const luma = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue);
+                    const composited = (luma * alpha + 255 * (255 - alpha)) / 255;
+                    grayscale[y * 256 + x] = Math.round(composited);
+                }
+            }
+
+            return { width: 256, height: 256, data: grayscale };
+        } finally {
+            if (resizedUri && resizedUri !== assetUri) {
+                await FileSystem.deleteAsync(resizedUri, { idempotent: true }).catch(() => undefined);
+            }
         }
     }
 
     /**
-     * Compute mean luminance
-     * PLACEHOLDER: Returns approximation based on base64 characteristics
+     * Compute mean luminance from grayscale pixels.
      */
     computeMeanLuma(gray: GrayImageRef): number {
-        const extended = gray as GrayImageRef & { _base64?: string };
-
-        if (!extended._base64) {
-            // Default to mid-range if no data
-            return 128;
+        if (!gray.data || gray.data.length === 0) {
+            throw new Error('Cannot compute luminance without pixel data');
         }
 
-        // Rough approximation: base64 entropy as proxy for brightness
-        // This is NOT accurate but provides some differentiation
-        const base64 = extended._base64;
         let sum = 0;
-        const sampleSize = Math.min(1000, base64.length);
-
-        for (let i = 0; i < sampleSize; i++) {
-            sum += base64.charCodeAt(i);
+        for (const pixel of gray.data) {
+            sum += pixel;
         }
 
-        // Normalize to 0-255 range
-        const avg = sum / sampleSize;
-        return Math.round(((avg - 43) / (122 - 43)) * 255);
+        return sum / gray.data.length;
     }
 
     /**
-     * Compute Laplacian variance (blur detection)
-     * PLACEHOLDER: Returns approximation based on base64 size
+     * Compute Laplacian variance (sharpness/blur measure).
      */
     computeLaplacianVar(gray: GrayImageRef): number {
-        const extended = gray as GrayImageRef & { _base64?: string };
-
-        if (!extended._base64) {
-            // Default to medium sharpness
-            return 150;
+        const data = gray.data;
+        if (!data || data.length === 0) {
+            throw new Error('Cannot compute sharpness without pixel data');
         }
 
-        // Rough approximation: 
-        // Sharper images typically compress to larger base64 (more detail)
-        // Blurry images compress to smaller base64 (less detail)
-        const base64Length = extended._base64.length;
+        let sum = 0;
+        let sumSquares = 0;
+        let count = 0;
 
-        // Expected range for 256x256 JPEG: ~5000-50000 bytes
-        // Map to blur score range: 0-500
-        const normalizedSize = (base64Length - 5000) / (50000 - 5000);
-        const blurScore = Math.max(0, Math.min(500, normalizedSize * 500));
+        for (let y = 1; y < gray.height - 1; y++) {
+            for (let x = 1; x < gray.width - 1; x++) {
+                const index = y * gray.width + x;
+                const laplacian =
+                    data[index - 1] +
+                    data[index + 1] +
+                    data[index - gray.width] +
+                    data[index + gray.width] -
+                    (4 * data[index]);
 
-        return blurScore;
+                sum += laplacian;
+                sumSquares += laplacian * laplacian;
+                count++;
+            }
+        }
+
+        if (count === 0) return 0;
+        const mean = sum / count;
+        return Math.max(0, (sumSquares / count) - (mean * mean));
     }
 
     /**
-     * Compute dHash (difference hash)
-     * PLACEHOLDER: Returns hash based on base64 sampling
+     * Compute a 64-bit dHash from an 9x8 grayscale sampling grid.
      */
     computeDHash64(gray: GrayImageRef): string {
-        const extended = gray as GrayImageRef & { _base64?: string };
-
-        if (!extended._base64) {
-            return '0000000000000000';
+        const data = gray.data;
+        if (!data || data.length === 0) {
+            throw new Error('Cannot compute perceptual hash without pixel data');
         }
 
-        const base64 = extended._base64;
         let hash = 0n;
 
-        // Sample 64 positions throughout the base64 string
-        // Compare adjacent samples to create difference hash
-        const step = Math.floor(base64.length / 65);
+        for (let y = 0; y < 8; y++) {
+            const sourceY = Math.min(gray.height - 1, Math.floor((y * gray.height) / 8));
+            for (let x = 0; x < 8; x++) {
+                const leftX = Math.min(gray.width - 1, Math.floor((x * gray.width) / 9));
+                const rightX = Math.min(gray.width - 1, Math.floor(((x + 1) * gray.width) / 9));
+                const left = data[sourceY * gray.width + leftX];
+                const right = data[sourceY * gray.width + rightX];
 
-        for (let i = 0; i < 64; i++) {
-            const pos1 = i * step;
-            const pos2 = (i + 1) * step;
-
-            if (pos2 < base64.length) {
-                const diff = base64.charCodeAt(pos1) < base64.charCodeAt(pos2);
-                if (diff) {
-                    hash |= (1n << BigInt(i));
+                if (left < right) {
+                    hash |= (1n << BigInt((y * 8) + x));
                 }
             }
         }
 
-        // Convert to 16-character hex string
         return hash.toString(16).padStart(16, '0');
     }
 
@@ -161,12 +193,7 @@ export class ImageOpsJS implements IImageOps {
      * Dispose/cleanup GrayImageRef
      */
     dispose(gray: GrayImageRef): void {
-        // No-op for JS implementation
-        // Native implementation would free native memory here
-        const extended = gray as GrayImageRef & { _base64?: string; _uri?: string };
-        extended._base64 = undefined;
-        extended._uri = undefined;
-        (gray as any).data = null;
+        gray.data = null;
     }
 
     /**

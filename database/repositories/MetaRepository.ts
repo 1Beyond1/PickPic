@@ -3,7 +3,7 @@
  */
 
 import { getDatabase } from '../db';
-import { MetaKeys } from '../schema';
+import { GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
 
 export interface ScanCursor {
     takenAt: number | null;
@@ -39,7 +39,16 @@ export const MetaRepository = {
      */
     async getGlobalAlgoVersion(): Promise<number> {
         const value = await this.get(MetaKeys.GLOBAL_ALGO_VERSION);
-        return value ? parseInt(value, 10) : 1;
+        const storedVersion = value ? parseInt(value, 10) : 0;
+
+        // Keep existing databases aligned when the app ships a new scanner
+        // implementation. The next scan will then invalidate old results.
+        if (storedVersion !== GLOBAL_ALGO_VERSION) {
+            await this.set(MetaKeys.GLOBAL_ALGO_VERSION, GLOBAL_ALGO_VERSION.toString());
+            return GLOBAL_ALGO_VERSION;
+        }
+
+        return storedVersion;
     },
 
     /**
