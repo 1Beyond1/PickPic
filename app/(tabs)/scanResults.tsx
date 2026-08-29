@@ -168,6 +168,10 @@ export default function ScanResultsScreen() {
                             if (!deleted) {
                                 throw new Error('Media library did not confirm deletion');
                             }
+                            // Invalidate a load that may have started before
+                            // the deletion and could otherwise reinsert this
+                            // asset into the list when it finishes.
+                            loadRequestIdRef.current += 1;
                             try {
                                 await AssetRepository.removeAssetAndDerivedData(assetId);
                             } catch (cleanupError) {
