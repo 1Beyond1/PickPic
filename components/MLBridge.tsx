@@ -63,6 +63,8 @@ export const mlBridgeQueue = new MLBridgeQueue();
 function MLBridgeInner() {
     const [currentRequest, setCurrentRequest] = useState<MLRequest | null>(null);
     const requestStartTimeRef = useRef<number>(0);
+    const faceRequestIdRef = useRef<string | null>(null);
+    const faceRequestReadyRef = useRef(false);
 
     // Face Detection
     const { faces, error: faceError, status: faceStatus } = useFacesInPhoto(
@@ -115,6 +117,19 @@ function MLBridgeInner() {
     // Process Face Detection results
     useEffect(() => {
         if (!currentRequest || currentRequest.type !== 'detectFaces') return;
+
+        if (faceRequestIdRef.current !== currentRequest.id) {
+            faceRequestIdRef.current = currentRequest.id;
+            faceRequestReadyRef.current = false;
+        }
+
+        // useFacesInPhoto keeps its previous result while a new URI is being
+        // applied. Do not consume a stale done/error state until this request
+        // has visibly entered its own detection phase.
+        if (faceStatus === 'detecting') {
+            faceRequestReadyRef.current = true;
+        }
+        if (!faceRequestReadyRef.current) return;
 
         console.log('[MLBridge] Face Status:', faceStatus, 'Error:', faceError);
 
