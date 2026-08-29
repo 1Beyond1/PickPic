@@ -158,7 +158,10 @@ export default function ScanResultsScreen() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await MediaLibrary.deleteAssetsAsync([assetId]);
+                            const deleted = await MediaLibrary.deleteAssetsAsync([assetId]);
+                            if (!deleted) {
+                                throw new Error('Media library did not confirm deletion');
+                            }
                             try {
                                 await AssetRepository.removeAssetAndDerivedData(assetId);
                             } catch (cleanupError) {

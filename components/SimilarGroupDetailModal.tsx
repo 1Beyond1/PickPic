@@ -141,7 +141,10 @@ export function SimilarGroupDetailModal({
                     onPress: async () => {
                         try {
                             const assetIds = Array.from(selectedIds);
-                            await MediaLibrary.deleteAssetsAsync(assetIds);
+                            const deleted = await MediaLibrary.deleteAssetsAsync(assetIds);
+                            if (!deleted) {
+                                throw new Error('Media library did not confirm deletion');
+                            }
                             for (const assetId of assetIds) {
                                 try {
                                     await AssetRepository.removeAssetAndDerivedData(assetId);
@@ -177,7 +180,10 @@ export function SimilarGroupDetailModal({
         if (!previewPhoto) return;
 
         try {
-            await MediaLibrary.deleteAssetsAsync([previewPhoto.assetId]);
+            const deleted = await MediaLibrary.deleteAssetsAsync([previewPhoto.assetId]);
+            if (!deleted) {
+                throw new Error('Media library did not confirm deletion');
+            }
             try {
                 await AssetRepository.removeAssetAndDerivedData(previewPhoto.assetId);
             } catch (cleanupError) {

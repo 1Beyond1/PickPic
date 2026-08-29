@@ -197,7 +197,10 @@ export const useMediaStore = create<MediaState>()(
 
     addAssetToAlbum: async (albumId, asset) => {
         try {
-            await MediaLibrary.addAssetsToAlbumAsync([asset], albumId);
+            const added = await MediaLibrary.addAssetsToAlbumAsync([asset], albumId);
+            if (!added) {
+                throw new Error('Media library did not confirm adding the asset to the album');
+            }
         } catch (e) {
             console.error("Failed to add asset to album", e);
             throw e;
@@ -375,7 +378,10 @@ export const useMediaStore = create<MediaState>()(
         try {
             // Batch delete all at once - system will show ONE permission dialog
             const ids = deleteQueue.map(a => a.id);
-            await MediaLibrary.deleteAssetsAsync(ids);
+            const deleted = await MediaLibrary.deleteAssetsAsync(ids);
+            if (!deleted) {
+                throw new Error('Media library did not confirm photo deletion');
+            }
             for (const id of ids) {
                 try {
                     await AssetRepository.removeAssetAndDerivedData(id);
@@ -400,7 +406,10 @@ export const useMediaStore = create<MediaState>()(
         const { videoTrashBin } = get();
         if (videoTrashBin.length === 0) return;
         try {
-            await MediaLibrary.deleteAssetsAsync(videoTrashBin);
+            const deleted = await MediaLibrary.deleteAssetsAsync(videoTrashBin);
+            if (!deleted) {
+                throw new Error('Media library did not confirm video deletion');
+            }
             set({ videoTrashBin: [] });
         } catch (e) {
             console.error("Video deletion failed", e);
