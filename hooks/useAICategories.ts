@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssetRecord, AssetRepository } from '../database';
 import { getCategoryGroup } from '../services/ml/CategoryGrouper';
 import { translateLabel } from '../services/ml/LabelTranslator';
@@ -27,8 +27,10 @@ export function useAICategories(enabled = true): AICategoriesState {
     const [objectGroups, setObjectGroups] = useState<CategoryGroup[]>([]);
     const [uncategorizedGroup, setUncategorizedGroup] = useState<CategoryGroup | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const loadRequestIdRef = useRef(0);
 
     const loadCategories = useCallback(async () => {
+        const requestId = ++loadRequestIdRef.current;
         setIsLoading(true);
         try {
             // 1. Load People Assets
@@ -85,8 +87,6 @@ export function useAICategories(enabled = true): AICategoriesState {
                 coverAsset: assets[0],
                 assets,
             })).sort((a, b) => b.count - a.count);
-
-            setPeopleGroups(peopleResult);
 
             // 2. Load Object/Scene Assets
             const labeledAssets = await AssetRepository.getLabeledAssets(5000); // Increased limit to capture more assets
@@ -167,32 +167,6 @@ export function useAICategories(enabled = true): AICategoriesState {
                 }
             });
 
-            // Add Human Assets to People Groups
-            if (humanAssets.length > 0) {
-                const key = language === 'zh' ? '人物(全身/背面)' : 'People (Body/Pose)';
-                setPeopleGroups(prev => {
-                    const existing = prev.find(p => p.title === key);
-                    if (existing) {
-                        // Merge if exists (unlikely in this flow but safe)
-                        return prev;
-                    }
-                    return [...prev, {
-                        id: 'people_body',
-                        title: key,
-                        count: humanAssets.length,
-                        coverAsset: humanAssets[0],
-                        assets: humanAssets
-                    }];
-                });
-                // Re-sort people groups
-                // (We need to do this carefully since we use setState inside loop? No, setState is after.)
-                // Actually we construct peopleResult above. We should merge humanAssets into peopleResult.
-            }
-
-            // Merge Human Body results into peopleResult (Refactoring needed: calculated above)
-            // Let's just append to peopleResult variable if I could... but I set state already.
-            // Better to re-calculate peopleResult including humanAssets.
-
             // Re-construct People Groups with Human Assets (Merge into 'people_single')
             let finalPeopleGroups = peopleResult;
             if (humanAssets.length > 0) {
@@ -213,7 +187,6 @@ export function useAICategories(enabled = true): AICategoriesState {
             }
             // Sort groups (Single vs Group)
             finalPeopleGroups.sort((a, b) => b.count - a.count);
-            setPeopleGroups(finalPeopleGroups);
 
             const objectResult: CategoryGroup[] = Array.from(labelMap.entries()).map(([title, assets]) => ({
                 id: `obj_${title}`,
@@ -222,8 +195,6 @@ export function useAICategories(enabled = true): AICategoriesState {
                 coverAsset: assets[0],
                 assets,
             })).sort((a, b) => b.count - a.count);
-
-            setObjectGroups(objectResult);
 
             // 3. Handle Uncategorized & Processing Counts
             const statusCounts = await AssetRepository.getStatusCounts(); // { pending, done, error }
@@ -243,6 +214,11 @@ export function useAICategories(enabled = true): AICategoriesState {
                 uncatTitle += ` (+${statusCounts.pending} ${language === 'zh' ? '处理中' : 'processing'})`;
             }
 
+            if (requestId !== loadRequestIdRef.current) return;
+
+            setPeopleGroups(finalPeopleGroups);
+            setObjectGroups(objectResult);
+
             if (uncategorizedAssets.length > 0 || statusCounts.pending > 0) {
                 setUncategorizedGroup({
                     id: 'uncategorized',
@@ -258,12 +234,15 @@ export function useAICategories(enabled = true): AICategoriesState {
         } catch (error) {
             console.error('Failed to load AI categories:', error);
         } finally {
-            setIsLoading(false);
+            if (requestId === loadRequestIdRef.current) {
+                setIsLoading(false);
+            }
         }
     }, [language]);
 
     useEffect(() => {
         if (!enabled) {
+            loadRequestIdRef.current += 1;
             setPeopleGroups([]);
             setObjectGroups([]);
             setUncategorizedGroup(null);

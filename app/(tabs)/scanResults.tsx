@@ -5,7 +5,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -45,6 +45,7 @@ export default function ScanResultsScreen() {
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
     const [similarGroups, setSimilarGroups] = useState<SimilarGroup[]>([]);
     const [loading, setLoading] = useState(true);
+    const loadRequestIdRef = useRef(0);
 
     // Similar Groups detail modal state
     const [selectedSimilarGroup, setSelectedSimilarGroup] = useState<{
@@ -57,6 +58,7 @@ export default function ScanResultsScreen() {
     const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, refresh: refreshAI } = useAICategories(enableAIClassification);
 
     const loadResults = useCallback(async () => {
+        const requestId = ++loadRequestIdRef.current;
         // ... (existing loadResults code) ...
         setLoading(true);
         try {
@@ -86,6 +88,7 @@ export default function ScanResultsScreen() {
                 })
             );
 
+            if (requestId !== loadRequestIdRef.current) return;
             setBlurryPhotos(blurryWithUris.filter((p): p is BlurryPhoto => p !== null));
 
             // Load similar groups
@@ -128,13 +131,16 @@ export default function ScanResultsScreen() {
                 })
             );
 
+            if (requestId !== loadRequestIdRef.current) return;
             setSimilarGroups(groupsWithCount.filter((group): group is NonNullable<typeof group> => (
                 group !== null && group.memberCount > 1
             )));
         } catch (error) {
             console.error('[ScanResults] Load error:', error);
         } finally {
-            setLoading(false);
+            if (requestId === loadRequestIdRef.current) {
+                setLoading(false);
+            }
         }
     }, []);
 
