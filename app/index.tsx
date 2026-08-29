@@ -2,14 +2,16 @@ import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GlassContainer } from '../components/GlassContainer';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
 import { useThemeColor } from '../hooks/useThemeColor';
 
 export default function Index() {
     const router = useRouter();
-    const [permissionResponse, requestPermission] = MediaLibrary.usePermissions();
+    const [permissionResponse, requestPermission, getPermission] = MediaLibrary.usePermissions({
+        granularPermissions: ['photo', 'video'],
+    });
     const [checking, setChecking] = useState(true);
     const [requesting, setRequesting] = useState(false);
     const { colors } = useThemeColor();
@@ -32,6 +34,16 @@ export default function Index() {
     }, [permissionResponse, router]);
 
     useEffect(() => checkPermissions(), [checkPermissions]);
+
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', (nextState) => {
+            if (nextState === 'active') {
+                void getPermission();
+            }
+        });
+
+        return () => subscription.remove();
+    }, [getPermission]);
 
     const handleRequestPermission = async () => {
         if (permissionResponse?.canAskAgain === false) {
