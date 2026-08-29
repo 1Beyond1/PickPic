@@ -2,7 +2,7 @@
  * Duplicate Group Repository - Manages similar photo groups
  */
 
-import { getDatabase } from '../db';
+import { getDatabase, withTransaction } from '../db';
 
 export interface DupGroup {
     group_id: string;
@@ -132,5 +132,55 @@ export const DupGroupRepository = {
         const db = await getDatabase();
         await db.runAsync('DELETE FROM dup_members');
         await db.runAsync('DELETE FROM dup_groups');
+    },
+
+    /**
+     * Remove an asset whose file contents changed from existing groups and
+     * repair the affected representatives/best-shot references.
+     */
+    async removeAssetFromGroups(assetId: string): Promise<void> {
+        await withTransaction(async db => {
+            const affectedGroups = await db.getAllAsync<{ group_id: string }>(
+                'SELECT DISTINCT group_id FROM dup_members WHERE asset_id = ?',
+                [assetId]
+            );
+
+            if (affectedGroups.length === 0) return;
+
+            await db.runAsync('DELETE FROM dup_members WHERE asset_id = ?', [assetId]);
+
+            for (const { group_id: groupId } of affectedGroups) {
+                const members = await db.getAllAsync<DupMember>(
+                    'SELECT * FROM dup_members WHERE group_id = ? ORDER BY distance ASC',
+                    [groupId]
+                );
+
+                if (members.length === 0) {
+                    await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [groupId]);
+                    continue;
+                }
+
+                const group = await db.getFirstAsync<DupGroup>(
+                    'SELECT * FROM dup_groups WHERE group_id = ?',
+                    [groupId]
+                );
+                if (!group) continue;
+
+                const memberIds = new Set(members.map(member => member.asset_id));
+                const representativeAssetId = memberIds.has(group.representative_asset_id ?? '')
+                    ? group.representative_asset_id
+                    : members[0].asset_id;
+                const bestAssetId = memberIds.has(group.best_asset_id ?? '')
+                    ? group.best_asset_id
+                    : members[0].asset_id;
+
+                await db.runAsync(
+                    `UPDATE dup_groups
+                     SET representative_asset_id = ?, best_asset_id = ?
+                     WHERE group_id = ?`,
+                    [representativeAssetId, bestAssetId, groupId]
+                );
+            }
+        });
     },
 };

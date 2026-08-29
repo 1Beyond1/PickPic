@@ -280,7 +280,11 @@ export const AssetRepository = {
     /**
      * Reset asset to pending if file_signature changed
      */
-    async resetIfSignatureChanged(assetId: string, newSignature: string): Promise<boolean> {
+    async resetIfSignatureChanged(assetId: string, newSignature: string | null): Promise<boolean> {
+        if (newSignature === null) {
+            return false;
+        }
+
         const db = await getDatabase();
         const existing = await this.getById(assetId);
 

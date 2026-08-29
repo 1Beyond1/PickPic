@@ -85,7 +85,7 @@ function waitForInteractions(): Promise<void> {
 /**
  * Generate file signature (modification time + size)
  */
-async function getFileSignature(uri: string): Promise<string> {
+async function getFileSignature(uri: string): Promise<string | null> {
     try {
         const info = await FileSystem.getInfoAsync(uri);
         if (info.exists && !info.isDirectory) {
@@ -94,7 +94,10 @@ async function getFileSignature(uri: string): Promise<string> {
     } catch {
         // Ignore errors
     }
-    return '';
+    // Some platforms expose library-only URIs (for example ph:// on iOS)
+    // that FileSystem cannot stat. Do not treat an unavailable signature as a
+    // changed file or every scan would invalidate the same asset repeatedly.
+    return null;
 }
 
 /**
@@ -117,6 +120,7 @@ async function syncAssetsToDatabase(): Promise<void> {
     let hasMore = true;
     let cursor: string | undefined;
     let synced = 0;
+    let shouldResetCursor = false;
     const seenAssetIds = new Set<string>();
 
     while (hasMore) {
@@ -139,7 +143,11 @@ async function syncAssetsToDatabase(): Promise<void> {
 
             if (existing) {
                 // Check for signature change
-                await AssetRepository.resetIfSignatureChanged(asset.id, signature);
+                const signatureChanged = await AssetRepository.resetIfSignatureChanged(asset.id, signature);
+                if (signatureChanged) {
+                    shouldResetCursor = true;
+                    await DupGroupRepository.removeAssetFromGroups(asset.id);
+                }
             } else {
                 // Insert new asset
                 await AssetRepository.upsert({
@@ -151,6 +159,7 @@ async function syncAssetsToDatabase(): Promise<void> {
                     status: AssetStatus.PENDING,
                 });
                 synced++;
+                shouldResetCursor = true;
             }
         }
 
@@ -169,6 +178,13 @@ async function syncAssetsToDatabase(): Promise<void> {
     const removed = await AssetRepository.removeMissingAssets(seenAssetIds);
     if (removed.length > 0) {
         console.log(`[AIScanner] Removed ${removed.length} missing assets from the local index.`);
+    }
+
+    if (shouldResetCursor) {
+        // New/changed assets can sort before the persisted cursor. Pending
+        // status makes restarting from the beginning cheap for already-done
+        // assets and prevents silently skipping these records.
+        await MetaRepository.resetScanCursor();
     }
 
     console.log(`[AIScanner] Synced ${synced} new assets.`);
@@ -219,6 +235,7 @@ async function resetOutdatedAssets(): Promise<void> {
     if (reset > 0) {
         // Existing duplicate groups were built from the previous algorithm.
         await DupGroupRepository.deleteAll();
+        await MetaRepository.resetScanCursor();
         console.log(`[AIScanner] Reset ${reset} outdated assets.`);
     }
 }
