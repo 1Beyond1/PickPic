@@ -186,7 +186,10 @@ export default function PhotosScreen() {
         );
     }
 
-    if (visiblePhotos.length === 0 && photos.length > 0) {
+    // A persisted delete queue can outlive the in-memory review batch. Keep
+    // the confirmation screen reachable after a restart, even when there
+    // are no remaining photos to load.
+    if (visiblePhotos.length === 0 && (photos.length > 0 || deleteQueue.length > 0)) {
         return (
             <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
                 {handleBatchFinished()}
