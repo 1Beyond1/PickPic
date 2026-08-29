@@ -66,7 +66,11 @@
           "android": {
             "minSdkVersion": 29,
             "enableProguardInReleaseBuilds": true,
-            "enableShrinkResourcesInReleaseBuilds": true
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "extraManifestAttributes": {
+              "android:largeHeap": "true",
+              "android:hardwareAccelerated": "true"
+            }
           }
         }
       ],

@@ -60,10 +60,11 @@ const BATCH_SIZE = 20;
 // ============================================================================
 
 /**
- * Yield to main thread using setTimeout(0)
+ * Yield to main thread using setTimeout
+ * Increased to 50ms to allow GC and Native Bridge to catch up
  */
 function yieldToMainThread(): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, 0));
+    return new Promise(resolve => setTimeout(resolve, 50));
 }
 
 /**
@@ -252,6 +253,9 @@ async function processAsset(assetId: string): Promise<boolean> {
                     if (isCropped) {
                         FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => { });
                     }
+
+                    // Yield to allow GC after heavy image op
+                    await yieldToMainThread();
 
                     if (labels.length > 0) {
                         labelsJson = JSON.stringify(labels);
