@@ -2,7 +2,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GlassContainer } from '../components/GlassContainer';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
 import { useThemeColor } from '../hooks/useThemeColor';
@@ -11,6 +11,7 @@ export default function Index() {
     const router = useRouter();
     const [permissionResponse, requestPermission] = MediaLibrary.usePermissions();
     const [checking, setChecking] = useState(true);
+    const [requesting, setRequesting] = useState(false);
     const { colors } = useThemeColor();
 
     const checkPermissions = useCallback(() => {
@@ -33,11 +34,29 @@ export default function Index() {
     useEffect(() => checkPermissions(), [checkPermissions]);
 
     const handleRequestPermission = async () => {
-        const { granted } = await requestPermission();
-        if (granted) {
-            router.replace('/(tabs)/photos');
+        if (permissionResponse?.canAskAgain === false) {
+            try {
+                await Linking.openSettings();
+            } catch (error) {
+                console.error('Failed to open system settings', error);
+            }
+            return;
+        }
+
+        setRequesting(true);
+        try {
+            const { granted } = await requestPermission();
+            if (granted) {
+                router.replace('/(tabs)/photos');
+            }
+        } catch (error) {
+            console.error('Failed to request media permission', error);
+        } finally {
+            setRequesting(false);
         }
     };
+
+    const canAskAgain = permissionResponse?.canAskAgain !== false;
 
     if (checking || !permissionResponse) {
         return (
@@ -54,16 +73,21 @@ export default function Index() {
             <GlassContainer style={styles.card}>
                 <Text style={styles.title}>需访问权限</Text>
                 <Text style={styles.description}>
-                    PickPic 需要访问您的照片库以帮助您整理照片和视频。
+                    {canAskAgain
+                        ? 'PickPic 需要访问您的照片库以帮助您整理照片和视频。'
+                        : '照片权限已被系统拒绝，请在系统设置中重新开启。'}
                 </Text>
                 <Pressable
                     style={({ pressed }) => [
                         styles.button,
-                        { opacity: pressed ? 0.8 : 1, backgroundColor: colors.primary },
+                        { opacity: pressed || requesting ? 0.8 : 1, backgroundColor: colors.primary },
                     ]}
                     onPress={handleRequestPermission}
+                    disabled={requesting}
                 >
-                    <Text style={styles.buttonText}>授予权限</Text>
+                    <Text style={styles.buttonText}>
+                        {requesting ? '请求中…' : canAskAgain ? '授予权限' : '打开系统设置'}
+                    </Text>
                 </Pressable>
             </GlassContainer>
         </View>

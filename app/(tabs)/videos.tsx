@@ -3,7 +3,7 @@ import { useFocusEffect } from 'expo-router';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useRef, useState } from 'react';
-import { Alert, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
+import { ActivityIndicator, Alert, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -102,52 +102,56 @@ export default function VideosScreen() {
         }
     };
 
-    if (videos.length === 0 && !isLoading) {
-        return (
-            <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                <Text style={[styles.emptyText, { color: colors.text }]}>{t('video_empty')}</Text>
-                <Pressable onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)} style={[styles.actionButton, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
-                </Pressable>
-            </View>
-        )
-    }
-
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]} onLayout={onLayout}>
             {/* Feed */}
-            <FlatList
-                data={videos}
-                keyExtractor={item => item.id}
-                renderItem={({ item }) => (
-                    <VideoFeedItem
-                        video={item}
-                        isActive={item.id === activeId}
-                        shouldPlay={item.id === activeId && isScreenFocused}
-                        isMuted={isMuted}
-                        toggleMute={() => setIsMuted(prev => !prev)}
-                        onDelete={() => markVideoForTrash(item)}
-                        onFavorite={() => handleFavorite(item)}
-                        t={t}
-                        colors={colors}
-                        itemHeight={feedHeight}
-                    />
-                )}
-                pagingEnabled
-                showsVerticalScrollIndicator={false}
-                onViewableItemsChanged={onViewableItemsChanged}
-                viewabilityConfig={viewabilityConfig}
-                snapToInterval={feedHeight}
-                snapToAlignment="start"
-                decelerationRate="fast"
-                disableIntervalMomentum={true}
-                overScrollMode="never"
-                getItemLayout={(data, index) => ({
-                    length: feedHeight,
-                    offset: feedHeight * index,
-                    index,
-                })}
-            />
+            {videos.length > 0 ? (
+                <FlatList
+                    data={videos}
+                    keyExtractor={item => item.id}
+                    renderItem={({ item }) => (
+                        <VideoFeedItem
+                            video={item}
+                            isActive={item.id === activeId}
+                            shouldPlay={item.id === activeId && isScreenFocused}
+                            isMuted={isMuted}
+                            toggleMute={() => setIsMuted(prev => !prev)}
+                            onDelete={() => markVideoForTrash(item)}
+                            onFavorite={() => handleFavorite(item)}
+                            t={t}
+                            colors={colors}
+                            itemHeight={feedHeight}
+                        />
+                    )}
+                    pagingEnabled
+                    showsVerticalScrollIndicator={false}
+                    onViewableItemsChanged={onViewableItemsChanged}
+                    viewabilityConfig={viewabilityConfig}
+                    snapToInterval={feedHeight}
+                    snapToAlignment="start"
+                    decelerationRate="fast"
+                    disableIntervalMomentum={true}
+                    overScrollMode="never"
+                    getItemLayout={(data, index) => ({
+                        length: feedHeight,
+                        offset: feedHeight * index,
+                        index,
+                    })}
+                />
+            ) : (
+                <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+                    {isLoading ? (
+                        <ActivityIndicator size="large" color={colors.primary} />
+                    ) : (
+                        <>
+                            <Text style={[styles.emptyText, { color: colors.text }]}>{t('video_empty')}</Text>
+                            <Pressable onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)} style={[styles.actionButton, { backgroundColor: colors.primary }]}>
+                                <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
+                            </Pressable>
+                        </>
+                    )}
+                </View>
+            )}
 
             {/* Trash Bin Icon (Top Right) */}
             <Pressable
