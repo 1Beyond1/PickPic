@@ -37,6 +37,7 @@ export default {
     settings_theme: '主题',
     theme_WarmTerra: 'Warm Terra',
     theme_light: '浅色',
+    theme_dark: '深色',
     settings_language: '语言',
 
     album_select_title: '选择收藏夹 (最多4个)',

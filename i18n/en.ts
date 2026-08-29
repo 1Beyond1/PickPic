@@ -37,6 +37,7 @@ export default {
     settings_theme: 'Theme',
     theme_WarmTerra: 'Warm Terra',
     theme_light: 'Light',
+    theme_dark: 'Dark',
     settings_language: 'Language',
 
     album_select_title: 'Select Albums (Max 4)',

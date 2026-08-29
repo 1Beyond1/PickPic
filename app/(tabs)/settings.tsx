@@ -13,7 +13,7 @@ import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { APP_VERSION, useSettingsStore } from '../../stores/useSettingsStore';
 
-const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [], colors, isDark, fonts }: any) => {
+const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [], colors, isDark, fonts, formatOption = (option: any) => option }: any) => {
     return (
         <View style={styles.item}>
             <Text style={[styles.label, { color: colors.text, fontFamily: fonts?.ui }]}>{label}</Text>
@@ -45,7 +45,7 @@ const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [
                                         isSelected && { fontWeight: 'bold' }
                                     ]}
                                 >
-                                    {opt}
+                                    {formatOption(opt)}
                                 </Text>
                             </Pressable>
                         );
@@ -229,6 +229,7 @@ export default function SettingsScreen() {
                         value={theme}
                         onValueChange={setTheme}
                         options={['WarmTerra', 'light', 'dark']}
+                        formatOption={(option: string) => t(`theme_${option}` as any)}
                         colors={colors}
                         isDark={isDark}
                         fonts={fonts}
@@ -243,6 +244,7 @@ export default function SettingsScreen() {
                         value={language}
                         onValueChange={setLanguage}
                         options={['zh', 'en']}
+                        formatOption={(option: string) => option === 'zh' ? '中文' : 'English'}
                         colors={colors}
                         isDark={isDark}
                         fonts={fonts}
