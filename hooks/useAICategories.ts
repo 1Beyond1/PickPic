@@ -9,7 +9,7 @@ export interface CategoryGroup {
     id: string;
     title: string;
     count: number;
-    coverAsset: AssetRecord;
+    coverAsset: AssetRecord | null;
     assets: AssetRecord[];
 }
 
@@ -67,8 +67,8 @@ export function useAICategories(): AICategoriesState {
                 }
 
                 categorizedAssetIds.add(asset.asset_id);
-                // Ensure face_count is treated as a number, defaulting to 1 if missing but query returned it
-                const count = (asset as any).face_count || 1;
+                // getPeopleAssets only returns assets with at least one face.
+                const count = asset.face_count ?? 1;
                 // Simplify to Single vs Group
                 const key = count > 1 ? 'people_group' : 'people_single';
 
@@ -235,27 +235,9 @@ export function useAICategories(): AICategoriesState {
                 }
             });
 
-            // Add a "Processing" bucket if there are pending items
-            // Or just include them in the total stats display?
-            // The Hook returns `uncategorizedGroup`. 
-            // We can rename "Uncategorized" to "Others & Processing" if pending > 0?
-            // Or simpler: Just rely on UI to show processing.
-            // But user asked why total is wrong.
-            // If I return a special "Processing" group in objectGroups?
-
-            if (statusCounts.pending > 0) {
-                // Add a placeholder group for Processing
-                objectResult.push({
-                    id: 'status_pending',
-                    title: language === 'zh' ? `处理中 (${statusCounts.pending})` : `Processing (${statusCounts.pending})`,
-                    count: statusCounts.pending,
-                    coverAsset: {} as any, // Placeholder
-                    assets: [] // Empty assets, just for display? User might click and crash.
-                });
-                // Better: Just fix Uncategorized count?
-            }
-
-            // Let's just update Uncategorized to include this info in title?
+            // Include pending work in the uncategorized summary. It does not
+            // have a cover asset of its own, so the UI renders it as a
+            // non-clickable placeholder instead of passing an invalid ID.
             let uncatTitle = language === 'zh' ? '未分类' : 'Uncategorized';
             if (statusCounts.pending > 0) {
                 uncatTitle += ` (+${statusCounts.pending} ${language === 'zh' ? '处理中' : 'processing'})`;
@@ -266,7 +248,7 @@ export function useAICategories(): AICategoriesState {
                     id: 'uncategorized',
                     title: uncatTitle,
                     count: uncategorizedAssets.length + statusCounts.pending, // Sum them up visually
-                    coverAsset: uncategorizedAssets[0] || {} as any,
+                    coverAsset: uncategorizedAssets[0] || null,
                     assets: uncategorizedAssets,
                 });
             } else {

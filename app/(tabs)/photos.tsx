@@ -21,7 +21,7 @@ export default function PhotosScreen() {
     const { colors, isDark } = useThemeColor();
 
     const {
-        photos, albums, loadPhotos, isLoading,
+        photos, albums, loadPhotos, isLoading, hasHydrated,
         markForDeletion, markForCollection, markAsSkipped,
         confirmDeletion, deleteQueue, resetBatch,
         createAlbum, addAssetToAlbum, loadAlbums
@@ -36,9 +36,10 @@ export default function PhotosScreen() {
     const [activeHoverZone, setActiveHoverZone] = useState<string | null>(null);
 
     useEffect(() => {
+        if (!hasHydrated) return;
         loadPhotos(groupSize, displayOrder, selectedAlbumIds);
         loadAlbums();
-    }, []);
+    }, [groupSize, displayOrder, selectedAlbumIds, hasHydrated, loadPhotos, loadAlbums]);
 
     const visiblePhotos = photos.filter(p => !removedIds.includes(p.id));
 

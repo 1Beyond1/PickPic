@@ -22,11 +22,11 @@ export default function VideosScreen() {
     const { colors, isDark } = useThemeColor();
 
     const {
-        videos, loadVideos, isLoading,
+        videos, loadVideos, isLoading, hasHydrated,
         markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
         addAssetToAlbum
     } = useMediaStore();
-    const { activeCollectionIds, displayOrder, selectedAlbumIds } = useSettingsStore();
+    const { displayOrder, selectedAlbumIds } = useSettingsStore();
 
     const [activeId, setActiveId] = useState<string | null>(null);
     const [isMuted, setIsMuted] = useState(true);
@@ -40,8 +40,9 @@ export default function VideosScreen() {
     const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
 
     useEffect(() => {
+        if (!hasHydrated) return;
         loadVideos(50, displayOrder, selectedAlbumIds);
-    }, []);
+    }, [displayOrder, selectedAlbumIds, hasHydrated, loadVideos]);
 
     useFocusEffect(
         useCallback(() => {

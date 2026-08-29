@@ -2,7 +2,7 @@
  * Asset Repository - CRUD operations for scanned assets
  */
 
-import { getDatabase } from '../db';
+import { getDatabase, withTransaction } from '../db';
 import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION } from '../schema';
 
 export interface AssetRecord {
@@ -10,6 +10,7 @@ export interface AssetRecord {
     taken_at: number | null;
     width: number | null;
     height: number | null;
+    face_count: number | null;
     file_signature: string | null;
     algo_version: number | null;
     blur_score: number | null;
@@ -86,6 +87,79 @@ export const AssetRepository = {
     },
 
     /**
+     * Remove database records for assets that are no longer visible in the
+     * media library. This is called only after a complete library sync.
+     */
+    async removeMissingAssets(keepAssetIds: ReadonlySet<string>): Promise<string[]> {
+        const db = await getDatabase();
+        const existing = await db.getAllAsync<{ asset_id: string }>(
+            'SELECT asset_id FROM assets'
+        );
+        const missing = existing
+            .map(row => row.asset_id)
+            .filter(assetId => !keepAssetIds.has(assetId));
+
+        if (missing.length === 0) {
+            return [];
+        }
+
+        await withTransaction(async transactionDb => {
+            // Keep batches below SQLite's bind-parameter limit.
+            for (let i = 0; i < missing.length; i += 500) {
+                const batch = missing.slice(i, i + 500);
+                const placeholders = batch.map(() => '?').join(', ');
+
+                // Remove dependent scan results before removing the asset rows.
+                await transactionDb.runAsync(
+                    `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
+                    batch
+                );
+                await transactionDb.runAsync(
+                    `DELETE FROM face_instances WHERE asset_id IN (${placeholders})`,
+                    batch
+                );
+                await transactionDb.runAsync(
+                    `DELETE FROM assets WHERE asset_id IN (${placeholders})`,
+                    batch
+                );
+            }
+
+            // Repair groups whose representative/best asset was removed, then
+            // delete groups that no longer have any members.
+            await transactionDb.runAsync(
+                'DELETE FROM dup_groups WHERE group_id NOT IN (SELECT DISTINCT group_id FROM dup_members)'
+            );
+            await transactionDb.runAsync(
+                `UPDATE dup_groups
+                 SET representative_asset_id = (
+                     SELECT asset_id FROM dup_members
+                     WHERE dup_members.group_id = dup_groups.group_id
+                     ORDER BY distance ASC
+                     LIMIT 1
+                 ),
+                 best_asset_id = CASE
+                     WHEN best_asset_id IS NULL OR EXISTS (
+                         SELECT 1 FROM dup_members
+                         WHERE dup_members.group_id = dup_groups.group_id
+                           AND dup_members.asset_id = dup_groups.best_asset_id
+                     ) THEN best_asset_id
+                     ELSE (
+                         SELECT asset_id FROM dup_members
+                         WHERE dup_members.group_id = dup_groups.group_id
+                         ORDER BY distance ASC
+                         LIMIT 1
+                     )
+                 END`
+            );
+            await transactionDb.runAsync(
+                'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
+            );
+        });
+
+        return missing;
+    },
+
+    /**
      * Get pending assets for scanning (cursor-based pagination)
      */
     async getPendingBatch(
@@ -154,7 +228,9 @@ export const AssetRepository = {
     async resetOutdatedAssets(currentAlgoVersion: number): Promise<number> {
         const db = await getDatabase();
         const result = await db.runAsync(
-            `UPDATE assets SET status = ?, updated_at = ?
+            `UPDATE assets SET
+       status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
+       face_count = 0, labels_json = NULL, error_message = NULL, updated_at = ?
        WHERE status = ? AND (algo_version IS NULL OR algo_version < ?)`,
             [AssetStatus.PENDING, Date.now(), AssetStatus.DONE, currentAlgoVersion]
         );
@@ -170,7 +246,12 @@ export const AssetRepository = {
 
         if (existing && existing.file_signature !== newSignature) {
             await db.runAsync(
-                `UPDATE assets SET status = ?, file_signature = ?, updated_at = ? WHERE asset_id = ?`,
+                `UPDATE assets SET
+           status = ?, file_signature = ?, algo_version = NULL,
+           blur_score = NULL, mean_luma = NULL, phash = NULL,
+           face_count = 0, labels_json = NULL, error_message = NULL,
+           updated_at = ?
+         WHERE asset_id = ?`,
                 [AssetStatus.PENDING, newSignature, Date.now(), assetId]
             );
             return true;
@@ -216,9 +297,9 @@ export const AssetRepository = {
             error: number;
         }>(
             `SELECT
-        SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) as done,
-        SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END) as error
+        COALESCE(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END), 0) as pending,
+        COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) as done,
+        COALESCE(SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END), 0) as error
        FROM assets`
         );
         return result ?? { pending: 0, done: 0, error: 0 };
@@ -261,5 +342,18 @@ export const AssetRepository = {
              updated_at = ?`,
             [AssetStatus.PENDING, Date.now()]
         );
+    },
+
+    /**
+     * Make failed assets eligible for an explicit resume/retry action.
+     */
+    async resetErrors(): Promise<number> {
+        const db = await getDatabase();
+        const result = await db.runAsync(
+            `UPDATE assets SET status = ?, error_message = NULL, updated_at = ?
+             WHERE status = ?`,
+            [AssetStatus.PENDING, Date.now(), AssetStatus.ERROR]
+        );
+        return result.changes;
     },
 };

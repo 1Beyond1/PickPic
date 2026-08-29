@@ -111,8 +111,11 @@ async function syncAssetsToDatabase(): Promise<void> {
     let hasMore = true;
     let cursor: string | undefined;
     let synced = 0;
+    const seenAssetIds = new Set<string>();
 
     while (hasMore) {
+        if (shouldStop) return;
+
         const result = await MediaLibrary.getAssetsAsync({
             mediaType: 'photo',
             first: 100,
@@ -121,6 +124,9 @@ async function syncAssetsToDatabase(): Promise<void> {
         });
 
         for (const asset of result.assets) {
+            if (shouldStop) return;
+            seenAssetIds.add(asset.id);
+
             // Check if asset exists and signature changed
             const signature = await getFileSignature(asset.uri);
             const existing = await AssetRepository.getById(asset.id);
@@ -142,13 +148,21 @@ async function syncAssetsToDatabase(): Promise<void> {
             }
         }
 
-        hasMore = result.hasNextPage;
-        cursor = result.endCursor;
+        const nextCursor = result.endCursor;
+        hasMore = result.hasNextPage && !!nextCursor && nextCursor !== cursor;
+        cursor = nextCursor;
 
         // Yield periodically
-        if (synced % 500 === 0) {
+        if (synced > 0 && synced % 500 === 0) {
             await yieldToMainThread();
         }
+    }
+
+    if (shouldStop) return;
+
+    const removed = await AssetRepository.removeMissingAssets(seenAssetIds);
+    if (removed.length > 0) {
+        console.log(`[AIScanner] Removed ${removed.length} missing assets from the local index.`);
     }
 
     console.log(`[AIScanner] Synced ${synced} new assets.`);
@@ -162,6 +176,8 @@ async function resetOutdatedAssets(): Promise<void> {
     const reset = await AssetRepository.resetOutdatedAssets(globalVersion);
 
     if (reset > 0) {
+        // Existing duplicate groups were built from the previous algorithm.
+        await DupGroupRepository.deleteAll();
         console.log(`[AIScanner] Reset ${reset} outdated assets.`);
     }
 }
@@ -401,7 +417,7 @@ async function processBatch(): Promise<boolean> {
         useScannerStore.getState().incrementProgress(success);
 
         // Update cursor
-        if (asset.taken_at !== null) {
+        if (success && asset.taken_at !== null) {
             await MetaRepository.setScanCursor(asset.taken_at, asset.asset_id);
         }
     }
@@ -510,6 +526,14 @@ export async function resumeOnce(cbs?: ScannerCallbacks): Promise<void> {
     useScannerStore.getState().setIsRunning(true);
 
     try {
+        const retried = await AssetRepository.resetErrors();
+        if (retried > 0) {
+            // Failed assets may be older than the persisted cursor. Rewind so
+            // the explicit retry action cannot skip them.
+            await MetaRepository.resetScanCursor();
+            console.log(`[AIScanner] Retrying ${retried} previously failed assets.`);
+        }
+
         // Reset outdated assets
         await resetOutdatedAssets();
 
@@ -557,7 +581,14 @@ export async function resetCursor(): Promise<void> {
 export async function resetAllProgress(): Promise<void> {
     if (isRunning) {
         stop();
-        await yieldToMainThread();
+        const deadline = Date.now() + 30000;
+        while (isRunning && Date.now() < deadline) {
+            await yieldToMainThread();
+        }
+
+        if (isRunning) {
+            throw new Error('Scanner did not stop in time; progress was not reset.');
+        }
     }
     await MetaRepository.resetScanCursor();
     await AssetRepository.resetAll();

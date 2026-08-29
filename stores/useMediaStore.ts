@@ -1,5 +1,7 @@
 import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DisplayOrder } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
@@ -27,6 +29,7 @@ interface MediaState {
 
     isLoading: boolean;
     hasPermission: boolean;
+    hasHydrated: boolean;
 
     // Actions
     loadAlbums: () => Promise<void>;
@@ -54,6 +57,46 @@ interface MediaState {
     resetPhotoProgress: () => void;
     resetVideoProgress: () => void;
     setPermission: (status: boolean) => void;
+    setHasHydrated: (status: boolean) => void;
+}
+
+type MediaType = 'photo' | 'video';
+
+/**
+ * Load every page for a media query. The old implementation only requested
+ * the first page, which silently hid assets in larger libraries.
+ */
+async function loadAllAssets(
+    mediaType: MediaType,
+    sortBy: MediaLibrary.SortByValue[],
+    albumId?: string
+): Promise<MediaLibrary.Asset[]> {
+    const assets: MediaLibrary.Asset[] = [];
+    let after: string | undefined;
+
+    while (true) {
+        const result = await MediaLibrary.getAssetsAsync({
+            mediaType,
+            first: 100,
+            sortBy,
+            ...(albumId ? { album: albumId } : {}),
+            ...(after ? { after } : {}),
+        });
+
+        assets.push(...result.assets);
+
+        if (!result.hasNextPage || !result.endCursor || result.endCursor === after) {
+            break;
+        }
+
+        after = result.endCursor;
+    }
+
+    return assets;
+}
+
+function deduplicateAssets(assets: MediaLibrary.Asset[]): MediaLibrary.Asset[] {
+    return Array.from(new Map(assets.map(asset => [asset.id, asset])).values());
 }
 
 // Fisher-Yates shuffle algorithm
@@ -66,7 +109,9 @@ function shuffleArray<T>(array: T[]): T[] {
     return shuffled;
 }
 
-export const useMediaStore = create<MediaState>((set, get) => ({
+export const useMediaStore = create<MediaState>()(
+    persist(
+        (set, get) => ({
     photos: [],
     videos: [],
     albums: [],
@@ -84,8 +129,10 @@ export const useMediaStore = create<MediaState>((set, get) => ({
 
     isLoading: false,
     hasPermission: false,
+    hasHydrated: false,
 
     setPermission: (status) => set({ hasPermission: status }),
+    setHasHydrated: (status) => set({ hasHydrated: status }),
 
     loadAlbums: async () => {
         try {
@@ -129,23 +176,16 @@ export const useMediaStore = create<MediaState>((set, get) => ({
             if (albumIds.length > 0) {
                 // Load from specific albums
                 for (const albumId of albumIds) {
-                    const result = await MediaLibrary.getAssetsAsync({
-                        mediaType: 'photo',
-                        first: 500,
-                        sortBy,
-                        album: albumId,
-                    });
-                    allAssets.push(...result.assets);
+                    allAssets.push(...await loadAllAssets('photo', sortBy, albumId));
                 }
             } else {
                 // Load from all albums
-                const result = await MediaLibrary.getAssetsAsync({
-                    mediaType: 'photo',
-                    first: 500,
-                    sortBy,
-                });
-                allAssets = result.assets;
-                set({ totalPhotos: result.totalCount });
+                allAssets = await loadAllAssets('photo', sortBy);
+            }
+
+            allAssets = deduplicateAssets(allAssets);
+            if (albumIds.length === 0) {
+                set({ totalPhotos: allAssets.length });
             }
 
             let filtered = allAssets.filter(a => !photoProcessedIds.includes(a.id));
@@ -175,22 +215,15 @@ export const useMediaStore = create<MediaState>((set, get) => ({
 
             if (albumIds.length > 0) {
                 for (const albumId of albumIds) {
-                    const result = await MediaLibrary.getAssetsAsync({
-                        mediaType: 'video',
-                        first: 200,
-                        sortBy,
-                        album: albumId,
-                    });
-                    allAssets.push(...result.assets);
+                    allAssets.push(...await loadAllAssets('video', sortBy, albumId));
                 }
             } else {
-                const result = await MediaLibrary.getAssetsAsync({
-                    mediaType: 'video',
-                    first: 200,
-                    sortBy,
-                });
-                allAssets = result.assets;
-                set({ totalVideos: result.totalCount });
+                allAssets = await loadAllAssets('video', sortBy);
+            }
+
+            allAssets = deduplicateAssets(allAssets);
+            if (albumIds.length === 0) {
+                set({ totalVideos: allAssets.length });
             }
 
             let filtered = allAssets.filter(a => !videoProcessedIds.includes(a.id));
@@ -322,4 +355,17 @@ export const useMediaStore = create<MediaState>((set, get) => ({
             console.error("Failed to refresh total counts", e);
         }
     }
-}));
+        }),
+        {
+            name: 'photoapp-media-progress',
+            storage: createJSONStorage(() => AsyncStorage),
+            partialize: (state) => ({
+                photoProcessedIds: state.photoProcessedIds,
+                videoProcessedIds: state.videoProcessedIds,
+            }),
+            onRehydrateStorage: () => (state) => {
+                state?.setHasHydrated(true);
+            },
+        }
+    )
+);

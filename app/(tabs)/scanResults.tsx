@@ -226,9 +226,14 @@ export default function ScanResultsScreen() {
     const renderCategoryCard = ({ item }: { item: CategoryGroup }) => (
         <Pressable
             style={styles.categoryCard}
-            onPress={() => setSelectedCategory(item)}
+            disabled={item.assets.length === 0}
+            onPress={() => {
+                if (item.assets.length > 0) {
+                    setSelectedCategory(item);
+                }
+            }}
         >
-            <CategoryThumbnail assetId={item.coverAsset.asset_id} />
+            <CategoryThumbnail assetId={item.coverAsset?.asset_id} />
             <View style={styles.categoryInfoOverlay}>
                 <Text style={styles.categoryTitle} numberOfLines={1}>
                     {t(('ai_category_' + item.title) as any) || item.title}
@@ -492,10 +497,12 @@ export default function ScanResultsScreen() {
 }
 
 // Helper component to load image for category
-function CategoryThumbnail({ assetId }: { assetId: string }) {
+function CategoryThumbnail({ assetId }: { assetId?: string }) {
     const [uri, setUri] = useState<string | null>(null);
 
     useEffect(() => {
+        if (!assetId) return;
+
         let mounted = true;
         MediaLibrary.getAssetInfoAsync(assetId).then(info => {
             if (mounted && info && (info.localUri || info.uri)) {
