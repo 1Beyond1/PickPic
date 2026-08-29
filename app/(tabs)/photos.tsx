@@ -57,13 +57,19 @@ export default function PhotosScreen() {
         setTimeout(() => setToastMessage(null), 1500);
     };
 
-    const handleSwipeDown = (photo: any, zoneId?: string) => {
+    const handleSwipeDown = async (photo: any, zoneId?: string) => {
         if (zoneId) {
             // Existing Album
             const albumName = albums.find(a => a.id === zoneId)?.title || '相册';
-            addAssetToAlbum(zoneId, photo);
-            setRemovedIds(prev => [...prev, photo.id]);
-            showToast(`已收藏至「${albumName}」`);
+            try {
+                await addAssetToAlbum(zoneId, photo);
+                markAsSkipped(photo);
+                setRemovedIds(prev => [...prev, photo.id]);
+                showToast(`已收藏至「${albumName}」`);
+            } catch (error) {
+                console.error('Failed to collect photo', error);
+                showToast('收藏失败，请重试');
+            }
         } else {
             // Just Skip / Keep
             markAsSkipped(photo);
@@ -74,11 +80,17 @@ export default function PhotosScreen() {
 
     const handleCreateAlbum = async () => {
         if (newAlbumName && pendingCollectionPhoto) {
-            await createAlbum(newAlbumName, pendingCollectionPhoto);
-            setRemovedIds(prev => [...prev, pendingCollectionPhoto.id]);
-            setPendingCollectionPhoto(null);
-            setNewAlbumName('');
-            setShowNewAlbumModal(false);
+            try {
+                await createAlbum(newAlbumName, pendingCollectionPhoto);
+                markAsSkipped(pendingCollectionPhoto);
+                setRemovedIds(prev => [...prev, pendingCollectionPhoto.id]);
+                setPendingCollectionPhoto(null);
+                setNewAlbumName('');
+                setShowNewAlbumModal(false);
+            } catch (error) {
+                console.error('Failed to create photo album', error);
+                showToast('创建相册失败，请重试');
+            }
         }
     };
 
@@ -151,10 +163,15 @@ export default function PhotosScreen() {
                 </GlassContainer>
 
                 <Pressable style={[styles.actionButton, { backgroundColor: colors.primary }]} onPress={async () => {
-                    await confirmDeletion(); // Wait for deletion to complete
-                    resetBatch();
-                    loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-                    setRemovedIds([]);
+                    try {
+                        await confirmDeletion(); // Wait for deletion to complete
+                        resetBatch();
+                        loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+                        setRemovedIds([]);
+                    } catch (error) {
+                        console.error('Failed to confirm photo deletion', error);
+                        showToast('删除失败，请重试');
+                    }
                 }}>
                     <Text style={styles.actionButtonText}>{t('photos_confirm')}</Text>
                 </Pressable>

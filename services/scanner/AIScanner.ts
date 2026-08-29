@@ -316,7 +316,7 @@ async function processAsset(assetId: string): Promise<boolean> {
         // Find similar photos
         const asset = await AssetRepository.getById(assetId);
         if (asset && asset.taken_at) {
-            const matches = await findSimilarPhotos(phash, asset.taken_at);
+            const matches = await findSimilarPhotos(phash, asset.taken_at, assetId);
 
             if (matches.length > 0) {
                 // Check if any match is already in a group

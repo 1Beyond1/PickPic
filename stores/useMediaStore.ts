@@ -99,20 +99,19 @@ export const useMediaStore = create<MediaState>((set, get) => ({
     createAlbum: async (name, asset) => {
         try {
             await MediaLibrary.createAlbumAsync(name, asset, false);
-            get().loadAlbums();
+            await get().loadAlbums();
         } catch (e) {
             console.error("Failed to create album", e);
+            throw e;
         }
     },
 
     addAssetToAlbum: async (albumId, asset) => {
         try {
             await MediaLibrary.addAssetsToAlbumAsync([asset], albumId);
-            const { photoProcessedIds } = get();
-            set({ photoProcessedIds: [...photoProcessedIds, asset.id] });
-            await MediaLibrary.deleteAssetsAsync([asset]);
         } catch (e) {
-            console.error("Failed to add to album (and delete original)", e);
+            console.error("Failed to add asset to album", e);
+            throw e;
         }
     },
 
@@ -284,7 +283,10 @@ export const useMediaStore = create<MediaState>((set, get) => ({
             await MediaLibrary.deleteAssetsAsync(ids);
             console.log(`Batch deletion: ${ids.length} items deleted`);
         } catch (e) {
+            // Keep the queue so the user can retry after fixing permissions or
+            // another temporary media-library failure.
             console.error("Batch deletion failed", e);
+            throw e;
         }
 
         set({ deleteQueue: [] });

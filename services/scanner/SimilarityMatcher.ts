@@ -33,6 +33,7 @@ export async function computePhash(assetUri: string): Promise<string> {
 export async function findSimilarPhotos(
     targetPhash: string,
     targetTakenAt: number,
+    targetAssetId?: string,
     config: SimilarityConfig = DEFAULT_SIMILARITY_CONFIG
 ): Promise<SimilarityMatch[]> {
     const imageOps = getImageOps();
@@ -41,12 +42,15 @@ export async function findSimilarPhotos(
     const candidates = await AssetRepository.getRecentDoneAssets(
         targetTakenAt,
         config.timeWindowSeconds,
-        config.maxCompareCount
+        config.maxCompareCount,
+        targetAssetId
     );
 
     const matches: SimilarityMatch[] = [];
 
     for (const candidate of candidates) {
+        // The target is marked DONE before matching, so explicitly exclude it.
+        if (candidate.asset_id === targetAssetId) continue;
         if (!candidate.phash) continue;
 
         const distance = imageOps.hammingDistance64(targetPhash, candidate.phash);

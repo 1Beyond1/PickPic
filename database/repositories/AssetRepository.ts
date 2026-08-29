@@ -184,18 +184,24 @@ export const AssetRepository = {
     async getRecentDoneAssets(
         takenAt: number,
         windowSeconds: number = 120,
-        limit: number = 10
+        limit: number = 10,
+        excludeAssetId?: string
     ): Promise<AssetRecord[]> {
         const db = await getDatabase();
         const minTime = takenAt - windowSeconds * 1000;
         const maxTime = takenAt + windowSeconds * 1000;
 
+        const exclusion = excludeAssetId ? ' AND asset_id != ?' : '';
+        const params: (string | number)[] = [AssetStatus.DONE, minTime, maxTime];
+        if (excludeAssetId) params.push(excludeAssetId);
+        params.push(limit);
+
         return db.getAllAsync<AssetRecord>(
             `SELECT * FROM assets
-       WHERE status = ? AND taken_at BETWEEN ? AND ?
+       WHERE status = ? AND taken_at BETWEEN ? AND ?${exclusion}
        ORDER BY taken_at DESC
        LIMIT ?`,
-            [AssetStatus.DONE, minTime, maxTime, limit]
+            params
         );
     },
 

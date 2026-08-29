@@ -3,7 +3,7 @@ import { useFocusEffect } from 'expo-router';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
+import { Alert, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -18,7 +18,7 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function VideosScreen() {
     const insets = useSafeAreaInsets();
-    const { t } = useI18n();
+    const { t, language } = useI18n();
     const { colors, isDark } = useThemeColor();
 
     const {
@@ -78,9 +78,17 @@ export default function VideosScreen() {
         setShowAlbumSelector(true);
     };
 
-    const handleConfirmCollection = (ids: string[]) => {
+    const handleConfirmCollection = async (ids: string[]) => {
         if (selectedVideoForCollection && ids.length > 0) {
-            ids.forEach(id => addAssetToAlbum(id, selectedVideoForCollection));
+            try {
+                await Promise.all(ids.map(id => addAssetToAlbum(id, selectedVideoForCollection)));
+            } catch (error) {
+                console.error('Failed to collect video', error);
+                Alert.alert(
+                    language === 'zh' ? '收藏失败' : 'Collection failed',
+                    language === 'zh' ? '请重试，原视频未被删除。' : 'Please try again. The original video was not deleted.'
+                );
+            }
         }
         setShowAlbumSelector(false);
         setSelectedVideoForCollection(null);
