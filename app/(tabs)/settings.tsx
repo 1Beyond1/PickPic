@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
@@ -74,7 +75,7 @@ export default function SettingsScreen() {
     const {
         photoProcessedIds, videoProcessedIds,
         resetPhotoProgress, resetVideoProgress,
-        totalPhotos, totalVideos
+        totalPhotos, totalVideos, refreshTotalCounts
     } = useMediaStore();
 
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
@@ -107,6 +108,10 @@ export default function SettingsScreen() {
     const [showResetPhotosConfirm, setShowResetPhotosConfirm] = useState(false);
     const [showResetVideosConfirm, setShowResetVideosConfirm] = useState(false);
     const [isResettingScanner, setIsResettingScanner] = useState(false);
+
+    useFocusEffect(useCallback(() => {
+        void refreshTotalCounts();
+    }, [refreshTotalCounts]));
 
     const handleResetScanner = () => {
         setShowResetConfirm(true);
