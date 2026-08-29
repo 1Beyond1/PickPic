@@ -321,12 +321,17 @@ async function processAsset(assetId: string): Promise<boolean> {
                         console.warn('[AIScanner] Crop failed, using original:', e);
                     }
 
-                    const labels = await MLKitService.labelImage(labelingUri);
-
-                    // Clean up temporary crop file
-                    if (isCropped) {
-                        FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => { });
-                    }
+                    const labels = await (async () => {
+                        try {
+                            return await MLKitService.labelImage(labelingUri);
+                        } finally {
+                            // Always clean up the temporary crop, including
+                            // when classification times out or throws.
+                            if (isCropped) {
+                                await FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => { });
+                            }
+                        }
+                    })();
 
                     // Yield to allow GC after heavy image op
                     await yieldToMainThread();
