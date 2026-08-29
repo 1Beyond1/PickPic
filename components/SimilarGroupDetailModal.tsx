@@ -4,7 +4,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     Dimensions,
@@ -61,11 +61,13 @@ export function SimilarGroupDetailModal({
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [previewPhoto, setPreviewPhoto] = useState<PhotoItem | null>(null);
+    const loadRequestIdRef = useRef(0);
     // Animation state
     const [isAnimating, setIsAnimating] = useState(false);
     const animProgress = useSharedValue(0);
 
     const loadPhotos = useCallback(async () => {
+        const requestId = ++loadRequestIdRef.current;
         const items: PhotoItem[] = [];
         for (const assetId of memberAssetIds) {
             try {
@@ -80,6 +82,7 @@ export function SimilarGroupDetailModal({
                 // Skip failed loads
             }
         }
+        if (requestId !== loadRequestIdRef.current) return;
         setPhotos(items);
 
         if (items.length > 0) {
@@ -99,6 +102,13 @@ export function SimilarGroupDetailModal({
     useEffect(() => {
         if (visible && memberAssetIds.length > 0) {
             loadPhotos();
+            setSelectedIds(new Set());
+            setPreviewPhoto(null);
+        } else {
+            loadRequestIdRef.current += 1;
+            setPhotos([]);
+            setSelectedIds(new Set());
+            setPreviewPhoto(null);
         }
     }, [visible, memberAssetIds, loadPhotos]);
 

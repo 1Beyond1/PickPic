@@ -1,7 +1,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     BackHandler,
@@ -60,6 +60,7 @@ export function SimilarGroupDetailOverlay({
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [previewPhoto, setPreviewPhoto] = useState<PhotoItem | null>(null);
+    const loadRequestIdRef = useRef(0);
 
     // Animation state
     const [isAnimating, setIsAnimating] = useState(false);
@@ -67,6 +68,7 @@ export function SimilarGroupDetailOverlay({
     const overlayOpacity = useSharedValue(0);
 
     const loadPhotos = useCallback(async () => {
+        const requestId = ++loadRequestIdRef.current;
         const items: PhotoItem[] = [];
         for (const assetId of memberAssetIds) {
             try {
@@ -81,7 +83,9 @@ export function SimilarGroupDetailOverlay({
                 // Skip
             }
         }
-        setPhotos(items);
+        if (requestId === loadRequestIdRef.current) {
+            setPhotos(items);
+        }
     }, [memberAssetIds]);
 
     const handleClose = useCallback(() => {
@@ -96,6 +100,8 @@ export function SimilarGroupDetailOverlay({
     useEffect(() => {
         if (visible && memberAssetIds.length > 0) {
             loadPhotos();
+            setSelectedIds(new Set());
+            setPreviewPhoto(null);
             // Start enter animation
             overlayOpacity.value = withTiming(1, { duration: 300 });
 
@@ -110,8 +116,11 @@ export function SimilarGroupDetailOverlay({
                     runOnJS(setIsAnimating)(false);
                 }
             });
-        } else if (!visible) {
-            setPhotos([]); // Clear on close to avoid flash
+        } else {
+            loadRequestIdRef.current += 1;
+            setPhotos([]); // Clear on close or an empty group to avoid stale content
+            setSelectedIds(new Set());
+            setPreviewPhoto(null);
         }
     }, [visible, memberAssetIds, loadPhotos, overlayOpacity, animProgress]);
 

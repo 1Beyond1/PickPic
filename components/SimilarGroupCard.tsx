@@ -28,6 +28,7 @@ export function SimilarGroupCard({
     const { t } = useI18n();
     const [thumbnails, setThumbnails] = useState<string[]>([]);
     const containerRef = React.useRef<View>(null);
+    const loadRequestIdRef = React.useRef(0);
 
     const handlePress = () => {
         containerRef.current?.measureInWindow((x, y, width, height) => {
@@ -36,6 +37,7 @@ export function SimilarGroupCard({
     };
 
     const loadThumbnails = useCallback(async () => {
+        const requestId = ++loadRequestIdRef.current;
         const uris: string[] = [];
         // Load up to 4 thumbnails for stacking effect
         const idsToLoad = memberAssetIds.slice(0, 4);
@@ -49,11 +51,16 @@ export function SimilarGroupCard({
                 // Skip failed loads
             }
         }
-        setThumbnails(uris);
+        if (requestId === loadRequestIdRef.current) {
+            setThumbnails(uris);
+        }
     }, [memberAssetIds]);
 
     useEffect(() => {
         loadThumbnails();
+        return () => {
+            loadRequestIdRef.current += 1;
+        };
     }, [loadThumbnails]);
 
     const renderStackedCards = () => {
