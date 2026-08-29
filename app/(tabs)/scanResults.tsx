@@ -57,6 +57,12 @@ export default function ScanResultsScreen() {
     // AI Categories Hook
     const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, refresh: refreshAI } = useAICategories(enableAIClassification);
 
+    useEffect(() => {
+        if (!enableAIClassification && activeTab === 'ai') {
+            setActiveTab('blur');
+        }
+    }, [activeTab, enableAIClassification]);
+
     const loadResults = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
         // ... (existing loadResults code) ...
