@@ -392,22 +392,31 @@ async function processAsset(assetId: string): Promise<boolean> {
             const matches = await findSimilarPhotos(phash, asset.taken_at, assetId);
 
             if (matches.length > 0) {
-                // Check if any match is already in a group
-                let targetGroupId: string | null = null;
-
+                // Collect every group represented by the matches. A new
+                // asset can bridge previously separate groups, so keeping
+                // only the first group would leave overlapping results.
+                const existingGroupIds = new Set<string>();
                 for (const match of matches) {
-                    const existingGroupId = await DupGroupRepository.findGroupByAssetId(match.assetId);
-                    if (existingGroupId) {
-                        targetGroupId = existingGroupId;
-                        break;
-                    }
+                    const groupIds = await DupGroupRepository.findGroupIdsByAssetId(match.assetId);
+                    groupIds.forEach(groupId => existingGroupIds.add(groupId));
                 }
 
-                if (!targetGroupId) {
+                let targetGroupId: string | null = null;
+
+                const firstExistingGroupId = existingGroupIds.values().next().value as string | undefined;
+                if (firstExistingGroupId) {
+                    targetGroupId = firstExistingGroupId;
+                } else {
                     // Create new group with first match as representative
                     targetGroupId = generateGroupId();
                     await DupGroupRepository.createGroup(targetGroupId, matches[0].assetId);
                     await DupGroupRepository.addMember(targetGroupId, matches[0].assetId, 0);
+                }
+
+                for (const groupId of existingGroupIds) {
+                    if (groupId !== targetGroupId) {
+                        await DupGroupRepository.mergeGroups(targetGroupId, groupId);
+                    }
                 }
 
                 // Add current asset to group

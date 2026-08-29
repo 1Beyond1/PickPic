@@ -70,6 +70,19 @@ export const DupGroupRepository = {
     },
 
     /**
+     * Find every group that contains an asset. In normal operation an asset
+     * belongs to one group, but older scans can leave overlapping groups.
+     */
+    async findGroupIdsByAssetId(assetId: string): Promise<string[]> {
+        const db = await getDatabase();
+        const rows = await db.getAllAsync<{ group_id: string }>(
+            'SELECT group_id FROM dup_members WHERE asset_id = ?',
+            [assetId]
+        );
+        return rows.map(row => row.group_id);
+    },
+
+    /**
      * Get all members of a group
      */
     async getGroupMembers(groupId: string): Promise<DupMember[]> {
@@ -114,16 +127,41 @@ export const DupGroupRepository = {
      * Merge two groups (move all members from source to target)
      */
     async mergeGroups(targetGroupId: string, sourceGroupId: string): Promise<void> {
-        const db = await getDatabase();
+        if (targetGroupId === sourceGroupId) return;
 
-        // Move members from source to target
-        await db.runAsync(
-            `UPDATE dup_members SET group_id = ? WHERE group_id = ?`,
-            [targetGroupId, sourceGroupId]
-        );
+        await withTransaction(async db => {
+            const sourceMembers = await db.getAllAsync<DupMember>(
+                'SELECT asset_id, distance FROM dup_members WHERE group_id = ?',
+                [sourceGroupId]
+            );
 
-        // Delete source group
-        await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [sourceGroupId]);
+            // A member can already exist in the target when two groups
+            // overlap. Keep the closest recorded distance instead of relying
+            // on UPDATE of the composite primary key, which would fail.
+            for (const member of sourceMembers) {
+                const targetMember = await db.getFirstAsync<{ distance: number }>(
+                    'SELECT distance FROM dup_members WHERE group_id = ? AND asset_id = ?',
+                    [targetGroupId, member.asset_id]
+                );
+
+                if (targetMember) {
+                    if (member.distance < targetMember.distance) {
+                        await db.runAsync(
+                            'UPDATE dup_members SET distance = ? WHERE group_id = ? AND asset_id = ?',
+                            [member.distance, targetGroupId, member.asset_id]
+                        );
+                    }
+                } else {
+                    await db.runAsync(
+                        'INSERT INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)',
+                        [targetGroupId, member.asset_id, member.distance]
+                    );
+                }
+            }
+
+            await db.runAsync('DELETE FROM dup_members WHERE group_id = ?', [sourceGroupId]);
+            await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [sourceGroupId]);
+        });
     },
     /**
      * Delete ALL groups and members (Clean reset)
