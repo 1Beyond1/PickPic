@@ -37,8 +37,7 @@ function getBridgeQueue() {
 function enqueueRequest<T>(
     queue: any,
     type: 'detectFaces' | 'labelImage',
-    imageUri: string,
-    timeoutFallback: T
+    imageUri: string
 ): Promise<T> {
     const requestId = `${Date.now()}-${Math.random()}`;
 
@@ -50,26 +49,32 @@ function enqueueRequest<T>(
             settled = true;
             queue.cancel?.(requestId);
             console.warn(`[MLKit] ${type} timed out`);
-            resolve(timeoutFallback);
+            reject(new Error(`${type} timed out`));
         }, 5000);
 
-        queue.push({
-            id: requestId,
-            type,
-            imageUri,
-            resolve: (result: T) => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(timeout);
-                resolve(result);
-            },
-            reject: (error: Error) => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(timeout);
-                reject(error);
-            },
-        });
+        try {
+            queue.push({
+                id: requestId,
+                type,
+                imageUri,
+                resolve: (result: T) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeout);
+                    resolve(result);
+                },
+                reject: (error: Error) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeout);
+                    reject(error);
+                },
+            });
+        } catch (error) {
+            settled = true;
+            clearTimeout(timeout);
+            reject(error instanceof Error ? error : new Error(String(error)));
+        }
     });
 }
 
@@ -92,10 +97,10 @@ export const MLKitService = {
                 return [];
             }
 
-            return await enqueueRequest(queue, 'detectFaces', imageUri, []);
+            return await enqueueRequest<DetectedFace[]>(queue, 'detectFaces', imageUri);
         } catch (error) {
             console.error('[MLKit] Face detection error:', error);
-            return [];
+            throw error instanceof Error ? error : new Error(String(error));
         }
     },
 
@@ -110,10 +115,10 @@ export const MLKitService = {
                 return [];
             }
 
-            return await enqueueRequest(queue, 'labelImage', imageUri, []);
+            return await enqueueRequest<ImageLabel[]>(queue, 'labelImage', imageUri);
         } catch (error) {
             console.error('[MLKit] Image labeling error:', error);
-            return [];
+            throw error instanceof Error ? error : new Error(String(error));
         }
     },
 
