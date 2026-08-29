@@ -10,6 +10,7 @@ import {
     getStatus,
     isScanning as isScannerRunning,
     resumeOnce as resumeOnceScanner,
+    ScanBatchOptions,
     ScanProgress,
     start as startScanner,
     stop as stopScanner
@@ -25,7 +26,7 @@ export interface UseAIScannerResult {
     // Actions
     start: () => Promise<void>;
     stop: () => void;
-    resumeOnce: () => Promise<void>;
+    resumeOnce: (options?: ScanBatchOptions) => Promise<void>;
     resetScan: () => Promise<void>;
     refreshStatus: () => Promise<void>;
 }
@@ -78,14 +79,14 @@ export function useAIScanner(): UseAIScannerResult {
     }, []);
 
     // Resume for one batch
-    const resumeOnce = useCallback(async () => {
+    const resumeOnce = useCallback(async (options?: ScanBatchOptions) => {
         if (isScannerRunning()) {
             console.log('[useAIScanner] Scanner already running');
             return;
         }
 
         setLastError(null);
-        await resumeOnceScanner();
+        await resumeOnceScanner(options);
     }, [setLastError]);
 
     // Refresh status

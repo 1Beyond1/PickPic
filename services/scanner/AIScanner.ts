@@ -36,6 +36,12 @@ export interface ScanProgress {
     isRunning: boolean;
 }
 
+export interface ScanBatchOptions {
+    mode: 'album' | 'count';
+    albumIds?: string[];
+    count?: number;
+}
+
 export interface ScannerCallbacks {
     onProgress?: (progress: ScanProgress) => void;
     onAssetScanned?: (assetId: string, success: boolean) => void;
@@ -166,6 +172,41 @@ async function syncAssetsToDatabase(): Promise<void> {
     }
 
     console.log(`[AIScanner] Synced ${synced} new assets.`);
+}
+
+/**
+ * Resolve the current photo IDs for selected albums. The scan itself uses
+ * database records, but the album membership is owned by MediaLibrary and
+ * must be read fresh for each album scan.
+ */
+async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<string[]> {
+    const assetIds = new Set<string>();
+
+    for (const albumId of new Set(albumIds)) {
+        let hasMore = true;
+        let cursor: string | undefined;
+
+        while (hasMore) {
+            if (shouldStop) return Array.from(assetIds);
+
+            const result = await MediaLibrary.getAssetsAsync({
+                mediaType: 'photo',
+                first: 100,
+                album: albumId,
+                ...(cursor ? { after: cursor } : {}),
+            });
+
+            for (const asset of result.assets) {
+                assetIds.add(asset.id);
+            }
+
+            const nextCursor = result.endCursor;
+            hasMore = result.hasNextPage && !!nextCursor && nextCursor !== cursor;
+            cursor = nextCursor;
+        }
+    }
+
+    return Array.from(assetIds);
 }
 
 /**
@@ -380,16 +421,16 @@ async function processAsset(assetId: string): Promise<boolean> {
 /**
  * Process a batch of assets
  */
-async function processBatch(): Promise<boolean> {
-    // Get cursor
-    const cursor = await MetaRepository.getScanCursor();
-
-    // Get pending batch
-    const batch = await AssetRepository.getPendingBatch(
-        cursor.takenAt,
-        cursor.assetId,
-        BATCH_SIZE
-    );
+async function processBatch(
+    batchSize: number = BATCH_SIZE,
+    assetIds?: readonly string[]
+): Promise<boolean> {
+    const batch = assetIds
+        ? await AssetRepository.getPendingBatchForAssetIds(assetIds, batchSize)
+        : await (async () => {
+            const cursor = await MetaRepository.getScanCursor();
+            return AssetRepository.getPendingBatch(cursor.takenAt, cursor.assetId, batchSize);
+        })();
 
     if (batch.length === 0) {
         return false; // No more pending assets
@@ -416,7 +457,7 @@ async function processBatch(): Promise<boolean> {
         useScannerStore.getState().incrementProgress(success);
 
         // Update cursor
-        if (success && asset.taken_at !== null) {
+        if (!assetIds && success && asset.taken_at !== null) {
             await MetaRepository.setScanCursor(asset.taken_at, asset.asset_id);
         }
     }
@@ -511,7 +552,10 @@ export function stop(): void {
 /**
  * Resume scanning for one batch only
  */
-export async function resumeOnce(cbs?: ScannerCallbacks): Promise<void> {
+export async function resumeOnce(
+    options?: ScanBatchOptions,
+    cbs?: ScannerCallbacks
+): Promise<void> {
     if (isRunning) {
         console.log('[AIScanner] Already running.');
         return;
@@ -525,6 +569,11 @@ export async function resumeOnce(cbs?: ScannerCallbacks): Promise<void> {
     useScannerStore.getState().setIsRunning(true);
 
     try {
+        // Refresh the local index so a batch scan sees newly added photos and
+        // removes records for assets deleted outside the app.
+        await syncAssetsToDatabase();
+        if (shouldStop) return;
+
         const retried = await AssetRepository.resetErrors();
         if (retried > 0) {
             // Failed assets may be older than the persisted cursor. Rewind so
@@ -536,8 +585,16 @@ export async function resumeOnce(cbs?: ScannerCallbacks): Promise<void> {
         // Reset outdated assets
         await resetOutdatedAssets();
 
+        let assetIds: string[] | undefined;
+        if (options?.mode === 'album') {
+            assetIds = await getPhotoAssetIdsForAlbums(options.albumIds ?? []);
+        }
+
+        const requestedCount = options?.mode === 'count' ? options.count ?? BATCH_SIZE : BATCH_SIZE;
+        const batchSize = Math.max(1, Math.min(Math.floor(requestedCount), 1000));
+
         // Process one batch
-        await processBatch();
+        await processBatch(batchSize, assetIds);
         await reportProgress();
 
         console.log('[AIScanner] One batch complete.');

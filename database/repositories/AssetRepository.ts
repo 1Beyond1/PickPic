@@ -192,6 +192,46 @@ export const AssetRepository = {
     },
 
     /**
+     * Get pending assets from a selected set of media-library IDs.
+     *
+     * Album scans use this instead of the global cursor so scanning one album
+     * cannot move the cursor past pending assets in other albums.
+     */
+    async getPendingBatchForAssetIds(
+        assetIds: readonly string[],
+        limit: number = BATCH_SIZE
+    ): Promise<PendingAsset[]> {
+        if (assetIds.length === 0 || limit <= 0) {
+            return [];
+        }
+
+        const pending: PendingAsset[] = [];
+        for (let i = 0; i < assetIds.length; i += 500) {
+            const batch = assetIds.slice(i, i + 500);
+            const placeholders = batch.map(() => '?').join(', ');
+            const db = await getDatabase();
+            pending.push(...await db.getAllAsync<PendingAsset>(
+                `SELECT asset_id, taken_at FROM assets
+                 WHERE status = ? AND asset_id IN (${placeholders})
+                 ORDER BY taken_at ASC, asset_id ASC
+                 LIMIT ?`,
+                [AssetStatus.PENDING, ...batch, limit]
+            ));
+        }
+
+        pending.sort((a, b) => {
+            if (a.taken_at === null && b.taken_at !== null) return -1;
+            if (a.taken_at !== null && b.taken_at === null) return 1;
+            if (a.taken_at !== b.taken_at) {
+                return (a.taken_at ?? 0) - (b.taken_at ?? 0);
+            }
+            return a.asset_id.localeCompare(b.asset_id);
+        });
+
+        return pending.slice(0, limit);
+    },
+
+    /**
      * Mark asset as done with scan results
      */
     async markDone(

@@ -241,23 +241,29 @@ export const useMediaStore = create<MediaState>()(
     },
 
     markForDeletion: (asset) => {
-        set((state) => ({
-            deleteQueue: [...state.deleteQueue, asset],
-            photoProcessedIds: [...state.photoProcessedIds, asset.id]
-        }));
+        set((state) => {
+            if (state.photoProcessedIds.includes(asset.id)) return state;
+            return {
+                deleteQueue: [...state.deleteQueue, asset],
+                photoProcessedIds: [...state.photoProcessedIds, asset.id]
+            };
+        });
     },
 
     markForCollection: (asset) => {
-        set((state) => ({
-            collectionQueue: [...state.collectionQueue, asset],
-            photoProcessedIds: [...state.photoProcessedIds, asset.id]
-        }));
+        set((state) => {
+            if (state.photoProcessedIds.includes(asset.id)) return state;
+            return {
+                collectionQueue: [...state.collectionQueue, asset],
+                photoProcessedIds: [...state.photoProcessedIds, asset.id]
+            };
+        });
     },
 
     markAsSkipped: (asset) => {
-        set((state) => ({
-            photoProcessedIds: [...state.photoProcessedIds, asset.id]
-        }));
+        set((state) => state.photoProcessedIds.includes(asset.id)
+            ? state
+            : { photoProcessedIds: [...state.photoProcessedIds, asset.id] });
     },
 
     undoAction: (assetId) => {
@@ -269,17 +275,22 @@ export const useMediaStore = create<MediaState>()(
     },
 
     markVideoForTrash: (asset) => {
-        set((state) => ({
-            videos: state.videos.filter(v => v.id !== asset.id),
-            videoTrashBin: [...state.videoTrashBin, asset],
-            videoProcessedIds: [...state.videoProcessedIds, asset.id]
-        }));
+        set((state) => {
+            if (state.videoTrashBin.some(video => video.id === asset.id)) return state;
+            return {
+                videos: state.videos.filter(v => v.id !== asset.id),
+                videoTrashBin: [...state.videoTrashBin, asset],
+                videoProcessedIds: state.videoProcessedIds.includes(asset.id)
+                    ? state.videoProcessedIds
+                    : [...state.videoProcessedIds, asset.id]
+            };
+        });
     },
 
     markVideoAsProcessed: (asset) => {
-        set((state) => ({
-            videoProcessedIds: [...state.videoProcessedIds, asset.id]
-        }));
+        set((state) => state.videoProcessedIds.includes(asset.id)
+            ? state
+            : { videoProcessedIds: [...state.videoProcessedIds, asset.id] });
     },
 
     restoreFromTrash: (assetId) => {
@@ -333,6 +344,7 @@ export const useMediaStore = create<MediaState>()(
             set({ videoTrashBin: [] });
         } catch (e) {
             console.error("Video deletion failed", e);
+            throw e;
         }
     },
 

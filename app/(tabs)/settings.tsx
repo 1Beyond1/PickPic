@@ -116,11 +116,9 @@ export default function SettingsScreen() {
         resetScan();
     };
 
-    const handleScanBatch = (options: { mode: 'album' | 'count'; albumIds?: string[]; count?: number }) => {
-        // Start scan with options
-        // For now, just call resumeOnce - full implementation can use options.count
+    const handleScanBatch = async (options: { mode: 'album' | 'count'; albumIds?: string[]; count?: number }) => {
         console.log('[Settings] Scan batch with options:', options);
-        resumeOnce();
+        await resumeOnce(options);
     };
 
     const handleToggleAIClassification = (value: boolean) => {

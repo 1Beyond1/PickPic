@@ -201,9 +201,17 @@ export default function VideosScreen() {
                     )}
 
                     {videoTrashBin.length > 0 && (
-                        <Pressable style={styles.confirmDeleteBtn} onPress={() => {
-                            confirmVideoTrash();
-                            setShowTrash(false);
+                        <Pressable style={styles.confirmDeleteBtn} onPress={async () => {
+                            try {
+                                await confirmVideoTrash();
+                                setShowTrash(false);
+                            } catch (error) {
+                                console.error('Failed to permanently delete videos', error);
+                                Alert.alert(
+                                    language === 'zh' ? '删除失败' : 'Delete failed',
+                                    language === 'zh' ? '视频仍保留在废纸篓中，请重试。' : 'The videos remain in the trash. Please try again.'
+                                );
+                            }
                         }}>
                             <Text style={styles.confirmDeleteText}>{t('video_confirm_delete')}</Text>
                         </Pressable>
