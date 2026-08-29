@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -106,14 +106,30 @@ export default function SettingsScreen() {
     const [showResetSuccess, setShowResetSuccess] = useState(false);
     const [showResetPhotosConfirm, setShowResetPhotosConfirm] = useState(false);
     const [showResetVideosConfirm, setShowResetVideosConfirm] = useState(false);
+    const [isResettingScanner, setIsResettingScanner] = useState(false);
 
     const handleResetScanner = () => {
         setShowResetConfirm(true);
     };
 
-    const confirmResetScanner = () => {
+    const confirmResetScanner = async () => {
+        if (isResettingScanner) return;
+
         setShowResetConfirm(false);
-        resetScan();
+        setIsResettingScanner(true);
+        try {
+            await resetScan();
+        } catch (error) {
+            console.error('[Settings] Failed to reset scanner', error);
+            Alert.alert(
+                language === 'zh' ? '重置失败' : 'Reset failed',
+                language === 'zh'
+                    ? '扫描器未能及时停止，进度尚未重置，请稍后重试。'
+                    : 'The scanner did not stop in time, so progress was not reset. Please try again.'
+            );
+        } finally {
+            setIsResettingScanner(false);
+        }
     };
 
     const handleScanBatch = async (options: { mode: 'album' | 'count'; albumIds?: string[]; count?: number }) => {
@@ -310,11 +326,14 @@ export default function SettingsScreen() {
                     <Pressable
                         style={({ pressed }) => [
                             styles.resetButton,
-                            pressed && { opacity: 0.8, transform: [{ scale: 0.98 }] }
+                            (pressed || isResettingScanner) && { opacity: 0.8, transform: [{ scale: 0.98 }] }
                         ]}
                         onPress={handleResetScanner}
+                        disabled={isResettingScanner}
                     >
-                        <Text style={styles.resetButtonText}>重置扫描进度</Text>
+                        <Text style={styles.resetButtonText}>
+                            {isResettingScanner ? '重置中…' : '重置扫描进度'}
+                        </Text>
                     </Pressable>
                 </GlassContainer>
 
