@@ -41,9 +41,10 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
 
     useEffect(() => {
         // Mock location loading
-        setTimeout(() => {
+        const timer = setTimeout(() => {
             setLocationName('Unknown Location');
         }, 1000);
+        return () => clearTimeout(timer);
     }, []);
 
     useEffect(() => {

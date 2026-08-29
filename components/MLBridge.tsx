@@ -72,8 +72,6 @@ function MLBridgeInner() {
     // Image Labeling
     const labeler = useImageLabeling('efficientnet');
 
-    const processedRef = useRef(new Set<string>());
-
     // The queue becomes available only after the labeling hook has a usable
     // model. This prevents requests from being accepted during model startup.
     useEffect(() => {
@@ -95,7 +93,6 @@ function MLBridgeInner() {
             if (currentRequest && Date.now() - requestStartTimeRef.current > 10000) {
                 console.warn('[MLBridge] Request timed out internally:', currentRequest.id);
                 currentRequest.reject(new Error('Internal Bridge Timeout'));
-                processedRef.current.add(currentRequest.id);
                 setCurrentRequest(null);
                 return;
             }
@@ -103,7 +100,7 @@ function MLBridgeInner() {
             if (currentRequest || !mlBridgeQueue.hasWork()) return;
 
             const request = mlBridgeQueue.shift();
-            if (request && !processedRef.current.has(request.id)) {
+            if (request) {
                 console.log('[MLBridge] Dequeue:', request.type, request.id);
                 requestStartTimeRef.current = Date.now();
                 setCurrentRequest(request);
@@ -121,7 +118,6 @@ function MLBridgeInner() {
         if (faceError) {
             console.error('[MLBridge] Face detection error:', faceError);
             currentRequest.reject(new Error(faceError));
-            processedRef.current.add(currentRequest.id);
             setCurrentRequest(null);
             return;
         }
@@ -138,7 +134,6 @@ function MLBridgeInner() {
                 confidence: 0.85,
             }));
             currentRequest.resolve(detectedFaces);
-            processedRef.current.add(currentRequest.id);
             setCurrentRequest(null);
         }
     }, [faces, faceError, faceStatus, currentRequest]);
@@ -161,12 +156,10 @@ function MLBridgeInner() {
                 }));
 
                 currentRequest.resolve(labels);
-                processedRef.current.add(currentRequest.id);
                 setCurrentRequest(null);
             } catch (error) {
                 console.error('[MLBridge] Image labeling error:', error);
                 currentRequest.reject(error as Error);
-                processedRef.current.add(currentRequest.id);
                 setCurrentRequest(null);
             }
         })();

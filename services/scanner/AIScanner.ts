@@ -529,9 +529,11 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
     try {
         // Sync assets from media library
         await syncAssetsToDatabase();
+        if (shouldStop) return;
 
         // Reset outdated assets
         await resetOutdatedAssets();
+        if (shouldStop) return;
 
         // Report initial progress
         await reportProgress();
@@ -546,8 +548,12 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
             }
         }
 
-        console.log('[AIScanner] Scan complete.');
-        callbacks.onComplete?.();
+        if (shouldStop) {
+            console.log('[AIScanner] Scan stopped.');
+        } else {
+            console.log('[AIScanner] Scan complete.');
+            callbacks.onComplete?.();
+        }
     } catch (error) {
         console.error('[AIScanner] Scan error:', error);
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
@@ -601,6 +607,7 @@ export async function resumeOnce(
 
         // Reset outdated assets
         await resetOutdatedAssets();
+        if (shouldStop) return;
 
         let assetIds: string[] | undefined;
         if (options?.mode === 'album') {
@@ -614,8 +621,12 @@ export async function resumeOnce(
         await processBatch(batchSize, assetIds);
         await reportProgress();
 
-        console.log('[AIScanner] One batch complete.');
-        callbacks.onComplete?.();
+        if (shouldStop) {
+            console.log('[AIScanner] One batch stopped.');
+        } else {
+            console.log('[AIScanner] One batch complete.');
+            callbacks.onComplete?.();
+        }
     } catch (error) {
         console.error('[AIScanner] Resume error:', error);
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));

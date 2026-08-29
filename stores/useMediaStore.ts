@@ -225,15 +225,23 @@ export const useMediaStore = create<MediaState>()(
                 albumIds
             );
 
-            // A newer request owns the visible list. Older requests may
-            // finish later after a fast settings change.
-            if (requestId !== photoLoadRequestId) return;
+            // A newer request owns the visible list. Read processed IDs in
+            // the same state update so a swipe/action that completes while
+            // MediaLibrary is paging cannot put that asset back on screen.
+            set((state) => {
+                if (requestId !== photoLoadRequestId) return state;
 
-            if (albumIds.length === 0 && result.totalCount !== null) {
-                set({ totalPhotos: result.totalCount });
-            }
+                const processed = new Set(state.photoProcessedIds);
+                const photos = result.assets.filter(asset => !processed.has(asset.id));
 
-            set({ photos: result.assets, currentIndex: 0 });
+                return {
+                    photos,
+                    currentIndex: 0,
+                    ...(albumIds.length === 0 && result.totalCount !== null
+                        ? { totalPhotos: result.totalCount }
+                        : {}),
+                };
+            });
         } catch (error) {
             console.error("Failed to load photos", error);
         } finally {
@@ -262,13 +270,19 @@ export const useMediaStore = create<MediaState>()(
                 albumIds
             );
 
-            if (requestId !== videoLoadRequestId) return;
+            set((state) => {
+                if (requestId !== videoLoadRequestId) return state;
 
-            if (albumIds.length === 0 && result.totalCount !== null) {
-                set({ totalVideos: result.totalCount });
-            }
+                const processed = new Set(state.videoProcessedIds);
+                const videos = result.assets.filter(asset => !processed.has(asset.id));
 
-            set({ videos: result.assets });
+                return {
+                    videos,
+                    ...(albumIds.length === 0 && result.totalCount !== null
+                        ? { totalVideos: result.totalCount }
+                        : {}),
+                };
+            });
         } catch (error) {
             console.error("Failed to load videos", error);
         } finally {

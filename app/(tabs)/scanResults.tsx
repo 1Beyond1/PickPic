@@ -206,6 +206,9 @@ export default function ScanResultsScreen() {
                 const others = prev.filter(g => g.groupId !== selectedSimilarGroup.group.groupId);
                 return processed ? [...others, processed] : prev;
             });
+            // Deleting members can remove the group or change its count in
+            // the database; reload so the card is not left stale in memory.
+            void loadResults();
         }
     };
 

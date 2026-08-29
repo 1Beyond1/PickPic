@@ -30,8 +30,8 @@ export const useScannerStore = create<ScannerState>((set) => ({
         progress: {
             ...state.progress,
             totalPending: Math.max(0, state.progress.totalPending - 1),
-            totalDone: state.progress.totalDone + 1,
-            // Optional: totalError: success ? state.progress.totalError : state.progress.totalError + 1
+            totalDone: state.progress.totalDone + (success ? 1 : 0),
+            totalError: state.progress.totalError + (success ? 0 : 1),
         }
     })),
 }));
