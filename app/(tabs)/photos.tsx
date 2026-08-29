@@ -20,6 +20,7 @@ export default function PhotosScreen() {
 
     const {
         photos, albums, loadPhotos, isLoading, hasHydrated,
+        photoProcessedIds,
         markForDeletion, markAsSkipped,
         confirmDeletion, deleteQueue, resetBatch,
         createAlbum, addAssetToAlbum, loadAlbums
@@ -27,7 +28,6 @@ export default function PhotosScreen() {
 
     const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore();
 
-    const [removedIds, setRemovedIds] = useState<string[]>([]);
     const [showNewAlbumModal, setShowNewAlbumModal] = useState(false);
     const [newAlbumName, setNewAlbumName] = useState('');
     const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
@@ -38,14 +38,14 @@ export default function PhotosScreen() {
         void loadAlbums();
     }, [groupSize, displayOrder, selectedAlbumIds, hasHydrated, loadPhotos, loadAlbums]));
 
-    const visiblePhotos = photos.filter(p => !removedIds.includes(p.id));
+    const processedIds = new Set(photoProcessedIds);
+    const visiblePhotos = photos.filter(p => !processedIds.has(p.id));
 
     // Drop zones disabled for v0.1.1
     const dropZones: any[] = [];
 
     const handleSwipeUp = (photo: any) => {
         markForDeletion(photo);
-        setRemovedIds(prev => [...prev, photo.id]);
     };
 
     const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -62,7 +62,6 @@ export default function PhotosScreen() {
             try {
                 await addAssetToAlbum(zoneId, photo);
                 markAsSkipped(photo);
-                setRemovedIds(prev => [...prev, photo.id]);
                 showToast(`已收藏至「${albumName}」`);
             } catch (error) {
                 console.error('Failed to collect photo', error);
@@ -71,7 +70,6 @@ export default function PhotosScreen() {
         } else {
             // Just Skip / Keep
             markAsSkipped(photo);
-            setRemovedIds(prev => [...prev, photo.id]);
         }
     };
 
@@ -80,7 +78,6 @@ export default function PhotosScreen() {
             try {
                 await createAlbum(newAlbumName, pendingCollectionPhoto);
                 markAsSkipped(pendingCollectionPhoto);
-                setRemovedIds(prev => [...prev, pendingCollectionPhoto.id]);
                 setPendingCollectionPhoto(null);
                 setNewAlbumName('');
                 setShowNewAlbumModal(false);
@@ -116,7 +113,6 @@ export default function PhotosScreen() {
                         onPress={() => {
                             resetBatch();
                             loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-                            setRemovedIds([]);
                         }}
                     >
                         <Text style={styles.actionButtonText}>{t('continue_next_batch' as any)}</Text>
@@ -164,7 +160,6 @@ export default function PhotosScreen() {
                         await confirmDeletion(); // Wait for deletion to complete
                         resetBatch();
                         loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-                        setRemovedIds([]);
                     } catch (error) {
                         console.error('Failed to confirm photo deletion', error);
                         showToast('删除失败，请重试');
@@ -176,7 +171,6 @@ export default function PhotosScreen() {
                 <Pressable style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: 10 }]} onPress={() => {
                     resetBatch();
                     loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-                    setRemovedIds([]);
                 }}>
                     <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('photos_skip')}</Text>
                 </Pressable>
