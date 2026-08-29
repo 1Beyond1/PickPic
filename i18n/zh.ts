@@ -99,6 +99,8 @@ export default {
     scan_batch: '扫描一批',
     scan_batch_by_album: '按相册扫描',
     scan_batch_by_count: '按数量扫描',
+    scan_batch_album_required_title: '请选择相册',
+    scan_batch_album_required_message: '按相册扫描至少需要选择一个相册。',
     scan_batch_count_label: '{count} 张',
     scan_batch_start: '开始扫描',
 

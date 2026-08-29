@@ -99,6 +99,8 @@ export default {
     scan_batch: 'Scan Batch',
     scan_batch_by_album: 'By Album',
     scan_batch_by_count: 'By Count',
+    scan_batch_album_required_title: 'Select an album',
+    scan_batch_album_required_message: 'Select at least one album to scan by album.',
     scan_batch_count_label: '{count} photos',
     scan_batch_start: 'Start Scan',
 

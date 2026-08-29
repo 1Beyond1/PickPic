@@ -4,7 +4,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { AlbumSelector } from './AlbumSelector';
@@ -33,6 +33,14 @@ export function ScanBatchModal({ visible, onClose, onStartScan }: ScanBatchModal
     };
 
     const handleAlbumConfirm = (albumIds: string[]) => {
+        if (albumIds.length === 0) {
+            Alert.alert(
+                t('scan_batch_album_required_title' as any),
+                t('scan_batch_album_required_message' as any),
+            );
+            return;
+        }
+
         setShowAlbumSelector(false);
         onStartScan({ mode: 'album', albumIds });
         onClose();
