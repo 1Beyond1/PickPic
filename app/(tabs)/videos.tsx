@@ -34,7 +34,9 @@ export default function VideosScreen() {
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [selectedVideoForCollection, setSelectedVideoForCollection] = useState<any>(null);
     const [isScreenFocused, setIsScreenFocused] = useState(true);
-    const [lastActiveId, setLastActiveId] = useState<string | null>(null);
+    const lastActiveIdRef = useRef<string | null>(null);
+    const videosRef = useRef(videos);
+    videosRef.current = videos;
 
     // Dynamic height state
     const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
@@ -54,20 +56,23 @@ export default function VideosScreen() {
     );
 
     const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-        if (viewableItems.length > 0) {
-            const newActiveId = viewableItems[0].key;
-            setActiveId(newActiveId);
+        const newActiveId = viewableItems[0]?.key;
+        if (!newActiveId) return;
 
-            // Mark previous video as processed when swiping to next
-            if (lastActiveId && lastActiveId !== newActiveId) {
-                const prevVideo = videos.find(v => v.id === lastActiveId);
-                if (prevVideo) {
-                    markVideoAsProcessed(prevVideo);
-                }
+        setActiveId(newActiveId);
+
+        // Mark previous video as processed when swiping to next. Keep the
+        // callback identity stable because FlatList does not support changing
+        // onViewableItemsChanged after it has mounted.
+        const previousActiveId = lastActiveIdRef.current;
+        if (previousActiveId && previousActiveId !== newActiveId) {
+            const prevVideo = videosRef.current.find(v => v.id === previousActiveId);
+            if (prevVideo) {
+                markVideoAsProcessed(prevVideo);
             }
-            setLastActiveId(newActiveId);
         }
-    }, [lastActiveId, markVideoAsProcessed, videos]);
+        lastActiveIdRef.current = newActiveId;
+    }, [markVideoAsProcessed]);
 
     // View config ref
     const viewabilityConfig = useRef({
