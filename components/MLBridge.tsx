@@ -91,9 +91,12 @@ function MLBridgeInner() {
         const interval = setInterval(() => {
             // Check for stuck request (timeout > 10s)
             if (currentRequest && Date.now() - requestStartTimeRef.current > 10000) {
-                console.warn('[MLBridge] Request timed out internally:', currentRequest.id);
-                currentRequest.reject(new Error('Internal Bridge Timeout'));
-                setCurrentRequest(null);
+                const timedOutRequest = currentRequest;
+                console.warn('[MLBridge] Request timed out internally:', timedOutRequest.id);
+                timedOutRequest.reject(new Error('Internal Bridge Timeout'));
+                setCurrentRequest(activeRequest => (
+                    activeRequest?.id === timedOutRequest.id ? null : activeRequest
+                ));
                 return;
             }
 
@@ -118,7 +121,9 @@ function MLBridgeInner() {
         if (faceError) {
             console.error('[MLBridge] Face detection error:', faceError);
             currentRequest.reject(new Error(faceError));
-            setCurrentRequest(null);
+            setCurrentRequest(activeRequest => (
+                activeRequest?.id === currentRequest.id ? null : activeRequest
+            ));
             return;
         }
 
@@ -134,7 +139,9 @@ function MLBridgeInner() {
                 confidence: 0.85,
             }));
             currentRequest.resolve(detectedFaces);
-            setCurrentRequest(null);
+            setCurrentRequest(activeRequest => (
+                activeRequest?.id === currentRequest.id ? null : activeRequest
+            ));
         }
     }, [faces, faceError, faceStatus, currentRequest]);
 
@@ -156,11 +163,15 @@ function MLBridgeInner() {
                 }));
 
                 currentRequest.resolve(labels);
-                setCurrentRequest(null);
+                setCurrentRequest(activeRequest => (
+                    activeRequest?.id === currentRequest.id ? null : activeRequest
+                ));
             } catch (error) {
                 console.error('[MLBridge] Image labeling error:', error);
                 currentRequest.reject(error as Error);
-                setCurrentRequest(null);
+                setCurrentRequest(activeRequest => (
+                    activeRequest?.id === currentRequest.id ? null : activeRequest
+                ));
             }
         })();
     }, [currentRequest, labeler]);
