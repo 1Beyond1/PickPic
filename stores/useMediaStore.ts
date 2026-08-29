@@ -443,6 +443,13 @@ export const useMediaStore = create<MediaState>()(
             partialize: (state) => ({
                 photoProcessedIds: state.photoProcessedIds,
                 videoProcessedIds: state.videoProcessedIds,
+                // Keep in-flight decisions recoverable. The processed ID
+                // lists are updated immediately to hide items from the
+                // current session, so dropping these queues on restart would
+                // silently skip media that was never actually deleted.
+                deleteQueue: state.deleteQueue,
+                collectionQueue: state.collectionQueue,
+                videoTrashBin: state.videoTrashBin,
             }),
             onRehydrateStorage: () => (state) => {
                 state?.setHasHydrated(true);
