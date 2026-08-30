@@ -382,6 +382,7 @@ export const useMediaStore = create<MediaState>()(
             if (!deleted) {
                 throw new Error('Media library did not confirm photo deletion');
             }
+            const deletedIds = new Set(ids);
             for (const id of ids) {
                 try {
                     await AssetRepository.removeAssetAndDerivedData(id);
@@ -392,6 +393,14 @@ export const useMediaStore = create<MediaState>()(
                 }
             }
             console.log(`Batch deletion: ${ids.length} items deleted`);
+
+            // Deleted media no longer needs review progress. Removing its IDs
+            // keeps the progress count meaningful and prevents the persisted
+            // list from growing forever as the user cleans up their library.
+            set((state) => ({
+                deleteQueue: state.deleteQueue.filter(asset => !deletedIds.has(asset.id)),
+                photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
+            }));
         } catch (e) {
             // Keep the queue so the user can retry after fixing permissions or
             // another temporary media-library failure.
@@ -399,18 +408,21 @@ export const useMediaStore = create<MediaState>()(
             throw e;
         }
 
-        set({ deleteQueue: [] });
     },
 
     confirmVideoTrash: async () => {
         const { videoTrashBin } = get();
         if (videoTrashBin.length === 0) return;
         try {
+            const deletedIds = new Set(videoTrashBin.map(video => video.id));
             const deleted = await MediaLibrary.deleteAssetsAsync(videoTrashBin);
             if (!deleted) {
                 throw new Error('Media library did not confirm video deletion');
             }
-            set({ videoTrashBin: [] });
+            set((state) => ({
+                videoTrashBin: state.videoTrashBin.filter(video => !deletedIds.has(video.id)),
+                videoProcessedIds: state.videoProcessedIds.filter(id => !deletedIds.has(id)),
+            }));
         } catch (e) {
             console.error("Video deletion failed", e);
             throw e;
