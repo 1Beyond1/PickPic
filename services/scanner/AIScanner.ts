@@ -58,6 +58,8 @@ let isRunning = false;
 let shouldStop = false;
 let currentBatch = 0;
 let callbacks: ScannerCallbacks = {};
+let mlFailureCount = 0;
+let mlCircuitBreakerTripped = false;
 
 const BATCH_SIZE = 20;
 
@@ -105,6 +107,22 @@ async function getFileSignature(uri: string): Promise<string | null> {
  */
 function generateGroupId(): string {
     return `grp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function resetMLFailureState(): void {
+    mlFailureCount = 0;
+    mlCircuitBreakerTripped = false;
+}
+
+function recordMLFailure(error: unknown): Error {
+    mlFailureCount += 1;
+
+    if (mlFailureCount > 3 && !mlCircuitBreakerTripped) {
+        console.warn('[AIScanner] ML Circuit Breaker tripped. Pausing AI classification for this scan.');
+        mlCircuitBreakerTripped = true;
+    }
+
+    return error instanceof Error ? error : new Error(String(error));
 }
 
 // ============================================================================
@@ -289,27 +307,6 @@ async function processAsset(assetId: string): Promise<boolean> {
         imageOps.dispose(gray);
         gray = null;
 
-        // Initialize global failure count if needed
-        // @ts-ignore
-        if (typeof global.mlFailureCount === 'undefined') {
-            // @ts-ignore
-            global.mlFailureCount = 0;
-        }
-
-        // ML Circuit Breaker
-        // If ML features fail too many times, disable them for the rest of the session
-        let mlEnabled = true;
-        // @ts-ignore
-        if (global.mlFailureCount > 3) {
-            // @ts-ignore
-            if (global.mlFailureCount === 4) {
-                console.warn('[AIScanner] ML Circuit Breaker tripped. Disabling ML for this session.');
-                // @ts-ignore
-                global.mlFailureCount++; // Increment once more to avoid spamming logs
-            }
-            mlEnabled = false;
-        }
-
         // Phase 2: Context-Aware ML Scanning (Merged Face & Object Detection)
         let labelsJson: string | null = null;
         let faceCount = 0;
@@ -318,87 +315,95 @@ async function processAsset(assetId: string): Promise<boolean> {
         const { useSettingsStore } = await import('../../stores/useSettingsStore');
         const enableAIClassification = useSettingsStore.getState().enableAIClassification;
 
+        // ML failures are retryable. Once the circuit breaker trips, do not
+        // silently save a base-only result as a successful AI scan.
+        const mlEnabled = !enableAIClassification || mlFailureCount <= 3;
+        if (enableAIClassification && !mlEnabled) {
+            throw new Error('AI classification paused after repeated failures; please retry the scan');
+        }
+
         // Only run ML if: enabled + circuit breaker not tripped
         if (mlEnabled && enableAIClassification) {
-            const { MLKitService } = await import('../ml/MLKitService');
-            if (!(await MLKitService.waitUntilAvailable())) {
-                throw new Error('AI classification model is not ready; please retry the scan');
-            }
-
             try {
-                if (MLKitService.isAvailable()) {
-                    // Phase 2a: Label Image (Object Detection) FIRST
-                    let labelingUri = uri;
-                    let isCropped = false;
-
-                    // PREPROCESS: Center crop to square to avoid aspect ratio distortion
-                    // EfficientNet-Lite4 expects 300x300 square input.
-                    try {
-                        if (imageOps.centerCropSquare && assetInfo.width && assetInfo.height) {
-                            // EfficientNet-Lite4 uses 300x300
-                            labelingUri = await imageOps.centerCropSquare(uri, assetInfo.width, assetInfo.height, 300);
-                            isCropped = (labelingUri !== uri);
-                        }
-                    } catch (e) {
-                        console.warn('[AIScanner] Crop failed, using original:', e);
-                    }
-
-                    const labels = await (async () => {
-                        try {
-                            return await MLKitService.labelImage(labelingUri);
-                        } finally {
-                            // Always clean up the temporary crop, including
-                            // when classification times out or throws.
-                            if (isCropped) {
-                                await FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => { });
-                            }
-                        }
-                    })();
-
-                    // Yield to allow GC after heavy image op
-                    await yieldToMainThread();
-
-                    if (labels.length > 0) {
-                        labelsJson = JSON.stringify(labels);
-                        console.log(`[AIScanner] Detected objects in ${assetId}:`, labels.map(l => l.text).join(', '));
-                    }
-
-                    // Phase 2b: Face Detection (Context-Aware)
-                    const rawFaces = await MLKitService.detectFaces(uri);
-
-                    // Filter 1: Size Filter (Ignore tiny faces like icons/ads)
-                    const imgWidth = assetInfo.width || 1000;
-                    const MIN_Face_RATIO = 0.1; // Face must be 10% of image width
-                    let validFaces = rawFaces.filter(f => {
-                        // Check bounding box width (ML Kit returns 'width')
-                        return (f.boundingBox?.width || 0) > (imgWidth * MIN_Face_RATIO);
-                    });
-
-                    // Filter 2: Context Disqualifier (Ignore faces in Screenshots/Websites)
-                    const DISQUALIFIERS = new Set(['web site', 'website', 'monitor', 'screen', 'computer screen', 'screenshot', 'comic book', 'menu', 'display']);
-                    const topLabel = labels.length > 0 ? labels[0].text.toLowerCase() : '';
-                    // Also check if ANY high-confidence label is a disqualifier
-                    const isContextDisqualified = labels.some(l => l.confidence > 0.4 && DISQUALIFIERS.has(l.text.toLowerCase()));
-
-                    if (isContextDisqualified) {
-                        console.log(`[AIScanner] Context Disqualifier Triggered: ${topLabel}. Ignoring ${validFaces.length} faces.`);
-                        faceCount = 0;
-                    } else {
-                        faceCount = validFaces.length;
-                    }
-
-                    if (faceCount > 0) {
-                        console.log(`[AIScanner] Detected ${faceCount} Valid Face(s) (Raw: ${rawFaces.length})`);
-                    }
-
-                    // Reset failure count on success
-                    // @ts-ignore
-                    global.mlFailureCount = 0;
+                const { MLKitService } = await import('../ml/MLKitService');
+                if (!(await MLKitService.waitUntilAvailable())) {
+                    throw new Error('AI classification model is not ready; please retry the scan');
                 }
+
+                if (!MLKitService.isAvailable()) {
+                    throw new Error('AI classification model is unavailable; please retry the scan');
+                }
+
+                // Phase 2a: Label Image (Object Detection) FIRST
+                let labelingUri = uri;
+                let isCropped = false;
+
+                // PREPROCESS: Center crop to square to avoid aspect ratio distortion
+                // EfficientNet-Lite4 expects 300x300 square input.
+                try {
+                    if (imageOps.centerCropSquare && assetInfo.width && assetInfo.height) {
+                        // EfficientNet-Lite4 uses 300x300
+                        labelingUri = await imageOps.centerCropSquare(uri, assetInfo.width, assetInfo.height, 300);
+                        isCropped = (labelingUri !== uri);
+                    }
+                } catch (e) {
+                    console.warn('[AIScanner] Crop failed, using original:', e);
+                }
+
+                const labels = await (async () => {
+                    try {
+                        return await MLKitService.labelImage(labelingUri);
+                    } finally {
+                        // Always clean up the temporary crop, including
+                        // when classification times out or throws.
+                        if (isCropped) {
+                            await FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => { });
+                        }
+                    }
+                })();
+
+                // Yield to allow GC after heavy image op
+                await yieldToMainThread();
+
+                if (labels.length > 0) {
+                    labelsJson = JSON.stringify(labels);
+                    console.log(`[AIScanner] Detected objects in ${assetId}:`, labels.map(l => l.text).join(', '));
+                }
+
+                // Phase 2b: Face Detection (Context-Aware)
+                const rawFaces = await MLKitService.detectFaces(uri);
+
+                // Filter 1: Size Filter (Ignore tiny faces like icons/ads)
+                const imgWidth = assetInfo.width || 1000;
+                const MIN_Face_RATIO = 0.1; // Face must be 10% of image width
+                const validFaces = rawFaces.filter(f => {
+                    // Check bounding box width (ML Kit returns 'width')
+                    return (f.boundingBox?.width || 0) > (imgWidth * MIN_Face_RATIO);
+                });
+
+                // Filter 2: Context Disqualifier (Ignore faces in Screenshots/Websites)
+                const DISQUALIFIERS = new Set(['web site', 'website', 'monitor', 'screen', 'computer screen', 'screenshot', 'comic book', 'menu', 'display']);
+                const topLabel = labels.length > 0 ? labels[0].text.toLowerCase() : '';
+                // Also check if ANY high-confidence label is a disqualifier
+                const isContextDisqualified = labels.some(l => l.confidence > 0.4 && DISQUALIFIERS.has(l.text.toLowerCase()));
+
+                if (isContextDisqualified) {
+                    console.log(`[AIScanner] Context Disqualifier Triggered: ${topLabel}. Ignoring ${validFaces.length} faces.`);
+                    faceCount = 0;
+                } else {
+                    faceCount = validFaces.length;
+                }
+
+                if (faceCount > 0) {
+                    console.log(`[AIScanner] Detected ${faceCount} Valid Face(s) (Raw: ${rawFaces.length})`);
+                }
+
+                // Reset failure count on a complete ML success.
+                mlFailureCount = 0;
+                mlCircuitBreakerTripped = false;
             } catch (mlError) {
                 console.warn(`[AIScanner] ML Kit object detection failed for ${assetId}:`, mlError);
-                // @ts-ignore
-                global.mlFailureCount = (global.mlFailureCount || 0) + 1;
+                throw recordMLFailure(mlError);
             }
         }
 
@@ -559,6 +564,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
     shouldStop = false;
     currentBatch = 0;
     callbacks = cbs ?? {};
+    resetMLFailureState();
 
     useScannerStore.getState().setIsRunning(true);
 
@@ -625,6 +631,7 @@ export async function resumeOnce(
     isRunning = true;
     shouldStop = false;
     callbacks = cbs ?? {};
+    resetMLFailureState();
 
     useScannerStore.getState().setIsRunning(true);
 
