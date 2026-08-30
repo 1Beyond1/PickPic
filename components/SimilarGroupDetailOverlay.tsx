@@ -60,6 +60,8 @@ export function SimilarGroupDetailOverlay({
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [previewPhoto, setPreviewPhoto] = useState<PhotoItem | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const isDeletingRef = useRef(false);
     const loadRequestIdRef = useRef(0);
 
     // Animation state
@@ -88,7 +90,7 @@ export function SimilarGroupDetailOverlay({
         }
     }, [memberAssetIds]);
 
-    const handleClose = useCallback(() => {
+    const animateClose = useCallback(() => {
         // Exit animation
         overlayOpacity.value = withTiming(0, { duration: 250 }, (finished) => {
             if (finished) {
@@ -96,6 +98,11 @@ export function SimilarGroupDetailOverlay({
             }
         });
     }, [onClose, overlayOpacity]);
+
+    const handleClose = useCallback(() => {
+        if (isDeletingRef.current) return;
+        animateClose();
+    }, [animateClose]);
 
     useEffect(() => {
         if (visible && memberAssetIds.length > 0) {
@@ -139,6 +146,7 @@ export function SimilarGroupDetailOverlay({
     }, [visible, handleClose]);
 
     const handleLongPress = (assetId: string) => {
+        if (isDeletingRef.current) return;
         setSelectedIds((prev) => {
             const next = new Set(prev);
             if (next.has(assetId)) {
@@ -151,6 +159,7 @@ export function SimilarGroupDetailOverlay({
     };
 
     const handleTap = (photo: PhotoItem) => {
+        if (isDeletingRef.current) return;
         if (selectedIds.size > 0) {
             handleLongPress(photo.assetId);
         } else {
@@ -159,7 +168,7 @@ export function SimilarGroupDetailOverlay({
     };
 
     const handleDeleteSelected = () => {
-        if (selectedIds.size === 0) return;
+        if (selectedIds.size === 0 || isDeletingRef.current) return;
         const count = selectedIds.size;
         Alert.alert(
             language === 'zh' ? '确认删除' : 'Confirm Delete',
@@ -170,8 +179,12 @@ export function SimilarGroupDetailOverlay({
                     text: t('confirm'),
                     style: 'destructive',
                     onPress: async () => {
+                        if (isDeletingRef.current) return;
+                        const assetIds = Array.from(selectedIds);
+                        const selectedAssetIds = new Set(assetIds);
+                        isDeletingRef.current = true;
+                        setIsDeleting(true);
                         try {
-                            const assetIds = Array.from(selectedIds);
                             const deleted = await MediaLibrary.deleteAssetsAsync(assetIds);
                             if (!deleted) {
                                 throw new Error('Media library did not confirm deletion');
@@ -183,18 +196,22 @@ export function SimilarGroupDetailOverlay({
                                     console.error('[SimilarGroupDetailOverlay] Index cleanup failed:', cleanupError);
                                 }
                             }
-                            setPhotos(prev => prev.filter(p => !selectedIds.has(p.assetId)));
+                            const remainingCount = photos.filter(photo => !selectedAssetIds.has(photo.assetId)).length;
+                            setPhotos(prev => prev.filter(p => !selectedAssetIds.has(p.assetId)));
                             setSelectedIds(new Set());
 
                             // Animate close if all deleted or user done
-                            if (photos.length - count <= 1) {
+                            if (remainingCount <= 1) {
                                 onComplete(); // Mark as done effectively
-                                handleClose();
+                                animateClose();
                             } else {
                                 // Just update list
                             }
                         } catch (error) {
                             Alert.alert(language === 'zh' ? '删除失败' : 'Delete Failed', String(error));
+                        } finally {
+                            isDeletingRef.current = false;
+                            setIsDeleting(false);
                         }
                     },
                 },
@@ -202,28 +219,40 @@ export function SimilarGroupDetailOverlay({
         );
     };
 
-    const handleClosePreview = () => setPreviewPhoto(null);
+    const handleClosePreview = () => {
+        if (isDeletingRef.current) return;
+        setPreviewPhoto(null);
+    };
     const handleDeleteFromPreview = async () => {
-        if (!previewPhoto) return;
+        if (!previewPhoto || isDeletingRef.current) return;
+
+        const photoToDelete = previewPhoto;
+        isDeletingRef.current = true;
+        setIsDeleting(true);
+
         try {
-            const deleted = await MediaLibrary.deleteAssetsAsync([previewPhoto.assetId]);
+            const deleted = await MediaLibrary.deleteAssetsAsync([photoToDelete.assetId]);
             if (!deleted) {
                 throw new Error('Media library did not confirm deletion');
             }
             try {
-                await AssetRepository.removeAssetAndDerivedData(previewPhoto.assetId);
+                await AssetRepository.removeAssetAndDerivedData(photoToDelete.assetId);
             } catch (cleanupError) {
                 console.error('[SimilarGroupDetailOverlay] Index cleanup failed:', cleanupError);
             }
-            setPhotos(prev => prev.filter(p => p.assetId !== previewPhoto.assetId));
+            const remainingCount = photos.filter(photo => photo.assetId !== photoToDelete.assetId).length;
+            setPhotos(prev => prev.filter(p => p.assetId !== photoToDelete.assetId));
             setPreviewPhoto(null);
 
-            if (photos.length <= 2) {
+            if (remainingCount <= 1) {
                 onComplete();
-                handleClose();
+                animateClose();
             }
         } catch (error) {
             Alert.alert(language === 'zh' ? '删除失败' : 'Delete Failed', String(error));
+        } finally {
+            isDeletingRef.current = false;
+            setIsDeleting(false);
         }
     };
 
@@ -234,9 +263,11 @@ export function SimilarGroupDetailOverlay({
                 style={[
                     styles.photoItem,
                     isSelected && { borderColor: colors.primary, borderWidth: 3 },
+                    isDeleting && { opacity: 0.5 },
                 ]}
                 onPress={() => handleTap(item)}
                 onLongPress={() => handleLongPress(item.assetId)}
+                disabled={isDeleting}
             >
                 <Image source={{ uri: item.uri }} style={styles.photoImage} />
                 {isSelected && (
@@ -324,14 +355,19 @@ export function SimilarGroupDetailOverlay({
         <Animated.View style={[StyleSheet.absoluteFill, styles.container, { backgroundColor: isDark ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)' }, containerAnimatedStyle]}>
             {/* Header - Transparent/Minimal */}
             <View style={[styles.header, { paddingTop: insets.top }]}>
-                <Pressable style={styles.closeButton} onPress={handleClose}>
+                <Pressable
+                    style={[styles.closeButton, isDeleting && { opacity: 0.5 }]}
+                    onPress={handleClose}
+                    disabled={isDeleting}
+                >
                     <Ionicons name="close" size={28} color={colors.text} />
                 </Pressable>
                 <View style={{ flex: 1 }} />
                 {selectedIds.size > 0 && (
                     <Pressable
-                        style={[styles.deleteButton, { backgroundColor: colors.danger }]}
+                        style={[styles.deleteButton, { backgroundColor: colors.danger }, isDeleting && { opacity: 0.5 }]}
                         onPress={handleDeleteSelected}
+                        disabled={isDeleting}
                     >
                         <Ionicons name="trash" size={20} color="#FFF" />
                     </Pressable>
@@ -368,12 +404,17 @@ export function SimilarGroupDetailOverlay({
             {previewPhoto && (
                 <Modal visible={true} transparent animationType="fade" onRequestClose={handleClosePreview}>
                     <View style={styles.previewOverlay}>
-                        <Pressable style={styles.previewClose} onPress={handleClosePreview}>
+                        <Pressable
+                            style={[styles.previewClose, isDeleting && { opacity: 0.5 }]}
+                            onPress={handleClosePreview}
+                            disabled={isDeleting}
+                        >
                             <Ionicons name="close" size={32} color="#FFF" />
                         </Pressable>
                         <Pressable
-                            style={[styles.previewDeleteButton, { backgroundColor: colors.danger }]}
+                            style={[styles.previewDeleteButton, { backgroundColor: colors.danger }, isDeleting && { opacity: 0.5 }]}
                             onPress={handleDeleteFromPreview}
+                            disabled={isDeleting}
                         >
                             <Ionicons name="trash" size={24} color="#FFF" />
                         </Pressable>
