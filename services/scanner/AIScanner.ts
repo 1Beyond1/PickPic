@@ -117,6 +117,15 @@ function generateGroupId(): string {
 async function syncAssetsToDatabase(): Promise<void> {
     console.log('[AIScanner] Syncing assets to database...');
 
+    const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+    if (!permission.granted) {
+        throw new Error('Photo library permission is required before scanning');
+    }
+    // With limited access, getAssetsAsync intentionally omits media the user
+    // did not grant. Those assets are inaccessible, not deleted; removing
+    // them from the local index would lose their previous scan results.
+    const hasFullPhotoAccess = permission.accessPrivileges !== 'limited';
+
     let hasMore = true;
     let cursor: string | undefined;
     let synced = 0;
@@ -175,9 +184,13 @@ async function syncAssetsToDatabase(): Promise<void> {
 
     if (shouldStop) return;
 
-    const removed = await AssetRepository.removeMissingAssets(seenAssetIds);
-    if (removed.length > 0) {
-        console.log(`[AIScanner] Removed ${removed.length} missing assets from the local index.`);
+    if (hasFullPhotoAccess) {
+        const removed = await AssetRepository.removeMissingAssets(seenAssetIds);
+        if (removed.length > 0) {
+            console.log(`[AIScanner] Removed ${removed.length} missing assets from the local index.`);
+        }
+    } else {
+        console.log('[AIScanner] Limited photo access: preserving assets outside the granted selection.');
     }
 
     if (shouldResetCursor) {
