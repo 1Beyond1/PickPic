@@ -320,8 +320,12 @@ async function processAsset(assetId: string): Promise<boolean> {
 
         // Only run ML if: enabled + circuit breaker not tripped
         if (mlEnabled && enableAIClassification) {
+            const { MLKitService } = await import('../ml/MLKitService');
+            if (!(await MLKitService.waitUntilAvailable())) {
+                throw new Error('AI classification model is not ready; please retry the scan');
+            }
+
             try {
-                const { MLKitService } = await import('../ml/MLKitService');
                 if (MLKitService.isAvailable()) {
                     // Phase 2a: Label Image (Object Detection) FIRST
                     let labelingUri = uri;

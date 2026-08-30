@@ -87,6 +87,22 @@ export const MLKitService = {
     },
 
     /**
+     * Wait briefly for the lazily mounted bridge/model to become available.
+     * Returning false lets the scanner report a retryable asset error instead
+     * of silently marking an AI scan as complete without classification.
+     */
+    async waitUntilAvailable(timeoutMs: number = 10000): Promise<boolean> {
+        const queue = getBridgeQueue();
+        const deadline = Date.now() + Math.max(0, timeoutMs);
+
+        while (!queue.isAvailable?.() && Date.now() < deadline) {
+            await new Promise<void>(resolve => setTimeout(resolve, 100));
+        }
+
+        return queue.isAvailable?.() || false;
+    },
+
+    /**
      * Detect faces in an image
      */
     async detectFaces(imageUri: string): Promise<DetectedFace[]> {
