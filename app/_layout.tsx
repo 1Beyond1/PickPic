@@ -22,6 +22,7 @@ export default function RootLayout() {
     dismissAnnouncement,
     aiGuideShownVersion,
     dismissAIGuide,
+    enableAIClassification,
     hasHydrated: settingsHydrated,
   } = useSettingsStore();
   const [showAnnouncement, setShowAnnouncement] = useState(false);
@@ -100,7 +101,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.container}>
-      <MLBridge />
+      {enableAIClassification && <MLBridge />}
       <StatusBar style="auto" />
       <Stack
         screenOptions={{
