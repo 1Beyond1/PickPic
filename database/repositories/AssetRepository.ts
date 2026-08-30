@@ -416,6 +416,21 @@ export const AssetRepository = {
     },
 
     /**
+     * Get every completed asset for a consistent AI-category snapshot.
+     * Unlike the bounded query above, this is intentionally unbounded; callers
+     * that render the complete category detail need accurate counts.
+     */
+    async getAllDoneAssets(): Promise<AssetRecord[]> {
+        const db = await getDatabase();
+        return db.getAllAsync<AssetRecord>(
+            `SELECT * FROM assets
+             WHERE status = ?
+             ORDER BY taken_at DESC, asset_id ASC`,
+            [AssetStatus.DONE]
+        );
+    },
+
+    /**
      * Reset ALL assets to PENDING state (Force Rescan)
      */
     async resetAll(): Promise<void> {

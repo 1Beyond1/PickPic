@@ -33,8 +33,11 @@ export function useAICategories(enabled = true): AICategoriesState {
         const requestId = ++loadRequestIdRef.current;
         setIsLoading(true);
         try {
-            // 1. Load People Assets
-            const peopleAssets = await AssetRepository.getPeopleAssets(200);
+            // Read one completed-asset snapshot so people and object
+            // categories use the same dataset and large libraries are not
+            // silently truncated by separate hard limits.
+            const labeledAssets = await AssetRepository.getAllDoneAssets();
+            const peopleAssets = labeledAssets.filter(asset => (asset.face_count ?? 0) > 0);
 
             // Simple grouping by face count for now (e.g., "1 Person", "2 People", etc.)
             // In a real app, we would cluster by face vectors
@@ -69,7 +72,7 @@ export function useAICategories(enabled = true): AICategoriesState {
                 }
 
                 categorizedAssetIds.add(asset.asset_id);
-                // getPeopleAssets only returns assets with at least one face.
+                // peopleAssets only contains assets with at least one face.
                 const count = asset.face_count ?? 1;
                 // Simplify to Single vs Group
                 const key = count > 1 ? 'people_group' : 'people_single';
@@ -88,8 +91,7 @@ export function useAICategories(enabled = true): AICategoriesState {
                 assets,
             })).sort((a, b) => b.count - a.count);
 
-            // 2. Load Object/Scene Assets
-            const labeledAssets = await AssetRepository.getLabeledAssets(5000); // Increased limit to capture more assets
+            // 2. Load Object/Scene Assets from the same completed snapshot.
             const labelMap = new Map<string, AssetRecord[]>();
 
             const humanAssets: AssetRecord[] = [];
