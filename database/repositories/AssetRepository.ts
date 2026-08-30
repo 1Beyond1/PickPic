@@ -396,8 +396,10 @@ export const AssetRepository = {
     async getPeopleAssets(limit: number = 100): Promise<AssetRecord[]> {
         const db = await getDatabase();
         return db.getAllAsync<AssetRecord>(
-            `SELECT * FROM assets WHERE face_count > 0 ORDER BY taken_at DESC LIMIT ?`,
-            [limit]
+            `SELECT * FROM assets
+             WHERE status = ? AND face_count > 0
+             ORDER BY taken_at DESC LIMIT ?`,
+            [AssetStatus.DONE, limit]
         );
     },
 
