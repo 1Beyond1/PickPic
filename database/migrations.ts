@@ -27,6 +27,12 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
     // Get current schema version
     const schemaVersion = await getSchemaVersion(db);
 
+    if (schemaVersion > CURRENT_SCHEMA_VERSION) {
+        throw new Error(
+            `[Migrations] Database schema version ${schemaVersion} is newer than supported version ${CURRENT_SCHEMA_VERSION}`
+        );
+    }
+
     if (schemaVersion < 1) {
         await migrateToV1(db);
     }
@@ -40,25 +46,36 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
  * Get current schema version from meta table
  */
 async function getSchemaVersion(db: SQLite.SQLiteDatabase): Promise<number> {
-    try {
-        // Check if meta table exists
-        const tableCheck = await db.getFirstAsync<{ name: string }>(
-            `SELECT name FROM sqlite_master WHERE type='table' AND name='meta'`
-        );
+    // A missing table is the only valid "version 0" case. Other database
+    // errors must surface instead of being mistaken for a fresh install.
+    const tableCheck = await db.getFirstAsync<{ name: string }>(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='meta'`
+    );
 
-        if (!tableCheck) {
-            return 0;
-        }
-
-        const result = await db.getFirstAsync<{ value: string }>(
-            `SELECT value FROM meta WHERE key = ?`,
-            ['schema_version']
-        );
-
-        return result ? parseInt(result.value, 10) : 0;
-    } catch {
+    if (!tableCheck) {
         return 0;
     }
+
+    const result = await db.getFirstAsync<{ value: string | null }>(
+        `SELECT value FROM meta WHERE key = ?`,
+        ['schema_version']
+    );
+
+    if (!result) {
+        return 0;
+    }
+
+    const rawVersion = result.value?.trim() ?? '';
+    if (!/^\d+$/.test(rawVersion)) {
+        throw new Error(`[Migrations] Invalid schema version: ${String(result.value)}`);
+    }
+
+    const version = Number(rawVersion);
+    if (!Number.isSafeInteger(version) || version < 0) {
+        throw new Error(`[Migrations] Invalid schema version: ${String(result.value)}`);
+    }
+
+    return version;
 }
 
 /**
@@ -110,12 +127,12 @@ async function migrateToV1(db: SQLite.SQLiteDatabase): Promise<void> {
 async function migrateToV2(db: SQLite.SQLiteDatabase): Promise<void> {
     console.log('[Migrations] Running migration to V2...');
 
-    // Add face_count column to assets table
-    try {
+    // Check the schema explicitly. Catching every ALTER TABLE error would
+    // also hide real failures such as a locked or corrupted database.
+    const assetColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(assets)');
+    const hasFaceCount = assetColumns.some(column => column.name === 'face_count');
+    if (!hasFaceCount) {
         await db.execAsync('ALTER TABLE assets ADD COLUMN face_count INTEGER DEFAULT 0;');
-    } catch (error) {
-        // Column may already exist, ignore error
-        console.log('[Migrations] face_count column may already exist');
     }
 
     // Create face detection tables

@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GlassContainer } from '../components/GlassContainer';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
+import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 
 export default function Index() {
@@ -14,6 +15,7 @@ export default function Index() {
     });
     const [checking, setChecking] = useState(true);
     const [requesting, setRequesting] = useState(false);
+    const { t } = useI18n();
     const { colors } = useThemeColor();
 
     const checkPermissions = useCallback(() => {
@@ -38,7 +40,9 @@ export default function Index() {
     useEffect(() => {
         const subscription = AppState.addEventListener('change', (nextState) => {
             if (nextState === 'active') {
-                void getPermission();
+                void getPermission().catch(error => {
+                    console.error('Failed to refresh media permission', error);
+                });
             }
         });
 
@@ -83,11 +87,11 @@ export default function Index() {
         <View style={styles.container}>
             <StatusBar style="light" />
             <GlassContainer style={styles.card}>
-                <Text style={styles.title}>需访问权限</Text>
+                <Text style={styles.title}>{t('permission_title')}</Text>
                 <Text style={styles.description}>
                     {canAskAgain
-                        ? 'PickPic 需要访问您的照片库以帮助您整理照片和视频。'
-                        : '照片权限已被系统拒绝，请在系统设置中重新开启。'}
+                        ? t('permission_desc')
+                        : t('permission_denied_desc')}
                 </Text>
                 <Pressable
                     style={({ pressed }) => [
@@ -98,7 +102,11 @@ export default function Index() {
                     disabled={requesting}
                 >
                     <Text style={styles.buttonText}>
-                        {requesting ? '请求中…' : canAskAgain ? '授予权限' : '打开系统设置'}
+                        {requesting
+                            ? t('permission_requesting')
+                            : canAskAgain
+                                ? t('permission_btn')
+                                : t('permission_open_settings')}
                     </Text>
                 </Pressable>
             </GlassContainer>

@@ -58,14 +58,14 @@ export default function PhotosScreen() {
     const handleSwipeDown = async (photo: any, zoneId?: string) => {
         if (zoneId) {
             // Existing Album
-            const albumName = albums.find(a => a.id === zoneId)?.title || '相册';
+            const albumName = albums.find(a => a.id === zoneId)?.title || t('photos_album_fallback');
             try {
                 await addAssetToAlbum(zoneId, photo);
                 markAsSkipped(photo);
-                showToast(`已收藏至「${albumName}」`);
+                showToast(t('photos_collected', { album: albumName }));
             } catch (error) {
                 console.error('Failed to collect photo', error);
-                showToast('收藏失败，请重试');
+                showToast(t('photos_collection_failed'));
             }
         } else {
             // Just Skip / Keep
@@ -83,7 +83,7 @@ export default function PhotosScreen() {
                 setShowNewAlbumModal(false);
             } catch (error) {
                 console.error('Failed to create photo album', error);
-                showToast('创建相册失败，请重试');
+                showToast(t('photos_create_album_failed'));
             }
         }
     };
@@ -167,7 +167,7 @@ export default function PhotosScreen() {
                         loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                     } catch (error) {
                         console.error('Failed to confirm photo deletion', error);
-                        showToast('删除失败，请重试');
+                        showToast(t('photos_delete_failed'));
                     }
                 }}
                     disabled={isConfirmingDeletion}
@@ -277,7 +277,7 @@ export default function PhotosScreen() {
                     <Text style={[styles.modalTitle, { color: colors.text }]}>{t('album_new_title')}</Text>
                     <TextInput
                         style={[styles.input, { color: colors.text, backgroundColor: colors.surface }]}
-                        placeholder="名称"
+                        placeholder={t('album_name_placeholder')}
                         placeholderTextColor={colors.textSecondary}
                         value={newAlbumName}
                         onChangeText={setNewAlbumName}

@@ -92,8 +92,12 @@ export default function SettingsScreen() {
         setShowResetVideosConfirm(true);
     };
 
-    const handleOpenGitHub = () => {
-        Linking.openURL('https://github.com/1Beyond1');
+    const handleOpenGitHub = async () => {
+        try {
+            await Linking.openURL('https://github.com/1Beyond1');
+        } catch (error) {
+            console.error('[Settings] Failed to open GitHub:', error);
+        }
     };
 
     const handleAlbumConfirm = (ids: string[]) => {
@@ -258,16 +262,16 @@ export default function SettingsScreen() {
 
                 {/* AI Scanner Engine */}
                 <GlassContainer style={styles.section}>
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>AI 扫描引擎</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('ai_scanner_engine')}</Text>
 
                     {/* Progress Stats */}
                     <View style={styles.scannerStats}>
                         <View style={styles.statItem}>
-                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>待扫描</Text>
+                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('ai_scanner_pending')}</Text>
                             <Text style={[styles.statValue, { color: colors.text }]}>{progress.totalPending}</Text>
                         </View>
                         <View style={styles.statItem}>
-                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>已完成</Text>
+                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('ai_scanner_done')}</Text>
                             <Text style={[styles.statValue, { color: colors.primary }]}>{progress.totalDone}</Text>
                         </View>
                         <View style={styles.statItem}>
@@ -281,7 +285,7 @@ export default function SettingsScreen() {
                         <View style={styles.statusRow}>
                             <Ionicons name="sync" size={16} color={colors.primary} />
                             <Text style={[styles.statusText, { color: colors.primary }]}>
-                                扫描中... (批次 {progress.currentBatch})
+                                {t('ai_scanner_scanning_batch', { batch: progress.currentBatch })}
                             </Text>
                         </View>
                     )}
@@ -313,7 +317,7 @@ export default function SettingsScreen() {
                                 style={{ marginRight: 6 }}
                             />
                             <Text style={styles.scanButtonText}>
-                                {isRunning ? '停止扫描' : '开始扫描'}
+                                {isRunning ? t('ai_scanner_stop') : t('ai_scanner_start')}
                             </Text>
                         </Pressable>
 
@@ -339,7 +343,7 @@ export default function SettingsScreen() {
                         disabled={isResettingScanner}
                     >
                         <Text style={styles.resetButtonText}>
-                            {isResettingScanner ? '重置中…' : '重置扫描进度'}
+                            {isResettingScanner ? t('ai_scanner_resetting') : t('ai_scanner_reset')}
                         </Text>
                     </Pressable>
                 </GlassContainer>

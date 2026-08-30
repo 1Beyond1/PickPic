@@ -14,7 +14,9 @@ import { useScannerStore } from '../stores/useScannerStore';
 import { APP_VERSION, useSettingsStore } from '../stores/useSettingsStore';
 
 // Keep splash screen visible while loading
-SplashScreen.preventAutoHideAsync();
+void SplashScreen.preventAutoHideAsync().catch(error => {
+  console.error('[RootLayout] Failed to keep splash screen visible:', error);
+});
 
 export default function RootLayout() {
   const {
@@ -31,13 +33,31 @@ export default function RootLayout() {
 
   // Initialize app
   useEffect(() => {
+    let mounted = true;
+
     async function initializeApp() {
-      // Refresh media counts on app start
-      await useMediaStore.getState().refreshTotalCounts();
-      setAppReady(true);
-      SplashScreen.hideAsync();
+      try {
+        // Refresh media counts on app start
+        await useMediaStore.getState().refreshTotalCounts();
+      } catch (error) {
+        console.error('[RootLayout] Failed to initialize app data:', error);
+      } finally {
+        if (mounted) {
+          setAppReady(true);
+        }
+
+        try {
+          await SplashScreen.hideAsync();
+        } catch (error) {
+          console.error('[RootLayout] Failed to hide splash screen:', error);
+        }
+      }
     }
-    initializeApp();
+
+    void initializeApp();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // Show announcement first, then AI guide

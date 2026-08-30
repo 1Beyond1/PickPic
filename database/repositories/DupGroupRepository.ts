@@ -2,6 +2,7 @@
  * Duplicate Group Repository - Manages similar photo groups
  */
 
+import * as SQLite from 'expo-sqlite';
 import { getDatabase, withTransaction } from '../db';
 
 export interface DupGroup {
@@ -15,6 +16,46 @@ export interface DupMember {
     group_id: string;
     asset_id: string;
     distance: number;
+}
+
+export interface SimilarityCandidate {
+    assetId: string;
+    distance: number;
+}
+
+async function mergeGroupsInDatabase(
+    db: SQLite.SQLiteDatabase,
+    targetGroupId: string,
+    sourceGroupId: string
+): Promise<void> {
+    if (targetGroupId === sourceGroupId) return;
+
+    const sourceMembers = await db.getAllAsync<DupMember>(
+        'SELECT asset_id, distance FROM dup_members WHERE group_id = ?',
+        [sourceGroupId]
+    );
+
+    for (const member of sourceMembers) {
+        const targetMember = await db.getFirstAsync<{ distance: number }>(
+            'SELECT distance FROM dup_members WHERE group_id = ? AND asset_id = ?',
+            [targetGroupId, member.asset_id]
+        );
+
+        if (!targetMember) {
+            await db.runAsync(
+                'INSERT INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)',
+                [targetGroupId, member.asset_id, member.distance]
+            );
+        } else if (member.distance < targetMember.distance) {
+            await db.runAsync(
+                'UPDATE dup_members SET distance = ? WHERE group_id = ? AND asset_id = ?',
+                [member.distance, targetGroupId, member.asset_id]
+            );
+        }
+    }
+
+    await db.runAsync('DELETE FROM dup_members WHERE group_id = ?', [sourceGroupId]);
+    await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [sourceGroupId]);
 }
 
 export const DupGroupRepository = {
@@ -130,37 +171,81 @@ export const DupGroupRepository = {
         if (targetGroupId === sourceGroupId) return;
 
         await withTransaction(async db => {
-            const sourceMembers = await db.getAllAsync<DupMember>(
-                'SELECT asset_id, distance FROM dup_members WHERE group_id = ?',
-                [sourceGroupId]
-            );
+            await mergeGroupsInDatabase(db, targetGroupId, sourceGroupId);
+        });
+    },
 
-            // A member can already exist in the target when two groups
-            // overlap. Keep the closest recorded distance instead of relying
-            // on UPDATE of the composite primary key, which would fail.
-            for (const member of sourceMembers) {
-                const targetMember = await db.getFirstAsync<{ distance: number }>(
+    /**
+     * Atomically connect a scanned asset and every standalone match to one
+     * target group, merging any existing groups along the way.
+     */
+    async addAssetToMatchingGroups(
+        assetId: string,
+        matches: readonly SimilarityCandidate[],
+        newGroupId: string
+    ): Promise<string | null> {
+        if (matches.length === 0) return null;
+
+        return withTransaction(async db => {
+            const existingGroupIds = new Set<string>();
+
+            for (const match of matches) {
+                const rows = await db.getAllAsync<{ group_id: string }>(
+                    'SELECT group_id FROM dup_members WHERE asset_id = ?',
+                    [match.assetId]
+                );
+                rows.forEach(row => existingGroupIds.add(row.group_id));
+            }
+
+            const firstExistingGroupId = existingGroupIds.values().next().value as string | undefined;
+            const targetGroupId = firstExistingGroupId ?? newGroupId;
+
+            if (!firstExistingGroupId) {
+                await db.runAsync(
+                    `INSERT INTO dup_groups (group_id, representative_asset_id, best_asset_id, created_at)
+                     VALUES (?, ?, NULL, ?)`,
+                    [targetGroupId, matches[0].assetId, Date.now()]
+                );
+            }
+
+            for (const groupId of existingGroupIds) {
+                if (groupId !== targetGroupId) {
+                    await mergeGroupsInDatabase(db, targetGroupId, groupId);
+                }
+            }
+
+            // A match may have been a standalone completed asset. Add every
+            // such match, rather than dropping it when another match already
+            // supplied an existing target group.
+            for (const match of matches) {
+                const memberDistance = !firstExistingGroupId && match.assetId === matches[0].assetId
+                    ? 0
+                    : match.distance;
+                const existingMember = await db.getFirstAsync<{ distance: number }>(
                     'SELECT distance FROM dup_members WHERE group_id = ? AND asset_id = ?',
-                    [targetGroupId, member.asset_id]
+                    [targetGroupId, match.assetId]
                 );
 
-                if (targetMember) {
-                    if (member.distance < targetMember.distance) {
-                        await db.runAsync(
-                            'UPDATE dup_members SET distance = ? WHERE group_id = ? AND asset_id = ?',
-                            [member.distance, targetGroupId, member.asset_id]
-                        );
-                    }
-                } else {
+                if (!existingMember) {
                     await db.runAsync(
                         'INSERT INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)',
-                        [targetGroupId, member.asset_id, member.distance]
+                        [targetGroupId, match.assetId, memberDistance]
+                    );
+                } else if (memberDistance < existingMember.distance) {
+                    await db.runAsync(
+                        'UPDATE dup_members SET distance = ? WHERE group_id = ? AND asset_id = ?',
+                        [memberDistance, targetGroupId, match.assetId]
                     );
                 }
             }
 
-            await db.runAsync('DELETE FROM dup_members WHERE group_id = ?', [sourceGroupId]);
-            await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [sourceGroupId]);
+            const closestDistance = matches[0].distance;
+            await db.runAsync(
+                'INSERT OR REPLACE INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)',
+                [targetGroupId, assetId, closestDistance]
+            );
+
+            return targetGroupId;
         });
     },
     /**

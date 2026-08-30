@@ -408,14 +408,14 @@ async function processAsset(assetId: string): Promise<boolean> {
         }
 
         // Mark as done (with face count)
-        await AssetRepository.markDone(assetId, blurScore, meanLuma, phash, GLOBAL_ALGO_VERSION);
-
-        // Always overwrite derived ML fields so a re-scan cannot retain stale
-        // labels or face counts from a previous image/version.
-        const db = await import('../../database').then(m => m.getDatabase());
-        await db.runAsync(
-            'UPDATE assets SET face_count = ?, labels_json = ? WHERE asset_id = ?',
-            [faceCount, labelsJson, assetId]
+        await AssetRepository.markDone(
+            assetId,
+            blurScore,
+            meanLuma,
+            phash,
+            GLOBAL_ALGO_VERSION,
+            faceCount,
+            labelsJson
         );
 
         // Find similar photos
@@ -424,39 +424,24 @@ async function processAsset(assetId: string): Promise<boolean> {
             const matches = await findSimilarPhotos(phash, asset.taken_at, assetId);
 
             if (matches.length > 0) {
-                // Collect every group represented by the matches. A new
-                // asset can bridge previously separate groups, so keeping
-                // only the first group would leave overlapping results.
-                const existingGroupIds = new Set<string>();
-                for (const match of matches) {
-                    const groupIds = await DupGroupRepository.findGroupIdsByAssetId(match.assetId);
-                    groupIds.forEach(groupId => existingGroupIds.add(groupId));
-                }
+                const targetGroupId = await DupGroupRepository.addAssetToMatchingGroups(
+                    assetId,
+                    matches,
+                    generateGroupId()
+                );
 
-                let targetGroupId: string | null = null;
-
-                const firstExistingGroupId = existingGroupIds.values().next().value as string | undefined;
-                if (firstExistingGroupId) {
-                    targetGroupId = firstExistingGroupId;
-                } else {
-                    // Create new group with first match as representative
-                    targetGroupId = generateGroupId();
-                    await DupGroupRepository.createGroup(targetGroupId, matches[0].assetId);
-                    await DupGroupRepository.addMember(targetGroupId, matches[0].assetId, 0);
-                }
-
-                for (const groupId of existingGroupIds) {
-                    if (groupId !== targetGroupId) {
-                        await DupGroupRepository.mergeGroups(targetGroupId, groupId);
+                if (targetGroupId) {
+                    // Best-shot metadata is recoverable and must not turn an
+                    // otherwise complete scan/group transaction into ERROR.
+                    try {
+                        await selectBestShot(targetGroupId);
+                    } catch (bestShotError) {
+                        console.warn(
+                            `[AIScanner] Failed to update best shot for ${targetGroupId}:`,
+                            bestShotError
+                        );
                     }
                 }
-
-                // Add current asset to group
-                const closestMatch = matches[0];
-                await DupGroupRepository.addMember(targetGroupId, assetId, closestMatch.distance);
-
-                // Recalculate best shot
-                await selectBestShot(targetGroupId);
             }
         }
 
@@ -726,9 +711,7 @@ export async function resetAllProgress(): Promise<void> {
             throw new Error('Scanner did not stop in time; progress was not reset.');
         }
     }
-    await MetaRepository.resetScanCursor();
     await AssetRepository.resetAll();
-    await DupGroupRepository.deleteAll();
     console.log('[AIScanner] Full progress reset.');
 }
 

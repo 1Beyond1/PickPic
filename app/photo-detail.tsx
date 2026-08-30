@@ -16,8 +16,12 @@ export default function PhotoDetailScreen() {
     const { colors, isDark } = useThemeColor();
 
     const handleShare = async () => {
-        if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(uri);
+        try {
+            if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(uri);
+            }
+        } catch (error) {
+            console.error('[PhotoDetail] Failed to share photo:', error);
         }
     };
 

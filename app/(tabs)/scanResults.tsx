@@ -39,7 +39,7 @@ export default function ScanResultsScreen() {
     const { colors } = useThemeColor();
     const { t } = useI18n();
 
-    const { enableAIClassification, language } = useSettingsStore();
+    const { enableAIClassification } = useSettingsStore();
 
     const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'ai'>('blur');
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
@@ -161,12 +161,12 @@ export default function ScanResultsScreen() {
 
     const handleDeleteBlurry = async (assetId: string) => {
         Alert.alert(
-            '删除模糊照片',
-            '确定要删除这张照片吗？',
+            t('scan_delete_blurry_title'),
+            t('scan_delete_blurry_message'),
             [
-                { text: '取消', style: 'cancel' },
+                { text: t('cancel'), style: 'cancel' },
                 {
-                    text: '删除',
+                    text: t('delete'),
                     style: 'destructive',
                     onPress: async () => {
                         try {
@@ -185,7 +185,7 @@ export default function ScanResultsScreen() {
                             }
                             setBlurryPhotos(prev => prev.filter(p => p.assetId !== assetId));
                         } catch (error) {
-                            Alert.alert('删除失败', String(error));
+                            Alert.alert(t('delete_failed'), String(error));
                         }
                     },
                 },
@@ -200,10 +200,10 @@ export default function ScanResultsScreen() {
             )}
             <View style={styles.cardInfo}>
                 <Text style={[styles.scoreText, { color: colors.danger }]}>
-                    模糊度: {item.blurScore.toFixed(1)}
+                    {t('scan_blur_score', { score: item.blurScore.toFixed(1) })}
                 </Text>
                 <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                    亮度: {item.meanLuma.toFixed(0)}
+                    {t('scan_brightness', { value: item.meanLuma.toFixed(0) })}
                 </Text>
             </View>
             <Pressable
@@ -361,7 +361,7 @@ export default function ScanResultsScreen() {
                     {aiLoading ? (
                         <View style={styles.loadingContainer}>
                             <ActivityIndicator size="large" color={colors.primary} />
-                            <Text style={{ color: colors.textSecondary, marginTop: 10 }}>正在整理相册...</Text>
+                            <Text style={{ color: colors.textSecondary, marginTop: 10 }}>{t('scan_organizing')}</Text>
                         </View>
                     ) : (
                         <FlatList
@@ -374,7 +374,7 @@ export default function ScanResultsScreen() {
                                         <Text style={[styles.sectionTitle, { color: colors.text }]}>
                                             {t('ai_category_people' as any)}
                                         </Text>
-                                        <Text style={{ color: colors.textSecondary }}>{peopleGroups.length} 组</Text>
+                                        <Text style={{ color: colors.textSecondary }}>{t('scan_group_count', { count: peopleGroups.length })}</Text>
                                     </View>
                                     <FlatList
                                         data={peopleGroups}
@@ -383,15 +383,15 @@ export default function ScanResultsScreen() {
                                         renderItem={renderCategoryCard}
                                         keyExtractor={item => item.id}
                                         contentContainerStyle={styles.horizontalList}
-                                        ListEmptyComponent={<Text style={{ color: colors.textSecondary, padding: 20 }}>暂无人物照片</Text>}
+                                        ListEmptyComponent={<Text style={{ color: colors.textSecondary, padding: 20 }}>{t('scan_no_people')}</Text>}
                                     />
 
                                     {/* Objects Section */}
                                     <View style={styles.sectionHeader}>
                                         <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                                            {language === 'zh' ? '事物 & 场景' : 'Objects & Scenes'}
+                                            {t('scan_objects_scenes')}
                                         </Text>
-                                        <Text style={{ color: colors.textSecondary }}>{objectGroups.length} 类</Text>
+                                        <Text style={{ color: colors.textSecondary }}>{t('scan_category_count', { count: objectGroups.length })}</Text>
                                     </View>
                                     <FlatList
                                         data={objectGroups}
@@ -400,7 +400,7 @@ export default function ScanResultsScreen() {
                                         renderItem={renderCategoryCard}
                                         keyExtractor={item => item.id}
                                         contentContainerStyle={styles.horizontalList}
-                                        ListEmptyComponent={<Text style={{ color: colors.textSecondary, padding: 20 }}>暂无识别结果</Text>}
+                                        ListEmptyComponent={<Text style={{ color: colors.textSecondary, padding: 20 }}>{t('scan_no_results')}</Text>}
                                     />
 
                                     {/* Uncategorized Section */}
@@ -408,9 +408,9 @@ export default function ScanResultsScreen() {
                                         <>
                                             <View style={styles.sectionHeader}>
                                                 <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                                                    {language === 'zh' ? '未分类' : 'Uncategorized'}
+                                                    {t('scan_uncategorized')}
                                                 </Text>
-                                                <Text style={{ color: colors.textSecondary }}>{uncategorizedGroup.count} 张</Text>
+                                                <Text style={{ color: colors.textSecondary }}>{t('scan_photo_count', { count: uncategorizedGroup.count })}</Text>
                                             </View>
                                             <FlatList
                                                 data={[uncategorizedGroup]}
@@ -441,7 +441,7 @@ export default function ScanResultsScreen() {
                         <View style={styles.emptyContainer}>
                             <Ionicons name="checkmark-circle" size={64} color={colors.textSecondary} />
                             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                                未发现模糊照片
+                                {t('scan_no_blurry')}
                             </Text>
                         </View>
                     }
@@ -456,7 +456,7 @@ export default function ScanResultsScreen() {
                         <View style={styles.emptyContainer}>
                             <Ionicons name="checkmark-circle" size={64} color={colors.textSecondary} />
                             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                                未发现相似照片组
+                                {t('scan_no_similar')}
                             </Text>
                         </View>
                     }
@@ -512,7 +512,7 @@ export default function ScanResultsScreen() {
                             )}
                             ListHeaderComponent={
                                 <Text style={{ color: colors.textSecondary, marginBottom: 10, textAlign: 'center' }}>
-                                    共 {selectedCategory.count} 张照片
+                                    {t('scan_category_total', { count: selectedCategory.count })}
                                 </Text>
                             }
                         />

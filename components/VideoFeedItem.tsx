@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ResizeMode, Video } from 'expo-av';
 import * as Sharing from 'expo-sharing';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Dimensions, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
@@ -36,16 +36,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     itemHeight
 }) => {
     const videoRef = useRef<Video>(null);
-    const [locationName, setLocationName] = useState('Loading...');
     const insets = useSafeAreaInsets(); // Add safe area insets
-
-    useEffect(() => {
-        // Mock location loading
-        const timer = setTimeout(() => {
-            setLocationName('Unknown Location');
-        }, 1000);
-        return () => clearTimeout(timer);
-    }, []);
 
     useEffect(() => {
         let mounted = true;
@@ -121,7 +112,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                 <View style={styles.metadata}>
                     <View style={styles.locationTag}>
                         <Ionicons name="location-sharp" size={14} color={COLORS.white} />
-                        <Text style={styles.locationText}>{locationName}</Text>
+                        <Text style={styles.locationText}>{t('video_location_unknown')}</Text>
                     </View>
                     <Text style={styles.timeText}>{dateString}</Text>
                 </View>

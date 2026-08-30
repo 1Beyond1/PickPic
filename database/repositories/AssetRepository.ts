@@ -3,7 +3,7 @@
  */
 
 import { getDatabase, withTransaction } from '../db';
-import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION } from '../schema';
+import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
 
 export interface AssetRecord {
     asset_id: string;
@@ -280,15 +280,28 @@ export const AssetRepository = {
         blurScore: number,
         meanLuma: number,
         phash: string,
-        algoVersion: number = GLOBAL_ALGO_VERSION
+        algoVersion: number = GLOBAL_ALGO_VERSION,
+        faceCount: number = 0,
+        labelsJson: string | null = null
     ): Promise<void> {
         const db = await getDatabase();
         await db.runAsync(
             `UPDATE assets SET
         status = ?, blur_score = ?, mean_luma = ?, phash = ?,
-        algo_version = ?, error_message = NULL, updated_at = ?
+        algo_version = ?, face_count = ?, labels_json = ?,
+        error_message = NULL, updated_at = ?
        WHERE asset_id = ?`,
-            [AssetStatus.DONE, blurScore, meanLuma, phash, algoVersion, Date.now(), assetId]
+            [
+                AssetStatus.DONE,
+                blurScore,
+                meanLuma,
+                phash,
+                algoVersion,
+                faceCount,
+                labelsJson,
+                Date.now(),
+                assetId,
+            ]
         );
     },
 
@@ -298,7 +311,11 @@ export const AssetRepository = {
     async markError(assetId: string, errorMessage: string): Promise<void> {
         const db = await getDatabase();
         await db.runAsync(
-            `UPDATE assets SET status = ?, error_message = ?, updated_at = ? WHERE asset_id = ?`,
+            `UPDATE assets SET
+             status = ?, algo_version = NULL, blur_score = NULL,
+             mean_luma = NULL, phash = NULL, face_count = NULL,
+             labels_json = NULL, error_message = ?, updated_at = ?
+             WHERE asset_id = ?`,
             [AssetStatus.ERROR, errorMessage, Date.now(), assetId]
         );
     },
@@ -431,38 +448,93 @@ export const AssetRepository = {
     },
 
     /**
-     * Reset ALL assets to PENDING state (Force Rescan)
+     * Reset every scanner-derived record and return all assets to PENDING.
      */
     async resetAll(): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            `UPDATE assets SET 
-             status = ?, 
-             algo_version = NULL,
-             blur_score = NULL,
-             mean_luma = NULL,
-             phash = NULL,
-             face_count = NULL, 
-             labels_json = NULL,
-             error_message = NULL,
-             updated_at = ?`,
-            [AssetStatus.PENDING, Date.now()]
-        );
+        await withTransaction(async db => {
+            // Keep cursor, derived groups, and asset statuses in one commit so
+            // a failed reset cannot leave the scanner in a half-reset state.
+            await db.runAsync('DELETE FROM dup_members');
+            await db.runAsync('DELETE FROM dup_groups');
+            await db.runAsync('DELETE FROM face_instances');
+            await db.runAsync('DELETE FROM face_groups');
+            await db.runAsync(
+                'DELETE FROM meta WHERE key IN (?, ?)',
+                [MetaKeys.SCAN_CURSOR_TAKEN_AT, MetaKeys.SCAN_CURSOR_ASSET_ID]
+            );
+            await db.runAsync(
+                `UPDATE assets SET
+                 status = ?,
+                 algo_version = NULL,
+                 blur_score = NULL,
+                 mean_luma = NULL,
+                 phash = NULL,
+                 face_count = NULL,
+                 labels_json = NULL,
+                 error_message = NULL,
+                 updated_at = ?`,
+                [AssetStatus.PENDING, Date.now()]
+            );
+        });
     },
 
     /**
      * Make failed assets eligible for an explicit resume/retry action.
      */
     async resetErrors(): Promise<number> {
-        const db = await getDatabase();
-        const result = await db.runAsync(
-            `UPDATE assets SET
-             status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
-             face_count = NULL, labels_json = NULL, error_message = NULL,
-             updated_at = ?
-             WHERE status = ?`,
-            [AssetStatus.PENDING, Date.now(), AssetStatus.ERROR]
-        );
-        return result.changes;
+        return withTransaction(async db => {
+            // Repair legacy partial writes before retrying. Current group
+            // creation is atomic, but older app versions could leave an ERROR
+            // asset attached to one or more groups.
+            await db.runAsync(
+                `DELETE FROM dup_members
+                 WHERE asset_id IN (SELECT asset_id FROM assets WHERE status = ?)`,
+                [AssetStatus.ERROR]
+            );
+            await db.runAsync(
+                `DELETE FROM face_instances
+                 WHERE asset_id IN (SELECT asset_id FROM assets WHERE status = ?)`,
+                [AssetStatus.ERROR]
+            );
+            await db.runAsync(
+                'DELETE FROM dup_groups WHERE group_id NOT IN (SELECT DISTINCT group_id FROM dup_members)'
+            );
+            await db.runAsync(
+                `UPDATE dup_groups
+                 SET representative_asset_id = CASE
+                     WHEN representative_asset_id IS NULL OR NOT EXISTS (
+                         SELECT 1 FROM dup_members
+                         WHERE dup_members.group_id = dup_groups.group_id
+                           AND dup_members.asset_id = dup_groups.representative_asset_id
+                     ) THEN (
+                         SELECT asset_id FROM dup_members
+                         WHERE dup_members.group_id = dup_groups.group_id
+                         ORDER BY distance ASC LIMIT 1
+                     ) ELSE representative_asset_id END,
+                     best_asset_id = CASE
+                     WHEN best_asset_id IS NULL OR NOT EXISTS (
+                         SELECT 1 FROM dup_members
+                         WHERE dup_members.group_id = dup_groups.group_id
+                           AND dup_members.asset_id = dup_groups.best_asset_id
+                     ) THEN (
+                         SELECT asset_id FROM dup_members
+                         WHERE dup_members.group_id = dup_groups.group_id
+                         ORDER BY distance ASC LIMIT 1
+                     ) ELSE best_asset_id END`
+            );
+            await db.runAsync(
+                'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
+            );
+
+            const result = await db.runAsync(
+                `UPDATE assets SET
+                 status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
+                 face_count = NULL, labels_json = NULL, error_message = NULL,
+                 updated_at = ?
+                 WHERE status = ?`,
+                [AssetStatus.PENDING, Date.now(), AssetStatus.ERROR]
+            );
+            return result.changes;
+        });
     },
 };
