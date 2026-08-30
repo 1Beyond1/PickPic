@@ -114,7 +114,7 @@ function generateGroupId(): string {
 /**
  * Sync media library assets to database
  */
-async function syncAssetsToDatabase(): Promise<void> {
+async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
     console.log('[AIScanner] Syncing assets to database...');
 
     const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
@@ -133,7 +133,7 @@ async function syncAssetsToDatabase(): Promise<void> {
     const seenAssetIds = new Set<string>();
 
     while (hasMore) {
-        if (shouldStop) return;
+        if (shouldStop) return null;
 
         const result = await MediaLibrary.getAssetsAsync({
             mediaType: 'photo',
@@ -143,7 +143,7 @@ async function syncAssetsToDatabase(): Promise<void> {
         });
 
         for (const asset of result.assets) {
-            if (shouldStop) return;
+            if (shouldStop) return null;
             seenAssetIds.add(asset.id);
 
             // Check if asset exists and signature changed
@@ -182,7 +182,7 @@ async function syncAssetsToDatabase(): Promise<void> {
         }
     }
 
-    if (shouldStop) return;
+    if (shouldStop) return null;
 
     if (hasFullPhotoAccess) {
         const removed = await AssetRepository.removeMissingAssets(seenAssetIds);
@@ -201,6 +201,11 @@ async function syncAssetsToDatabase(): Promise<void> {
     }
 
     console.log(`[AIScanner] Synced ${synced} new assets.`);
+
+    // A limited-permission sync intentionally preserves older records that
+    // are outside the current grant. Return the visible IDs so callers can
+    // avoid trying to process those inaccessible records as pending work.
+    return hasFullPhotoAccess ? null : seenAssetIds;
 }
 
 /**
@@ -555,7 +560,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
 
     try {
         // Sync assets from media library
-        await syncAssetsToDatabase();
+        const accessibleAssetIds = await syncAssetsToDatabase();
         if (shouldStop) return;
 
         // Reset outdated assets
@@ -566,8 +571,9 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
         await reportProgress();
 
         // Process batches until done or stopped
+        const scanAssetIds = accessibleAssetIds ? Array.from(accessibleAssetIds) : undefined;
         while (!shouldStop) {
-            const hasMore = await processBatch();
+            const hasMore = await processBatch(BATCH_SIZE, scanAssetIds);
             await reportProgress();
 
             if (!hasMore) {
@@ -621,7 +627,7 @@ export async function resumeOnce(
     try {
         // Refresh the local index so a batch scan sees newly added photos and
         // removes records for assets deleted outside the app.
-        await syncAssetsToDatabase();
+        const accessibleAssetIds = await syncAssetsToDatabase();
         if (shouldStop) return;
 
         const retried = await AssetRepository.resetErrors();
@@ -639,6 +645,14 @@ export async function resumeOnce(
         let assetIds: string[] | undefined;
         if (options?.mode === 'album') {
             assetIds = await getPhotoAssetIdsForAlbums(options.albumIds ?? []);
+        }
+
+        if (accessibleAssetIds) {
+            if (assetIds) {
+                assetIds = assetIds.filter(assetId => accessibleAssetIds.has(assetId));
+            } else {
+                assetIds = Array.from(accessibleAssetIds);
+            }
         }
 
         const requestedCount = options?.mode === 'count' ? options.count ?? BATCH_SIZE : BATCH_SIZE;
