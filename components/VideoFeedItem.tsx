@@ -48,22 +48,51 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     }, []);
 
     useEffect(() => {
-        if (shouldPlay) {
-            videoRef.current?.playAsync();
-        } else {
-            videoRef.current?.pauseAsync();
-        }
+        let mounted = true;
+
+        const syncPlayback = async () => {
+            const player = videoRef.current;
+            if (!player) return;
+
+            try {
+                if (shouldPlay) {
+                    await player.playAsync();
+                } else {
+                    await player.pauseAsync();
+                }
+            } catch (error) {
+                // The native player can reject while a feed item is being
+                // recycled or unloaded. Keep that transient failure from
+                // becoming an unhandled promise rejection.
+                if (mounted) {
+                    console.warn('[VideoFeedItem] Failed to sync playback state:', error);
+                }
+            }
+        };
+
+        void syncPlayback();
+        return () => {
+            mounted = false;
+        };
     }, [shouldPlay]);
 
     const handleShare = async () => {
-        if (await Sharing.isAvailableAsync()) {
-            await Sharing.shareAsync(video.uri);
+        try {
+            if (await Sharing.isAvailableAsync()) {
+                await Sharing.shareAsync(video.uri);
+            }
+        } catch (error) {
+            console.error('[VideoFeedItem] Failed to share video:', error);
         }
     };
 
     const handleLongPress = async () => {
-        if (videoRef.current) {
-            await videoRef.current.presentFullscreenPlayer();
+        try {
+            if (videoRef.current) {
+                await videoRef.current.presentFullscreenPlayer();
+            }
+        } catch (error) {
+            console.error('[VideoFeedItem] Failed to open fullscreen video:', error);
         }
     };
 

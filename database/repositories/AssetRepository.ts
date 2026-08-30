@@ -360,12 +360,12 @@ export const AssetRepository = {
         const exclusion = excludeAssetId ? ' AND asset_id != ?' : '';
         const params: (string | number)[] = [AssetStatus.DONE, minTime, maxTime];
         if (excludeAssetId) params.push(excludeAssetId);
-        params.push(limit);
+        params.push(takenAt, limit);
 
         return db.getAllAsync<AssetRecord>(
             `SELECT * FROM assets
        WHERE status = ? AND taken_at BETWEEN ? AND ?${exclusion}
-       ORDER BY taken_at DESC
+       ORDER BY ABS(taken_at - ?) ASC, taken_at DESC, asset_id ASC
        LIMIT ?`,
             params
         );

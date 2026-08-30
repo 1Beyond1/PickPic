@@ -24,11 +24,19 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
         return initPromise;
     }
 
-    initPromise = initializeDatabase();
-    dbInstance = await initPromise;
-    initPromise = null;
+    const pendingInitialization = initializeDatabase();
+    initPromise = pendingInitialization;
 
-    return dbInstance;
+    try {
+        dbInstance = await pendingInitialization;
+        return dbInstance;
+    } finally {
+        // Do not cache a rejected initialization forever. A later operation
+        // should be able to retry after a transient open/migration failure.
+        if (initPromise === pendingInitialization) {
+            initPromise = null;
+        }
+    }
 }
 
 /**
