@@ -413,6 +413,7 @@ export default function SettingsScreen() {
                                 <Switch
                                     value={enableAIClassification}
                                     onValueChange={handleToggleAIClassification}
+                                    disabled={isRunning}
                                     trackColor={{ false: isDark ? '#333' : '#E0E0E0', true: colors.primary }}
                                     thumbColor={isDark ? '#FFF' : '#FFF'}
                                 />
