@@ -187,7 +187,9 @@ export const useMediaStore = create<MediaState>()(
 
     createAlbum: async (name, asset) => {
         try {
-            await MediaLibrary.createAlbumAsync(name, asset, false);
+            // Collection actions should keep the asset in its original
+            // albums. On Android, `false` moves it instead of copying it.
+            await MediaLibrary.createAlbumAsync(name, asset, true);
             await get().loadAlbums();
         } catch (e) {
             console.error("Failed to create album", e);
