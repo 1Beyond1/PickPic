@@ -4,7 +4,25 @@
 
 ![Version](https://img.shields.io/badge/version-0.3.1-blue)
 ![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS-green)
-![License](https://img.shields.io/badge/license-CC%20BY--NC%204.0-orange)
+![License](https://img.shields.io/badge/license-MIT-yellow)
+
+---
+
+## 📱 应用截图
+
+<p align="center">
+  <a href="assets/screenshots/photo-organizer.jpg">
+    <img src="assets/screenshots/photo-organizer.jpg" alt="卡片式照片整理界面" width="42%" />
+  </a>
+  &nbsp;&nbsp;
+  <a href="assets/screenshots/ai-scan-settings.jpg">
+    <img src="assets/screenshots/ai-scan-settings.jpg" alt="AI 扫描与整理进度设置界面" width="42%" />
+  </a>
+</p>
+
+<p align="center">
+  <sub>卡片式照片整理 &nbsp;·&nbsp; AI 扫描与整理进度</sub>
+</p>
 
 ---
 
@@ -12,12 +30,14 @@
 
 ### 📷 卡片式照片整理
 像刷探探一样整理相册！
+
 - ⬆️ **上滑删除** - 不想要的照片一划即走
 - ⬇️ **下滑保留** - 珍贵回忆安全跳过
 - 批量确认，避免误删
 
 ### 🎬 抖音风格视频浏览
 全屏沉浸式刷自己的视频库
+
 - 一键删除 / 收藏 / 分享
 - 废纸篓二次确认机制
 - 长按进入全屏模式
@@ -99,7 +119,7 @@ eas build --platform android --profile preview --local
 
 ## 📝 许可协议
 
-本项目基于 [CC BY-NC 4.0](LICENSE) 许可，仅限非商业用途。
+本项目基于 [MIT](LICENSE) 许可证开源。
 
 ---
 
