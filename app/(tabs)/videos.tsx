@@ -49,10 +49,24 @@ export default function VideosScreen() {
     useFocusEffect(
         useCallback(() => {
             setIsScreenFocused(true);
+            setActiveId(null);
+            lastActiveIdRef.current = null;
             return () => {
                 setIsScreenFocused(false);
+
+                // The last visible item has no following item to trigger
+                // onViewableItemsChanged. Mark it when leaving the screen so
+                // it does not reappear forever on the next visit.
+                const activeVideoId = lastActiveIdRef.current;
+                if (activeVideoId) {
+                    const activeVideo = videosRef.current.find(video => video.id === activeVideoId);
+                    if (activeVideo) {
+                        markVideoAsProcessed(activeVideo);
+                    }
+                }
+                lastActiveIdRef.current = null;
             };
-        }, [])
+        }, [markVideoAsProcessed])
     );
 
     const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
