@@ -24,6 +24,7 @@ export default function VideosScreen() {
     const {
         videos, loadVideos, isLoading, hasHydrated,
         markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
+        isConfirmingVideoTrash,
         addAssetToAlbum
     } = useMediaStore();
     const { displayOrder, selectedAlbumIds } = useSettingsStore();
@@ -215,7 +216,11 @@ export default function VideosScreen() {
                                     <View style={styles.videoIconOverlay}>
                                         <Ionicons name="videocam" size={20} color="white" />
                                     </View>
-                                    <Pressable style={styles.restoreBtn} onPress={() => restoreFromTrash(item.id)}>
+                                    <Pressable
+                                        style={[styles.restoreBtn, isConfirmingVideoTrash && { opacity: 0.5 }]}
+                                        onPress={() => restoreFromTrash(item.id)}
+                                        disabled={isConfirmingVideoTrash}
+                                    >
                                         <Text style={styles.restoreText}>{t('video_restore')}</Text>
                                     </Pressable>
                                 </View>
@@ -224,9 +229,12 @@ export default function VideosScreen() {
                     )}
 
                     {videoTrashBin.length > 0 && (
-                        <Pressable style={styles.confirmDeleteBtn} onPress={async () => {
+                        <Pressable
+                            style={[styles.confirmDeleteBtn, isConfirmingVideoTrash && { opacity: 0.6 }]}
+                            onPress={async () => {
                             try {
                                 await confirmVideoTrash();
+                                if (useMediaStore.getState().isConfirmingVideoTrash) return;
                                 setShowTrash(false);
                             } catch (error) {
                                 console.error('Failed to permanently delete videos', error);
@@ -235,7 +243,9 @@ export default function VideosScreen() {
                                     language === 'zh' ? '视频仍保留在废纸篓中，请重试。' : 'The videos remain in the trash. Please try again.'
                                 );
                             }
-                        }}>
+                        }}
+                            disabled={isConfirmingVideoTrash}
+                        >
                             <Text style={styles.confirmDeleteText}>{t('video_confirm_delete')}</Text>
                         </Pressable>
                     )}

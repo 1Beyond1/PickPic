@@ -29,6 +29,8 @@ interface MediaState {
     totalVideos: number;
 
     isLoading: boolean;
+    isConfirmingDeletion: boolean;
+    isConfirmingVideoTrash: boolean;
     hasPermission: boolean;
     hasHydrated: boolean;
 
@@ -170,6 +172,8 @@ export const useMediaStore = create<MediaState>()(
     videoTrashBin: [],
 
     isLoading: false,
+    isConfirmingDeletion: false,
+    isConfirmingVideoTrash: false,
     hasPermission: false,
     hasHydrated: false,
 
@@ -323,11 +327,13 @@ export const useMediaStore = create<MediaState>()(
     },
 
     undoAction: (assetId) => {
-        set((state) => ({
-            deleteQueue: state.deleteQueue.filter(p => p.id !== assetId),
-            collectionQueue: state.collectionQueue.filter(p => p.id !== assetId),
-            photoProcessedIds: state.photoProcessedIds.filter(id => id !== assetId)
-        }));
+        set((state) => state.isConfirmingDeletion
+            ? state
+            : {
+                deleteQueue: state.deleteQueue.filter(p => p.id !== assetId),
+                collectionQueue: state.collectionQueue.filter(p => p.id !== assetId),
+                photoProcessedIds: state.photoProcessedIds.filter(id => id !== assetId)
+            });
     },
 
     markVideoForTrash: (asset) => {
@@ -353,30 +359,40 @@ export const useMediaStore = create<MediaState>()(
         const trash = get().videoTrashBin;
         const asset = trash.find(v => v.id === assetId);
         if (asset) {
-            set((state) => ({
-                videoTrashBin: state.videoTrashBin.filter(v => v.id !== assetId),
-                videos: [asset, ...state.videos],
-                videoProcessedIds: state.videoProcessedIds.filter(id => id !== assetId)
-            }));
+            set((state) => state.isConfirmingVideoTrash
+                ? state
+                : {
+                    videoTrashBin: state.videoTrashBin.filter(v => v.id !== assetId),
+                    videos: [asset, ...state.videos],
+                    videoProcessedIds: state.videoProcessedIds.filter(id => id !== assetId)
+                });
         }
     },
 
     resetBatch: () => {
-        set({ photos: [], currentIndex: 0, deleteQueue: [], collectionQueue: [] });
+        set((state) => state.isConfirmingDeletion
+            ? state
+            : { photos: [], currentIndex: 0, deleteQueue: [], collectionQueue: [] });
     },
 
     resetPhotoProgress: () => {
-        set({ photoProcessedIds: [], photos: [], deleteQueue: [], collectionQueue: [] });
+        set((state) => state.isConfirmingDeletion
+            ? state
+            : { photoProcessedIds: [], photos: [], deleteQueue: [], collectionQueue: [] });
     },
 
     resetVideoProgress: () => {
-        set({ videoProcessedIds: [], videos: [], videoTrashBin: [] });
+        set((state) => state.isConfirmingVideoTrash
+            ? state
+            : { videoProcessedIds: [], videos: [], videoTrashBin: [] });
     },
 
     confirmDeletion: async () => {
+        if (get().isConfirmingDeletion) return;
         const { deleteQueue } = get();
         if (deleteQueue.length === 0) return;
 
+        set({ isConfirmingDeletion: true });
         try {
             // Batch delete all at once - system will show ONE permission dialog
             const ids = deleteQueue.map(a => a.id);
@@ -408,13 +424,18 @@ export const useMediaStore = create<MediaState>()(
             // another temporary media-library failure.
             console.error("Batch deletion failed", e);
             throw e;
+        } finally {
+            set({ isConfirmingDeletion: false });
         }
 
     },
 
     confirmVideoTrash: async () => {
+        if (get().isConfirmingVideoTrash) return;
         const { videoTrashBin } = get();
         if (videoTrashBin.length === 0) return;
+
+        set({ isConfirmingVideoTrash: true });
         try {
             const deletedIds = new Set(videoTrashBin.map(video => video.id));
             const deleted = await MediaLibrary.deleteAssetsAsync(videoTrashBin);
@@ -428,6 +449,8 @@ export const useMediaStore = create<MediaState>()(
         } catch (e) {
             console.error("Video deletion failed", e);
             throw e;
+        } finally {
+            set({ isConfirmingVideoTrash: false });
         }
     },
 

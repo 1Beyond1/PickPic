@@ -22,7 +22,7 @@ export default function PhotosScreen() {
         photos, albums, loadPhotos, isLoading, hasHydrated,
         photoProcessedIds,
         markForDeletion, markAsSkipped,
-        confirmDeletion, deleteQueue, resetBatch,
+        confirmDeletion, deleteQueue, resetBatch, isConfirmingDeletion,
         createAlbum, addAssetToAlbum, loadAlbums
     } = useMediaStore();
 
@@ -139,6 +139,8 @@ export default function PhotosScreen() {
                                 onPress={() => handleUndo(photo.id)}
                                 onLongPress={() => setPreviewPhoto(photo)}
                                 delayLongPress={200}
+                                disabled={isConfirmingDeletion}
+                                style={isConfirmingDeletion && { opacity: 0.5 }}
                             >
                                 <Image source={{ uri: photo.uri }} style={styles.thumbnail} />
                                 <View style={styles.undoOverlay}>
@@ -155,23 +157,32 @@ export default function PhotosScreen() {
                     {deleteQueue.length > 0 && <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 5 }}>{t('thumbnail_tap_undo' as any)}</Text>}
                 </GlassContainer>
 
-                <Pressable style={[styles.actionButton, { backgroundColor: colors.primary }]} onPress={async () => {
+                <Pressable
+                    style={[styles.actionButton, { backgroundColor: colors.primary }, isConfirmingDeletion && { opacity: 0.6 }]}
+                    onPress={async () => {
                     try {
                         await confirmDeletion(); // Wait for deletion to complete
+                        if (useMediaStore.getState().isConfirmingDeletion) return;
                         resetBatch();
                         loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                     } catch (error) {
                         console.error('Failed to confirm photo deletion', error);
                         showToast('删除失败，请重试');
                     }
-                }}>
+                }}
+                    disabled={isConfirmingDeletion}
+                >
                     <Text style={styles.actionButtonText}>{t('photos_confirm')}</Text>
                 </Pressable>
 
-                <Pressable style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: 10 }]} onPress={() => {
+                <Pressable
+                    style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: 10 }, isConfirmingDeletion && { opacity: 0.6 }]}
+                    onPress={() => {
                     resetBatch();
                     loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-                }}>
+                }}
+                    disabled={isConfirmingDeletion}
+                >
                     <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('photos_skip')}</Text>
                 </Pressable>
             </ScrollView>
