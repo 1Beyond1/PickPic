@@ -544,15 +544,18 @@ export default function ScanResultsScreen() {
 
 // Helper component to load image for category
 function CategoryThumbnail({ assetId }: { assetId?: string }) {
-    const [uri, setUri] = useState<string | null>(null);
+    const [image, setImage] = useState<{ assetId: string; uri: string } | null>(null);
 
     useEffect(() => {
-        if (!assetId) return;
-
         let mounted = true;
+        setImage(null);
+
+        if (!assetId) return () => { mounted = false; };
+
         MediaLibrary.getAssetInfoAsync(assetId).then(info => {
-            if (mounted && info && (info.localUri || info.uri)) {
-                setUri(info.localUri || info.uri);
+            const uri = info?.localUri || info?.uri;
+            if (mounted && uri) {
+                setImage({ assetId, uri });
             }
         }).catch(() => {
             // Ignore error if asset not found
@@ -560,24 +563,31 @@ function CategoryThumbnail({ assetId }: { assetId?: string }) {
         return () => { mounted = false; };
     }, [assetId]);
 
+    const uri = image && image.assetId === assetId ? image.uri : null;
     if (!uri) return <View style={[styles.categoryThumbnail, { backgroundColor: '#333' }]} />;
     return <Image source={{ uri }} style={styles.categoryThumbnail} />;
 }
 
 // Full Screen Viewer Helper
 function FullPhotoViewer({ assetId }: { assetId: string }) {
-    const [uri, setUri] = useState<string | null>(null);
+    const [image, setImage] = useState<{ assetId: string; uri: string } | null>(null);
 
     useEffect(() => {
+        let mounted = true;
+        setImage(null);
+
         MediaLibrary.getAssetInfoAsync(assetId).then(info => {
-            if (info) {
-                setUri(info.localUri || info.uri);
+            const uri = info?.localUri || info?.uri;
+            if (mounted && uri) {
+                setImage({ assetId, uri });
             }
         }).catch(() => {
             // Ignore error
         });
+        return () => { mounted = false; };
     }, [assetId]);
 
+    const uri = image && image.assetId === assetId ? image.uri : null;
     if (!uri) return <ActivityIndicator size="large" color="white" />;
     return <Image source={{ uri }} style={{ width: '100%', height: '100%', resizeMode: 'contain' }} />;
 }
