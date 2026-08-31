@@ -334,7 +334,10 @@ export const useMediaStore = create<MediaState>()(
     loadPhotos: async (count, displayOrder = 'random', albumIds: string[] = []) => {
         const requestId = ++photoLoadRequestId;
         activeMediaLoads++;
-        set({ isLoading: true });
+        // Do not keep showing a batch that belongs to a previous filter while
+        // the current request is loading or if it fails. The old batch could
+        // otherwise make out-of-scope media appear actionable.
+        set({ isLoading: true, photos: [], currentIndex: 0 });
         try {
             const { photoProcessedIds } = get();
 
@@ -380,7 +383,10 @@ export const useMediaStore = create<MediaState>()(
     loadVideos: async (count, displayOrder = 'random', albumIds: string[] = []) => {
         const requestId = ++videoLoadRequestId;
         activeMediaLoads++;
-        set({ isLoading: true });
+        // Do not keep showing a batch that belongs to a previous filter while
+        // the current request is loading or if it fails. The old batch could
+        // otherwise make out-of-scope media appear actionable.
+        set({ isLoading: true, videos: [] });
         try {
             const { videoProcessedIds } = get();
 

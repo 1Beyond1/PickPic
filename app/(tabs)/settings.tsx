@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -116,6 +116,38 @@ export default function SettingsScreen() {
     useFocusEffect(useCallback(() => {
         void refreshTotalCounts();
     }, [refreshTotalCounts]));
+
+    useFocusEffect(useCallback(() => {
+        const onBackPress = () => {
+            // Close only the topmost custom overlay. Native Modal instances
+            // handle their own Android back events through onRequestClose.
+            if (showResetVideosConfirm) {
+                setShowResetVideosConfirm(false);
+                return true;
+            }
+            if (showResetPhotosConfirm) {
+                setShowResetPhotosConfirm(false);
+                return true;
+            }
+            if (showResetModalStatusConfirm) {
+                setShowResetSuccess(false);
+                setShowResetModalStatusConfirm(false);
+                return true;
+            }
+            if (showResetConfirm) {
+                setShowResetConfirm(false);
+                return true;
+            }
+            if (showAIWarningModal) {
+                setShowAIWarningModal(false);
+                return true;
+            }
+            return false;
+        };
+
+        const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+        return () => subscription.remove();
+    }, [showAIWarningModal, showResetConfirm, showResetModalStatusConfirm, showResetPhotosConfirm, showResetVideosConfirm]));
 
     const handleResetScanner = () => {
         setShowResetConfirm(true);

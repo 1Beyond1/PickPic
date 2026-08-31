@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { ResizeMode, Video } from 'expo-av';
+import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
-import React, { useEffect, useRef } from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Dimensions, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
 import { PhotoAsset } from '../stores/useMediaStore';
@@ -37,6 +38,50 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
 }) => {
     const videoRef = useRef<Video>(null);
     const insets = useSafeAreaInsets(); // Add safe area insets
+    const needsLocalUri = /^(ph|assets-library):\/\//.test(video.uri);
+    const [playbackSource, setPlaybackSource] = useState<{ assetId: string; uri: string } | null>(() => (
+        needsLocalUri ? null : { assetId: video.id, uri: video.uri }
+    ));
+
+    const resolvePlaybackUri = useCallback(async () => {
+        if (!needsLocalUri) return video.uri;
+
+        const info = await MediaLibrary.getAssetInfoAsync(video.id);
+        return info?.localUri || info?.uri || video.uri;
+    }, [needsLocalUri, video.id, video.uri]);
+
+    useEffect(() => {
+        let mounted = true;
+        setPlaybackSource(needsLocalUri ? null : { assetId: video.id, uri: video.uri });
+
+        if (!needsLocalUri) {
+            return () => {
+                mounted = false;
+            };
+        }
+
+        void resolvePlaybackUri()
+            .then((uri) => {
+                if (mounted) {
+                    setPlaybackSource({ assetId: video.id, uri });
+                }
+            })
+            .catch((error) => {
+                // Keep the original URI as a last-resort fallback. If the
+                // asset is unavailable, expo-av will report the native error
+                // instead of allowing the async lookup to become unhandled.
+                if (mounted) {
+                    console.warn('[VideoFeedItem] Failed to resolve local video URI:', error);
+                    setPlaybackSource({ assetId: video.id, uri: video.uri });
+                }
+            });
+
+        return () => {
+            mounted = false;
+        };
+    }, [needsLocalUri, resolvePlaybackUri, video.id, video.uri]);
+
+    const playbackUri = playbackSource?.assetId === video.id ? playbackSource.uri : null;
 
     useEffect(() => {
         let mounted = true;
@@ -65,12 +110,12 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
         return () => {
             mounted = false;
         };
-    }, [shouldPlay]);
+    }, [playbackUri, shouldPlay]);
 
     const handleShare = async () => {
         try {
             if (await Sharing.isAvailableAsync()) {
-                await Sharing.shareAsync(video.uri);
+                await Sharing.shareAsync(playbackUri || await resolvePlaybackUri());
             }
         } catch (error) {
             console.error('[VideoFeedItem] Failed to share video:', error);
@@ -97,15 +142,21 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                 scaleTo={1}
                 style={styles.videoWrapper}
             >
-                <Video
-                    ref={videoRef}
-                    style={styles.video}
-                    source={{ uri: video.uri }}
-                    resizeMode={ResizeMode.CONTAIN}
-                    isLooping
-                    isMuted={isMuted}
-                    shouldPlay={shouldPlay}
-                />
+                {playbackUri ? (
+                    <Video
+                        ref={videoRef}
+                        style={styles.video}
+                        source={{ uri: playbackUri }}
+                        resizeMode={ResizeMode.CONTAIN}
+                        isLooping
+                        isMuted={isMuted}
+                        shouldPlay={shouldPlay}
+                    />
+                ) : (
+                    <View style={styles.videoPlaceholder}>
+                        <ActivityIndicator size="large" color={COLORS.white} />
+                    </View>
+                )}
             </ScalablePressable>
 
             <View style={[styles.overlayContainer, { bottom: 100 + insets.bottom }]}>
@@ -170,6 +221,12 @@ const styles = StyleSheet.create({
     video: {
         width: '100%',
         height: '100%',
+    },
+    videoPlaceholder: {
+        width: '100%',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     overlayContainer: {
         position: 'absolute',

@@ -3,7 +3,7 @@ import { useFocusEffect } from 'expo-router';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -49,6 +49,17 @@ export default function VideosScreen() {
         if (!hasHydrated) return;
         void loadVideos(50, displayOrder, selectedAlbumIds);
     }, [displayOrder, selectedAlbumIds, hasHydrated, loadVideos]));
+
+    useFocusEffect(useCallback(() => {
+        if (!showTrash) return;
+
+        const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+            setShowTrash(false);
+            return true;
+        });
+
+        return () => subscription.remove();
+    }, [showTrash]));
 
     useFocusEffect(
         useCallback(() => {
@@ -128,7 +139,11 @@ export default function VideosScreen() {
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]} onLayout={onLayout}>
             {/* Feed */}
-            {visibleVideos.length > 0 ? (
+            {isLoading ? (
+                <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                </View>
+            ) : visibleVideos.length > 0 ? (
                 <FlatList
                     data={visibleVideos}
                     keyExtractor={item => item.id}
@@ -163,16 +178,10 @@ export default function VideosScreen() {
                 />
             ) : (
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                    {isLoading ? (
-                        <ActivityIndicator size="large" color={colors.primary} />
-                    ) : (
-                        <>
-                            <Text style={[styles.emptyText, { color: colors.text }]}>{t('video_empty')}</Text>
-                            <Pressable onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)} style={[styles.actionButton, { backgroundColor: colors.primary }]}>
-                                <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
-                            </Pressable>
-                        </>
-                    )}
+                    <Text style={[styles.emptyText, { color: colors.text }]}>{t('video_empty')}</Text>
+                    <Pressable onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)} style={[styles.actionButton, { backgroundColor: colors.primary }]}>
+                        <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
+                    </Pressable>
                 </View>
             )}
 
