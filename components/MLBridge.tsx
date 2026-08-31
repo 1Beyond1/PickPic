@@ -2,11 +2,12 @@
  * MLBridge - Headless component bridging Class-based AIScanner with Hook-based ML Kit
  */
 
-import { FaceDetectionProvider, useFacesInPhoto } from '@infinitered/react-native-mlkit-face-detection';
+import { FaceDetectionProvider } from '@infinitered/react-native-mlkit-face-detection';
 import { useImageLabeling, useImageLabelingModels, useImageLabelingProvider } from '@infinitered/react-native-mlkit-image-labeling';
 import { memo, useEffect, useRef, useState } from 'react';
 import { IMAGENET_LABELS } from '../services/ml/ImageNetLabels';
 import type { DetectedFace, ImageLabel } from '../services/ml/MLKitService';
+import { useFaceDetector } from '../services/ml/useFaceDetector';
 
 // Event-based communication bridge
 type MLRequest = {
@@ -79,13 +80,13 @@ const IMAGE_LABELING_MODELS = {
 function MLBridgeInner() {
     const [currentRequest, setCurrentRequest] = useState<MLRequest | null>(null);
     const requestStartTimeRef = useRef<number>(0);
-    const faceRequestIdRef = useRef<string | null>(null);
-    const faceRequestReadyRef = useRef(false);
 
     // Face Detection
-    const { faces, error: faceError, status: faceStatus } = useFacesInPhoto(
-        currentRequest?.type === 'detectFaces' ? currentRequest.imageUri : undefined
-    );
+    // Use the detector directly instead of useFacesInPhoto. The package hook
+    // converts the native detector's `undefined` failure result into
+    // `done + []`, which is indistinguishable from a successful no-face
+    // result. The queue must reject that request so the scanner retries it.
+    const faceDetector = useFaceDetector();
 
     // Image Labeling
     const labeler = useImageLabeling('efficientnet');
@@ -134,47 +135,48 @@ function MLBridgeInner() {
     useEffect(() => {
         if (!currentRequest || currentRequest.type !== 'detectFaces') return;
 
-        if (faceRequestIdRef.current !== currentRequest.id) {
-            faceRequestIdRef.current = currentRequest.id;
-            faceRequestReadyRef.current = false;
-        }
+        const request = currentRequest;
+        let active = true;
 
-        // useFacesInPhoto keeps its previous result while a new URI is being
-        // applied. Do not consume a stale done/error state until this request
-        // has visibly entered its own detection phase.
-        if (faceStatus === 'detecting') {
-            faceRequestReadyRef.current = true;
-        }
-        if (!faceRequestReadyRef.current) return;
+        (async () => {
+            try {
+                const result = await faceDetector.detectFaces(request.imageUri);
+                if (!active) return;
 
-        console.log('[MLBridge] Face Status:', faceStatus, 'Error:', faceError);
+                // RNMLKitFaceDetector returns undefined when its native module
+                // rejects. A valid result always contains the faces array.
+                if (!result || !Array.isArray(result.faces)) {
+                    throw new Error('Face detection failed');
+                }
 
-        if (faceError) {
-            console.error('[MLBridge] Face detection error:', faceError);
-            currentRequest.reject(new Error(faceError));
-            setCurrentRequest(activeRequest => (
-                activeRequest?.id === currentRequest.id ? null : activeRequest
-            ));
-            return;
-        }
+                console.log('[MLBridge] Face detection done, count:', result.faces.length);
+                const detectedFaces: DetectedFace[] = result.faces.map((face) => ({
+                    boundingBox: {
+                        x: face.frame.origin.x,
+                        y: face.frame.origin.y,
+                        width: face.frame.size.x,
+                        height: face.frame.size.y,
+                    },
+                    confidence: 0.85,
+                }));
+                request.resolve(detectedFaces);
+            } catch (error) {
+                if (!active) return;
+                console.error('[MLBridge] Face detection error:', error);
+                request.reject(error instanceof Error ? error : new Error(String(error)));
+            } finally {
+                if (active) {
+                    setCurrentRequest(activeRequest => (
+                        activeRequest?.id === request.id ? null : activeRequest
+                    ));
+                }
+            }
+        })();
 
-        if (faceStatus === 'done') {
-            console.log('[MLBridge] Face detection done, count:', faces.length);
-            const detectedFaces: DetectedFace[] = faces.map((face) => ({
-                boundingBox: {
-                    x: face.frame.origin.x,
-                    y: face.frame.origin.y,
-                    width: face.frame.size.x,
-                    height: face.frame.size.y,
-                },
-                confidence: 0.85,
-            }));
-            currentRequest.resolve(detectedFaces);
-            setCurrentRequest(activeRequest => (
-                activeRequest?.id === currentRequest.id ? null : activeRequest
-            ));
-        }
-    }, [faces, faceError, faceStatus, currentRequest]);
+        return () => {
+            active = false;
+        };
+    }, [currentRequest, faceDetector]);
 
     // Process Image Labeling results
     useEffect(() => {

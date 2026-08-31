@@ -206,8 +206,14 @@ export const DupGroupRepository = {
     async updateBestAsset(groupId: string, bestAssetId: string): Promise<void> {
         await withTransaction(async db => {
             await db.runAsync(
-                'UPDATE dup_groups SET best_asset_id = ? WHERE group_id = ?',
-                [bestAssetId, groupId]
+                `UPDATE dup_groups SET best_asset_id = ?
+                 WHERE group_id = ?
+                   AND EXISTS (
+                       SELECT 1 FROM dup_members
+                       WHERE dup_members.group_id = dup_groups.group_id
+                         AND dup_members.asset_id = ?
+                   )`,
+                [bestAssetId, groupId, bestAssetId]
             );
         });
     },
@@ -256,7 +262,24 @@ export const DupGroupRepository = {
 
         return withTransaction(async db => {
             const existingGroupIds = new Set<string>();
-            const relatedAssetIds = [assetId, ...matches.map(match => match.assetId)];
+            const candidateAssetIds = Array.from(new Set([
+                assetId,
+                ...matches.map(match => match.assetId),
+            ]));
+            const placeholders = candidateAssetIds.map(() => '?').join(', ');
+            const existingAssets = await db.getAllAsync<{ asset_id: string }>(
+                `SELECT asset_id FROM assets WHERE asset_id IN (${placeholders})`,
+                candidateAssetIds
+            );
+            const existingAssetIds = new Set(existingAssets.map(asset => asset.asset_id));
+
+            // Matching runs after an earlier read. A user deletion may have
+            // committed its index cleanup in that gap, so never recreate a
+            // duplicate member for an asset that no longer exists locally.
+            if (!existingAssetIds.has(assetId)) return null;
+            const validMatches = matches.filter(match => existingAssetIds.has(match.assetId));
+            if (validMatches.length === 0) return null;
+            const relatedAssetIds = [assetId, ...validMatches.map(match => match.assetId)];
 
             // The scanned asset can already belong to a stale/legacy group.
             // Include it when collecting groups so the whole connected set is
@@ -276,7 +299,7 @@ export const DupGroupRepository = {
                 await db.runAsync(
                     `INSERT INTO dup_groups (group_id, representative_asset_id, best_asset_id, created_at)
                      VALUES (?, ?, NULL, ?)`,
-                    [targetGroupId, matches[0].assetId, Date.now()]
+                    [targetGroupId, validMatches[0].assetId, Date.now()]
                 );
             }
 
@@ -289,8 +312,8 @@ export const DupGroupRepository = {
             // A match may have been a standalone completed asset. Add every
             // such match, rather than dropping it when another match already
             // supplied an existing target group.
-            for (const match of matches) {
-                const memberDistance = !firstExistingGroupId && match.assetId === matches[0].assetId
+            for (const match of validMatches) {
+                const memberDistance = !firstExistingGroupId && match.assetId === validMatches[0].assetId
                     ? 0
                     : match.distance;
                 const existingMember = await db.getFirstAsync<{ distance: number }>(
@@ -311,7 +334,7 @@ export const DupGroupRepository = {
                 }
             }
 
-            const closestDistance = matches[0].distance;
+            const closestDistance = validMatches[0].distance;
             await db.runAsync(
                 'INSERT OR REPLACE INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)',
                 [targetGroupId, assetId, closestDistance]
