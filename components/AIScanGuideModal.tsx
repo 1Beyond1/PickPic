@@ -22,7 +22,12 @@ export function AIScanGuideModal({ visible, onStartScan, onDismiss }: AIScanGuid
     const { t } = useI18n();
 
     return (
-        <Modal visible={visible} transparent animationType="fade">
+        <Modal
+            visible={visible}
+            transparent
+            animationType="fade"
+            onRequestClose={onDismiss}
+        >
             <View style={styles.overlay}>
                 <View style={[styles.modalBackground, { backgroundColor: colors.surface }]}>
                     {/* Header */}

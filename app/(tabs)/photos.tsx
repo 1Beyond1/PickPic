@@ -206,7 +206,12 @@ export default function PhotosScreen() {
                 {handleBatchFinished()}
 
                 {/* Preview Modal */}
-                <Modal visible={!!previewPhoto} transparent={true} animationType="fade">
+                <Modal
+                    visible={!!previewPhoto}
+                    transparent
+                    animationType="fade"
+                    onRequestClose={() => setPreviewPhoto(null)}
+                >
                     <View style={styles.previewModalContainer}>
                         <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.9)' }]} />
                         <Pressable style={styles.previewCloseArea} onPress={() => setPreviewPhoto(null)}>

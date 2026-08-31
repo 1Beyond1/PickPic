@@ -50,7 +50,12 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     };
 
     return (
-        <Modal visible={visible} transparent animationType="slide">
+        <Modal
+            visible={visible}
+            transparent
+            animationType="slide"
+            onRequestClose={onClose}
+        >
             <View style={styles.modalContainer}>
                 <View style={[styles.contentContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
                     <View style={styles.header}>

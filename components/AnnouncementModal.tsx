@@ -17,7 +17,12 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
     const { t } = useI18n();
 
     return (
-        <Modal visible={visible} transparent animationType="fade">
+        <Modal
+            visible={visible}
+            transparent
+            animationType="fade"
+            onRequestClose={onDismissOnce}
+        >
             <View style={styles.overlay}>
                 <View style={styles.modalBackground}>
                     <ScrollView
