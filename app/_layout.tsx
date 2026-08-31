@@ -22,7 +22,7 @@ void SplashScreen.preventAutoHideAsync().catch(error => {
 export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
-  const [, , getMediaPermission] = MediaLibrary.usePermissions({
+  const [mediaPermission, , getMediaPermission] = MediaLibrary.usePermissions({
     granularPermissions: ['photo', 'video'],
   });
   const {
@@ -106,7 +106,9 @@ export default function RootLayout() {
   const initialCheckDone = useRef(false);
 
   useEffect(() => {
-    if (!appReady || !settingsHydrated || initialCheckDone.current) return;
+    // Do not cover the permission gate with onboarding. On a fresh install
+    // the user must grant media access before the AI guide can start a scan.
+    if (!appReady || !settingsHydrated || !mediaPermission?.granted || initialCheckDone.current) return;
 
     initialCheckDone.current = true;
 
@@ -126,6 +128,7 @@ export default function RootLayout() {
   }, [
     appReady,
     settingsHydrated,
+    mediaPermission?.granted,
     dismissedAnnouncementVersion,
     aiGuideShownVersion,
   ]);
