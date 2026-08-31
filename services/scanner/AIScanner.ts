@@ -199,7 +199,10 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
                     height: asset.height,
                     fileSignature: signature,
                 });
-                if (scanOrderChanged) {
+                if (scanOrderChanged || signatureChanged) {
+                    // A changed asset may be older than the persisted cursor.
+                    // Rewind so resetting it to PENDING cannot make it
+                    // permanently unreachable in the next incremental pass.
                     shouldResetCursor = true;
                 }
                 if (signatureChanged) {
