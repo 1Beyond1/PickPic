@@ -189,14 +189,20 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
 
             if (existing) {
                 // Refresh library metadata and check for signature changes.
+                // taken_at is also the incremental scan's sort key. If it
+                // moves across the persisted cursor, restart from the
+                // beginning so a still-pending asset cannot be skipped.
+                const scanOrderChanged = existing.taken_at !== asset.creationTime;
                 const signatureChanged = await AssetRepository.refreshLibraryMetadata(asset.id, {
                     takenAt: asset.creationTime,
                     width: asset.width,
                     height: asset.height,
                     fileSignature: signature,
                 });
-                if (signatureChanged) {
+                if (scanOrderChanged) {
                     shouldResetCursor = true;
+                }
+                if (signatureChanged) {
                     await DupGroupRepository.removeAssetFromGroups(asset.id);
                 }
             } else {
