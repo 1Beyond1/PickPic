@@ -9,7 +9,7 @@ import { AIScanGuideModal } from '../components/AIScanGuideModal';
 import { AnnouncementModal } from '../components/AnnouncementModal';
 import { MLBridge } from '../components/MLBridge';
 import { COLORS } from '../constants/theme';
-import { start as startScanner } from '../services/scanner';
+import { isScanning, start as startScanner, stop as stopScanner } from '../services/scanner';
 import { useMediaStore } from '../stores/useMediaStore';
 import { useScannerStore } from '../stores/useScannerStore';
 import { APP_VERSION, useSettingsStore } from '../stores/useSettingsStore';
@@ -46,8 +46,13 @@ export default function RootLayout() {
     const redirectIfPermissionRevoked = async () => {
       try {
         const permission = await getMediaPermission();
-        if (mounted && !permission.granted && pathname !== '/') {
-          router.replace('/');
+        if (mounted && !permission.granted) {
+          if (isScanning()) {
+            stopScanner();
+          }
+          if (pathname !== '/') {
+            router.replace('/');
+          }
         }
       } catch (error) {
         console.error('[RootLayout] Failed to refresh media permission:', error);

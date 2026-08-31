@@ -298,7 +298,9 @@ async function loadAssetsForReview(
 }
 
 let activeMediaLoads = 0;
+let albumLoadRequestId = 0;
 let photoLoadRequestId = 0;
+let totalCountsRequestId = 0;
 let videoLoadRequestId = 0;
 
 export const useMediaStore = create<MediaState>()(
@@ -329,8 +331,11 @@ export const useMediaStore = create<MediaState>()(
     setHasHydrated: (status) => set({ hasHydrated: status }),
 
     loadAlbums: async () => {
+        const requestId = ++albumLoadRequestId;
         try {
             const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+            if (requestId !== albumLoadRequestId) return;
+
             set({ albums });
 
             const selectedAlbumIds = useSettingsStore.getState().selectedAlbumIds;
@@ -624,6 +629,7 @@ export const useMediaStore = create<MediaState>()(
     },
 
     refreshTotalCounts: async () => {
+        const requestId = ++totalCountsRequestId;
         try {
             const photoResult = await MediaLibrary.getAssetsAsync({
                 mediaType: 'photo',
@@ -633,6 +639,8 @@ export const useMediaStore = create<MediaState>()(
                 mediaType: 'video',
                 first: 1,
             });
+            if (requestId !== totalCountsRequestId) return;
+
             set({
                 totalPhotos: photoResult.totalCount,
                 totalVideos: videoResult.totalCount,
