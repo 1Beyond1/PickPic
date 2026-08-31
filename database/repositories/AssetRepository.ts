@@ -216,6 +216,69 @@ export const AssetRepository = {
     },
 
     /**
+     * Get the next assets that need scanner work, including failed assets and
+     * completed assets produced by an older algorithm version. This lets a
+     * bounded scan choose its exact work set before resetting any records.
+     */
+    async getScanCandidateBatch(
+        currentAlgoVersion: number,
+        limit: number = BATCH_SIZE,
+        assetIds?: readonly string[]
+    ): Promise<PendingAsset[]> {
+        if (limit <= 0) return [];
+
+        const candidateClause = `(
+            status = ?
+            OR status = ?
+            OR (status = ? AND (algo_version IS NULL OR algo_version != ?))
+        )`;
+        const candidateParams: (string | number)[] = [
+            AssetStatus.PENDING,
+            AssetStatus.ERROR,
+            AssetStatus.DONE,
+            currentAlgoVersion,
+        ];
+
+        if (assetIds === undefined) {
+            const db = await getDatabase();
+            return db.getAllAsync<PendingAsset>(
+                `SELECT asset_id, taken_at FROM assets
+                 WHERE ${candidateClause}
+                 ORDER BY taken_at ASC, asset_id ASC
+                 LIMIT ?`,
+                [...candidateParams, limit]
+            );
+        }
+
+        const candidateBatches = splitAssetIds(assetIds);
+        if (candidateBatches.length === 0) return [];
+
+        const db = await getDatabase();
+        const candidates: PendingAsset[] = [];
+        for (const candidateBatch of candidateBatches) {
+            const scope = createAssetScope(candidateBatch);
+            candidates.push(...await db.getAllAsync<PendingAsset>(
+                `SELECT asset_id, taken_at FROM assets
+                 WHERE ${candidateClause}${scope.clause}
+                 ORDER BY taken_at ASC, asset_id ASC
+                 LIMIT ?`,
+                [...candidateParams, ...scope.params, limit]
+            ));
+        }
+
+        candidates.sort((a, b) => {
+            if (a.taken_at === null && b.taken_at !== null) return -1;
+            if (a.taken_at !== null && b.taken_at === null) return 1;
+            if (a.taken_at !== b.taken_at) {
+                return (a.taken_at ?? 0) - (b.taken_at ?? 0);
+            }
+            return a.asset_id.localeCompare(b.asset_id);
+        });
+
+        return candidates.slice(0, limit);
+    },
+
+    /**
      * Get pending assets from a selected set of media-library IDs.
      *
      * Album scans use this instead of the global cursor so scanning one album
