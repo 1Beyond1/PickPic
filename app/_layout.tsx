@@ -36,6 +36,8 @@ export default function RootLayout() {
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
+  const mediaPermissionGrantedRef = useRef(false);
+  mediaPermissionGrantedRef.current = mediaPermission?.granted === true;
 
   // Permissions can be revoked in system settings after the initial route
   // has already replaced the permission screen. Keep the gate active for
@@ -47,12 +49,17 @@ export default function RootLayout() {
       try {
         const permission = await getMediaPermission();
         if (mounted && !permission.granted) {
+          mediaPermissionGrantedRef.current = false;
+          setShowAnnouncement(false);
+          setShowAIGuide(false);
           if (isScanning()) {
             stopScanner();
           }
           if (pathname !== '/') {
             router.replace('/');
           }
+        } else if (mounted) {
+          mediaPermissionGrantedRef.current = permission.granted;
         }
       } catch (error) {
         console.error('[RootLayout] Failed to refresh media permission:', error);
@@ -136,8 +143,10 @@ export default function RootLayout() {
   const handleDismissOnce = () => {
     setShowAnnouncement(false);
     // After closing announcement, check if AI guide should show
-    if (aiGuideShownVersion !== APP_VERSION) {
-      setTimeout(() => setShowAIGuide(true), 300);
+    if (aiGuideShownVersion !== APP_VERSION && mediaPermissionGrantedRef.current) {
+      setTimeout(() => {
+        if (mediaPermissionGrantedRef.current) setShowAIGuide(true);
+      }, 300);
     }
   };
 
@@ -145,12 +154,18 @@ export default function RootLayout() {
     setShowAnnouncement(false);
     dismissAnnouncement(APP_VERSION);
     // After dismissing announcement for version, check if AI guide should show
-    if (aiGuideShownVersion !== APP_VERSION) {
-      setTimeout(() => setShowAIGuide(true), 300);
+    if (aiGuideShownVersion !== APP_VERSION && mediaPermissionGrantedRef.current) {
+      setTimeout(() => {
+        if (mediaPermissionGrantedRef.current) setShowAIGuide(true);
+      }, 300);
     }
   };
 
   const handleAIGuideStart = () => {
+    if (!mediaPermissionGrantedRef.current) {
+      setShowAIGuide(false);
+      return;
+    }
     setShowAIGuide(false);
     dismissAIGuide(APP_VERSION);
     // Start AI scanning in background
