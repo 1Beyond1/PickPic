@@ -367,11 +367,26 @@ export const DupGroupRepository = {
                 }
             }
 
-            const closestDistance = validMatches[0].distance;
-            await db.runAsync(
-                'INSERT OR REPLACE INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)',
-                [targetGroupId, assetId, closestDistance]
+            const closestDistance = Math.min(...validMatches.map(match => match.distance));
+            const existingTargetMember = await db.getFirstAsync<{ distance: number }>(
+                'SELECT distance FROM dup_members WHERE group_id = ? AND asset_id = ?',
+                [targetGroupId, assetId]
             );
+
+            // Legacy/overlapping groups may already contain the scanned
+            // asset. Never replace a better persisted distance with a worse
+            // result from a later comparison.
+            if (!existingTargetMember) {
+                await db.runAsync(
+                    'INSERT INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)',
+                    [targetGroupId, assetId, closestDistance]
+                );
+            } else if (closestDistance < existingTargetMember.distance) {
+                await db.runAsync(
+                    'UPDATE dup_members SET distance = ? WHERE group_id = ? AND asset_id = ?',
+                    [closestDistance, targetGroupId, assetId]
+                );
+            }
 
             return targetGroupId;
         });
