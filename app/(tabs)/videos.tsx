@@ -23,6 +23,7 @@ export default function VideosScreen() {
 
     const {
         videos, loadVideos, isLoading, hasHydrated,
+        videoProcessedIds,
         markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
         isConfirmingVideoTrash,
         addAssetToAlbum
@@ -38,6 +39,8 @@ export default function VideosScreen() {
     const lastActiveIdRef = useRef<string | null>(null);
     const videosRef = useRef(videos);
     videosRef.current = videos;
+    const processedVideoIds = new Set(videoProcessedIds);
+    const visibleVideos = videos.filter(video => !processedVideoIds.has(video.id));
 
     // Dynamic height state
     const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
@@ -125,9 +128,9 @@ export default function VideosScreen() {
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]} onLayout={onLayout}>
             {/* Feed */}
-            {videos.length > 0 ? (
+            {visibleVideos.length > 0 ? (
                 <FlatList
-                    data={videos}
+                    data={visibleVideos}
                     keyExtractor={item => item.id}
                     renderItem={({ item }) => (
                         <VideoFeedItem

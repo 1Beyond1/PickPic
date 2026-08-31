@@ -42,6 +42,7 @@ app-example
 /ios
 /android
 
-# ML models (too large for GitHub)
+# ML models are ignored by default to prevent accidental large additions.
+# Required runtime models already tracked in Git remain tracked.
 assets/ml/*.tflite
 assets/ml/*.tar.gz

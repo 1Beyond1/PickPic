@@ -191,8 +191,16 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
         }
 
         const nextCursor = result.endCursor;
-        hasMore = result.hasNextPage && !!nextCursor && nextCursor !== cursor;
-        cursor = nextCursor;
+        hasMore = result.hasNextPage;
+        if (hasMore) {
+            // A full sync is allowed to remove records only after every page
+            // has been read. Treat a broken/repeated cursor as an incomplete
+            // sync instead of silently reconciling against a partial set.
+            if (!nextCursor || nextCursor === cursor) {
+                throw new Error('Media library returned an invalid pagination cursor during sync');
+            }
+            cursor = nextCursor;
+        }
 
         // Yield periodically
         if (synced > 0 && synced % 500 === 0) {
@@ -253,8 +261,13 @@ async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<s
             }
 
             const nextCursor = result.endCursor;
-            hasMore = result.hasNextPage && !!nextCursor && nextCursor !== cursor;
-            cursor = nextCursor;
+            hasMore = result.hasNextPage;
+            if (hasMore) {
+                if (!nextCursor || nextCursor === cursor) {
+                    throw new Error(`Media library returned an invalid pagination cursor for album ${albumId}`);
+                }
+                cursor = nextCursor;
+            }
         }
     }
 
@@ -503,6 +516,16 @@ async function processBatch(
         // Notify progress
         callbacks.onAssetScanned?.(asset.asset_id, success);
         useScannerStore.getState().incrementProgress(success);
+
+        if (mlCircuitBreakerTripped) {
+            const circuitBreakerError = new Error(
+                'AI classification paused after repeated failures; please check the model and retry the scan'
+            );
+            shouldStop = true;
+            useScannerStore.getState().setLastError(circuitBreakerError);
+            callbacks.onError?.(circuitBreakerError);
+            return false;
+        }
 
         // Update cursor
         if (!assetIds && success && asset.taken_at !== null) {

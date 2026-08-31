@@ -65,6 +65,105 @@ interface MediaState {
 
 type MediaType = 'photo' | 'video';
 
+interface OrderedAlbumPage {
+    albumId: string;
+    after?: string;
+    assets: MediaLibrary.Asset[];
+    index: number;
+    hasNextPage: boolean;
+    endCursor: string;
+}
+
+async function loadAlbumPage(
+    state: OrderedAlbumPage,
+    mediaType: MediaType,
+    sortBy: MediaLibrary.SortByValue[]
+): Promise<void> {
+    const result = await MediaLibrary.getAssetsAsync({
+        mediaType,
+        first: 100,
+        sortBy,
+        album: state.albumId,
+        ...(state.after ? { after: state.after } : {}),
+    });
+
+    state.assets = result.assets;
+    state.index = 0;
+    state.hasNextPage = result.hasNextPage;
+    state.endCursor = result.endCursor;
+}
+
+/**
+ * Merge several already-sorted album streams so ordered review modes use the
+ * same global order as a single-library query. Fetching only the first album
+ * until it fills the batch would otherwise hide newer/older assets in later
+ * selected albums.
+ */
+async function loadOrderedAlbumAssets(
+    mediaType: MediaType,
+    sortBy: MediaLibrary.SortByValue[],
+    count: number,
+    displayOrder: DisplayOrder,
+    processed: ReadonlySet<string>,
+    albumIds: readonly string[]
+): Promise<MediaLibrary.Asset[]> {
+    const states: OrderedAlbumPage[] = Array.from(new Set(albumIds)).map(albumId => ({
+        albumId,
+        assets: [],
+        index: 0,
+        hasNextPage: true,
+        endCursor: '',
+    }));
+
+    await Promise.all(states.map(state => loadAlbumPage(state, mediaType, sortBy)));
+
+    const selected: MediaLibrary.Asset[] = [];
+    const seenAssetIds = new Set<string>();
+
+    while (selected.length < count) {
+        const candidates = (await Promise.all(states.map(async state => {
+            while (true) {
+                if (state.index < state.assets.length) {
+                    const asset = state.assets[state.index];
+                    if (processed.has(asset.id) || seenAssetIds.has(asset.id)) {
+                        state.index++;
+                        continue;
+                    }
+                    return { state, asset };
+                }
+
+                if (!state.hasNextPage) return null;
+
+                const nextCursor = state.endCursor;
+                if (!nextCursor || nextCursor === state.after) {
+                    throw new Error(`Media library returned an invalid pagination cursor for album ${state.albumId}`);
+                }
+                state.after = nextCursor;
+                await loadAlbumPage(state, mediaType, sortBy);
+            }
+        }))).filter((candidate): candidate is { state: OrderedAlbumPage; asset: MediaLibrary.Asset } => (
+            candidate !== null
+        ));
+
+        if (candidates.length === 0) break;
+
+        candidates.sort((a, b) => {
+            const timeDifference = a.asset.creationTime - b.asset.creationTime;
+            if (timeDifference !== 0) {
+                return displayOrder === 'oldest' ? timeDifference : -timeDifference;
+            }
+            return a.asset.id.localeCompare(b.asset.id);
+        });
+
+        const next = candidates[0];
+        next.state.index++;
+        seenAssetIds.add(next.asset.id);
+        selected.push(next.asset);
+    }
+
+    return selected;
+}
+
 /**
  * Load enough pages to fill the current review batch. Random mode uses
  * reservoir sampling so it does not need to retain the whole media library
@@ -83,6 +182,21 @@ async function loadAssetsForReview(
     }
 
     const processed = new Set(processedIds);
+
+    if (albumIds.length > 0 && displayOrder !== 'random') {
+        return {
+            assets: await loadOrderedAlbumAssets(
+                mediaType,
+                sortBy,
+                count,
+                displayOrder,
+                processed,
+                albumIds
+            ),
+            totalCount: null,
+        };
+    }
+
     const seenAssetIds = albumIds.length > 0 ? new Set<string>() : null;
     const selected: MediaLibrary.Asset[] = [];
     let eligibleCount = 0;
@@ -103,6 +217,10 @@ async function loadAssetsForReview(
                 ...(albumId ? { album: albumId } : {}),
                 ...(after ? { after } : {}),
             });
+
+            if (result.hasNextPage && (!result.endCursor || result.endCursor === after)) {
+                throw new Error('Media library returned an invalid pagination cursor');
+            }
 
             if (totalCount === null && albumIds.length === 0) {
                 totalCount = result.totalCount;
@@ -135,7 +253,7 @@ async function loadAssetsForReview(
             }
 
             const nextCursor = result.endCursor;
-            if (!result.hasNextPage || !nextCursor || nextCursor === after) {
+            if (!result.hasNextPage) {
                 break;
             }
             after = nextCursor;
