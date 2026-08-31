@@ -256,11 +256,15 @@ export const DupGroupRepository = {
 
         return withTransaction(async db => {
             const existingGroupIds = new Set<string>();
+            const relatedAssetIds = [assetId, ...matches.map(match => match.assetId)];
 
-            for (const match of matches) {
+            // The scanned asset can already belong to a stale/legacy group.
+            // Include it when collecting groups so the whole connected set is
+            // merged instead of leaving the asset in overlapping groups.
+            for (const relatedAssetId of relatedAssetIds) {
                 const rows = await db.getAllAsync<{ group_id: string }>(
                     'SELECT group_id FROM dup_members WHERE asset_id = ?',
-                    [match.assetId]
+                    [relatedAssetId]
                 );
                 rows.forEach(row => existingGroupIds.add(row.group_id));
             }

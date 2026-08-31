@@ -558,6 +558,12 @@ async function processBatch(
         // Wait for interactions
         await waitForInteractions();
 
+        // stop() may be called while waiting for animations/interactions. Do
+        // not start another asset once the stop request has arrived.
+        if (shouldStop) {
+            return false;
+        }
+
         // Process asset
         const success = await processAsset(asset.asset_id);
 
