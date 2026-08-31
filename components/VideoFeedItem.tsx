@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { ResizeMode, Video } from 'expo-av';
+import { ResizeMode, Video, VideoFullscreenUpdate } from 'expo-av';
+import type { VideoFullscreenUpdateEvent } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -45,6 +46,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
         needsLocalUri ? null : { assetId: video.id, uri: video.uri }
     ));
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
     const fullscreenVideoRef = useRef<Video>(null);
 
     const resolvePlaybackUri = useCallback(async () => {
@@ -96,6 +98,31 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
             setIsFullscreen(false);
         }
     }, [isFullscreen, isScreenFocused]);
+
+    // iOS fullscreen is presented by AVPlayerViewController rather than by
+    // React Native's Modal. Pausing the feed video on tab blur does not close
+    // that controller, so dismiss it explicitly when the tab loses focus.
+    useEffect(() => {
+        if (Platform.OS !== 'ios' || isScreenFocused || !isNativeFullscreen) return;
+
+        const player = videoRef.current;
+        if (!player) return;
+
+        void player.dismissFullscreenPlayer().catch((error) => {
+            // A blur can happen while the native controller is transitioning;
+            // the fullscreen callback will retry once it reports DID_PRESENT.
+            console.warn('[VideoFeedItem] Failed to dismiss fullscreen video:', error);
+        });
+    }, [isNativeFullscreen, isScreenFocused]);
+
+    const handleFullscreenUpdate = useCallback((event: VideoFullscreenUpdateEvent) => {
+        if (Platform.OS !== 'ios') return;
+
+        setIsNativeFullscreen(
+            event.fullscreenUpdate === VideoFullscreenUpdate.PLAYER_WILL_PRESENT
+            || event.fullscreenUpdate === VideoFullscreenUpdate.PLAYER_DID_PRESENT
+        );
+    }, []);
 
     useEffect(() => {
         let mounted = true;
@@ -175,6 +202,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                         isLooping
                         isMuted={isMuted}
                         shouldPlay={baseShouldPlay}
+                        onFullscreenUpdate={handleFullscreenUpdate}
                     />
                 ) : (
                     <View style={styles.videoPlaceholder}>
