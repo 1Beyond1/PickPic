@@ -15,6 +15,7 @@ const MEDIA_PAGE_SIZE = 100;
  */
 async function getLimitedPhotoIds(): Promise<ReadonlySet<string> | null> {
     const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+    if (!permission.granted) return new Set();
     if (permission.accessPrivileges !== 'limited') return null;
 
     const visibleIds = new Set<string>();
