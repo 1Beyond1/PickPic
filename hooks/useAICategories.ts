@@ -252,8 +252,11 @@ export function useAICategories(enabled = true): AICategoriesState {
             return;
         }
 
-        void loadCategories();
-    }, [enabled, loadCategories]);
+        // The screen owns refresh timing so focus changes can refresh an
+        // already-open AI tab without issuing a duplicate load when `enabled`
+        // changes. Keep the loading state honest while that refresh starts.
+        setIsLoading(true);
+    }, [enabled]);
 
     return {
         peopleGroups,

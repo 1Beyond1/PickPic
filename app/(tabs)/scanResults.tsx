@@ -55,7 +55,11 @@ export default function ScanResultsScreen() {
     const [processedGroupIds, setProcessedGroupIds] = useState<Set<string>>(new Set());
 
     // AI Categories Hook
-    const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, refresh: refreshAI } = useAICategories(enableAIClassification);
+    // Category loading reads the complete DONE snapshot. Defer that work
+    // until the user opens the AI tab instead of blocking every visit to the
+    // scan-results screen when classification is merely enabled.
+    const shouldLoadAICategories = enableAIClassification && activeTab === 'ai';
+    const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, refresh: refreshAI } = useAICategories(shouldLoadAICategories);
 
     useEffect(() => {
         if (!enableAIClassification && activeTab === 'ai') {
