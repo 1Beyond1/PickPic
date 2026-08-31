@@ -306,7 +306,9 @@ export const AssetRepository = {
     },
 
     /**
-     * Reset outdated assets to pending (algo_version mismatch)
+     * Reset assets whose analysis was produced by a different algorithm
+     * version. A future version can remain in a database after downgrading
+     * the app and is just as incompatible as an older version.
      */
     async resetOutdatedAssets(
         currentAlgoVersion: number,
@@ -322,7 +324,7 @@ export const AssetRepository = {
                 const scope = createAssetScope(assetIdBatch);
                 const outdated = await db.getAllAsync<{ asset_id: string }>(
                     `SELECT asset_id FROM assets
-                     WHERE status = ? AND (algo_version IS NULL OR algo_version < ?)${scope.clause}`,
+                     WHERE status = ? AND (algo_version IS NULL OR algo_version != ?)${scope.clause}`,
                     [AssetStatus.DONE, currentAlgoVersion, ...scope.params]
                 );
 
@@ -332,7 +334,7 @@ export const AssetRepository = {
                     `UPDATE assets SET
                      status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
                      face_count = 0, labels_json = NULL, error_message = NULL, updated_at = ?
-                     WHERE status = ? AND (algo_version IS NULL OR algo_version < ?)${scope.clause}`,
+                     WHERE status = ? AND (algo_version IS NULL OR algo_version != ?)${scope.clause}`,
                     [
                         AssetStatus.PENDING,
                         Date.now(),
