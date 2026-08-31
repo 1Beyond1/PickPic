@@ -33,16 +33,31 @@ export async function repairDuplicateGroupsInDatabase(
     db: SQLite.SQLiteDatabase
 ): Promise<void> {
     await db.runAsync(
-        `DELETE FROM dup_members
-         WHERE group_id NOT IN (SELECT group_id FROM dup_groups)
-            OR group_id IN (
-                SELECT group_id FROM dup_members
-                GROUP BY group_id
-                HAVING COUNT(*) < 2
-            )`
+        `DELETE FROM dup_members AS member
+         WHERE NOT EXISTS (
+                   SELECT 1 FROM dup_groups AS group_row
+                   WHERE group_row.group_id = member.group_id
+               )
+            OR NOT EXISTS (
+                   SELECT 1 FROM assets AS asset
+                   WHERE asset.asset_id = member.asset_id
+               )
+            `
     );
     await db.runAsync(
-        'DELETE FROM dup_groups WHERE group_id NOT IN (SELECT DISTINCT group_id FROM dup_members)'
+        `DELETE FROM dup_members
+         WHERE group_id IN (
+             SELECT group_id FROM dup_members
+             GROUP BY group_id
+             HAVING COUNT(*) < 2
+         )`
+    );
+    await db.runAsync(
+        `DELETE FROM dup_groups AS group_row
+         WHERE NOT EXISTS (
+             SELECT 1 FROM dup_members AS member
+             WHERE member.group_id = group_row.group_id
+         )`
     );
     await db.runAsync(
         `UPDATE dup_groups
@@ -212,20 +227,27 @@ export const DupGroupRepository = {
                        SELECT 1 FROM dup_members
                        WHERE dup_members.group_id = dup_groups.group_id
                          AND dup_members.asset_id = ?
+                   )
+                   AND EXISTS (
+                       SELECT 1 FROM assets
+                       WHERE assets.asset_id = ?
                    )`,
-                [bestAssetId, groupId, bestAssetId]
+                [bestAssetId, groupId, bestAssetId, bestAssetId]
             );
         });
     },
 
     /**
-     * Get all groups (for UI display)
+     * Get all groups (for UI display). Repair legacy rows before exposing the
+     * index so an interrupted older write cannot remain invisible forever.
      */
     async getAllGroups(): Promise<DupGroup[]> {
-        const db = await getDatabase();
-        return db.getAllAsync<DupGroup>(
-            'SELECT * FROM dup_groups ORDER BY created_at DESC'
-        );
+        return withTransaction(async db => {
+            await repairDuplicateGroupsInDatabase(db);
+            return db.getAllAsync<DupGroup>(
+                'SELECT * FROM dup_groups ORDER BY created_at DESC'
+            );
+        });
     },
 
     /**
@@ -279,6 +301,12 @@ export const DupGroupRepository = {
             if (!existingAssetIds.has(assetId)) return null;
             const validMatches = matches.filter(match => existingAssetIds.has(match.assetId));
             if (validMatches.length === 0) return null;
+
+            // Clean up rows left by older non-transactional group writes
+            // before selecting a target group. Otherwise an orphan group ID
+            // could be reused and receive members without a dup_groups row.
+            await repairDuplicateGroupsInDatabase(db);
+
             const relatedAssetIds = [assetId, ...validMatches.map(match => match.assetId)];
 
             // The scanned asset can already belong to a stale/legacy group.
