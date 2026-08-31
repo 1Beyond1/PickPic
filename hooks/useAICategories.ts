@@ -1,9 +1,45 @@
+import * as MediaLibrary from 'expo-media-library';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssetRecord, AssetRepository } from '../database';
 import { getCategoryGroup } from '../services/ml/CategoryGrouper';
 import { translateLabel } from '../services/ml/LabelTranslator';
 import { ImageLabel } from '../services/ml/MLKitService';
 import { useI18n } from './useI18n';
+
+const MEDIA_PAGE_SIZE = 100;
+
+/**
+ * Return the assets currently visible to the app when the OS grants only a
+ * limited photo selection. A null result means the app has full access, so
+ * callers can keep the cheaper database-only path.
+ */
+async function getLimitedPhotoIds(): Promise<ReadonlySet<string> | null> {
+    const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+    if (permission.accessPrivileges !== 'limited') return null;
+
+    const visibleIds = new Set<string>();
+    let after: string | undefined;
+
+    while (true) {
+        const result = await MediaLibrary.getAssetsAsync({
+            mediaType: 'photo',
+            first: MEDIA_PAGE_SIZE,
+            ...(after ? { after } : {}),
+        });
+
+        for (const asset of result.assets) {
+            visibleIds.add(asset.id);
+        }
+
+        if (!result.hasNextPage) break;
+        if (!result.endCursor || result.endCursor === after) {
+            throw new Error('Media library returned an invalid pagination cursor for limited photo access');
+        }
+        after = result.endCursor;
+    }
+
+    return visibleIds;
+}
 
 export interface CategoryGroup {
     id: string;
@@ -36,7 +72,13 @@ export function useAICategories(enabled = true): AICategoriesState {
             // Read one completed-asset snapshot so people and object
             // categories use the same dataset and large libraries are not
             // silently truncated by separate hard limits.
-            const labeledAssets = await AssetRepository.getAllDoneAssets();
+            const [allLabeledAssets, visiblePhotoIds] = await Promise.all([
+                AssetRepository.getAllDoneAssets(),
+                getLimitedPhotoIds(),
+            ]);
+            const labeledAssets = visiblePhotoIds
+                ? allLabeledAssets.filter(asset => visiblePhotoIds.has(asset.asset_id))
+                : allLabeledAssets;
             const peopleAssets = labeledAssets.filter(asset => (asset.face_count ?? 0) > 0);
 
             // Simple grouping by face count for now (e.g., "1 Person", "2 People", etc.)
@@ -199,7 +241,9 @@ export function useAICategories(enabled = true): AICategoriesState {
             })).sort((a, b) => b.count - a.count);
 
             // 3. Handle Uncategorized & Processing Counts
-            const statusCounts = await AssetRepository.getStatusCounts(); // { pending, done, error }
+            const statusCounts = await AssetRepository.getStatusCounts(
+                visiblePhotoIds ? Array.from(visiblePhotoIds) : undefined
+            ); // { pending, done, error }
 
             const uncategorizedAssets: AssetRecord[] = [];
             labeledAssets.forEach(asset => {

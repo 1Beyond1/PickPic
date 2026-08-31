@@ -453,20 +453,37 @@ export const AssetRepository = {
     /**
      * Get count of assets by status
      */
-    async getStatusCounts(): Promise<{ pending: number; done: number; error: number }> {
+    async getStatusCounts(assetIds?: readonly string[]): Promise<{ pending: number; done: number; error: number }> {
         const db = await getDatabase();
-        const result = await db.getFirstAsync<{
-            pending: number;
-            done: number;
-            error: number;
-        }>(
-            `SELECT
-        COALESCE(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END), 0) as pending,
-        COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) as done,
-        COALESCE(SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END), 0) as error
-       FROM assets`
-        );
-        return result ?? { pending: 0, done: 0, error: 0 };
+        const counts = { pending: 0, done: 0, error: 0 };
+
+        // Limited media access can leave hidden assets in the local index.
+        // Query scoped IDs in SQLite-safe chunks so callers can report status
+        // for only the assets currently visible to the user.
+        for (const batch of splitAssetIds(assetIds)) {
+            if (batch !== undefined && batch.length === 0) continue;
+
+            const scope = createAssetScope(batch);
+            const result = await db.getFirstAsync<{
+                pending: number;
+                done: number;
+                error: number;
+            }>(
+                `SELECT
+            COALESCE(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END), 0) as pending,
+            COALESCE(SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END), 0) as done,
+            COALESCE(SUM(CASE WHEN status = 2 THEN 1 ELSE 0 END), 0) as error
+           FROM assets
+           WHERE 1 = 1${scope.clause}`,
+                scope.params
+            );
+
+            counts.pending += result?.pending ?? 0;
+            counts.done += result?.done ?? 0;
+            counts.error += result?.error ?? 0;
+        }
+
+        return counts;
     },
 
     /**
