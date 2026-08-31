@@ -349,6 +349,20 @@ export const AssetRepository = {
                     assetId,
                 ]
             );
+
+            // A content change invalidates the asset before its duplicate
+            // membership is removed in a follow-up transaction. If the app
+            // is killed in that gap, the next scan can mark the asset DONE
+            // again before the repair sees its temporary PENDING status.
+            // Remove the old membership while committing the new result so
+            // stale groups cannot survive that recovery path.
+            const removedDuplicateMembers = await db.runAsync(
+                'DELETE FROM dup_members WHERE asset_id = ?',
+                [assetId]
+            );
+            if (removedDuplicateMembers.changes > 0) {
+                await repairDuplicateGroupsInDatabase(db);
+            }
         });
     },
 
