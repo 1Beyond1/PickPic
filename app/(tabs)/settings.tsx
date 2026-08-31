@@ -340,7 +340,6 @@ export default function SettingsScreen() {
                                 pressed && { opacity: 0.8 }
                             ]}
                             onPress={isRunning ? stop : start}
-                            disabled={isRunning && progress.currentBatch === 0}
                         >
                             <Ionicons
                                 name={isRunning ? "stop" : "play"}

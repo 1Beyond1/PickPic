@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AssetRepository } from '../database';
-import { DisplayOrder } from './useSettingsStore';
+import { DisplayOrder, useSettingsStore } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
     // Add any custom properties if needed later
@@ -72,6 +72,25 @@ interface OrderedAlbumPage {
     index: number;
     hasNextPage: boolean;
     endCursor: string;
+}
+
+async function normalizeAlbumIds(albumIds: readonly string[]): Promise<string[]> {
+    const requestedAlbumIds = Array.from(new Set(albumIds));
+    if (requestedAlbumIds.length === 0) return [];
+
+    // Album IDs are owned by the device media library and can disappear
+    // outside the app. Validate them before querying assets because iOS
+    // treats an unknown album as an unscoped query, while Android returns no
+    // matching assets.
+    const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+    const availableAlbumIds = new Set(albums.map(album => album.id));
+    const validAlbumIds = requestedAlbumIds.filter(albumId => availableAlbumIds.has(albumId));
+
+    if (validAlbumIds.length !== requestedAlbumIds.length) {
+        useSettingsStore.getState().setSelectedAlbums(validAlbumIds);
+    }
+
+    return validAlbumIds;
 }
 
 async function loadAlbumPage(
@@ -182,8 +201,9 @@ async function loadAssetsForReview(
     }
 
     const processed = new Set(processedIds);
+    const normalizedAlbumIds = await normalizeAlbumIds(albumIds);
 
-    if (albumIds.length > 0 && displayOrder !== 'random') {
+    if (normalizedAlbumIds.length > 0 && displayOrder !== 'random') {
         return {
             assets: await loadOrderedAlbumAssets(
                 mediaType,
@@ -191,19 +211,19 @@ async function loadAssetsForReview(
                 count,
                 displayOrder,
                 processed,
-                albumIds
+                normalizedAlbumIds
             ),
             totalCount: null,
         };
     }
 
-    const seenAssetIds = albumIds.length > 0 ? new Set<string>() : null;
+    const seenAssetIds = normalizedAlbumIds.length > 0 ? new Set<string>() : null;
     const selected: MediaLibrary.Asset[] = [];
     let eligibleCount = 0;
     let totalCount: number | null = null;
 
-    const queryAlbums: Array<string | undefined> = albumIds.length > 0
-        ? Array.from(new Set(albumIds))
+    const queryAlbums: Array<string | undefined> = normalizedAlbumIds.length > 0
+        ? normalizedAlbumIds
         : [undefined];
 
     for (const albumId of queryAlbums) {
@@ -222,7 +242,7 @@ async function loadAssetsForReview(
                 throw new Error('Media library returned an invalid pagination cursor');
             }
 
-            if (totalCount === null && albumIds.length === 0) {
+            if (totalCount === null && normalizedAlbumIds.length === 0) {
                 totalCount = result.totalCount;
             }
 

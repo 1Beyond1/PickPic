@@ -55,7 +55,7 @@ export default function PhotosScreen() {
         setTimeout(() => setToastMessage(null), 1500);
     };
 
-    const handleSwipeDown = async (photo: any, zoneId?: string) => {
+    const handleSwipeDown = async (photo: any, zoneId?: string): Promise<boolean> => {
         if (zoneId) {
             // Existing Album
             const albumName = albums.find(a => a.id === zoneId)?.title || t('photos_album_fallback');
@@ -63,13 +63,16 @@ export default function PhotosScreen() {
                 await addAssetToAlbum(zoneId, photo);
                 markAsSkipped(photo);
                 showToast(t('photos_collected', { album: albumName }));
+                return true;
             } catch (error) {
                 console.error('Failed to collect photo', error);
                 showToast(t('photos_collection_failed'));
+                return false;
             }
         } else {
             // Just Skip / Keep
             markAsSkipped(photo);
+            return true;
         }
     };
 
@@ -91,7 +94,7 @@ export default function PhotosScreen() {
     const handleTap = (photo: any) => {
         router.push({
             pathname: "/photo-detail",
-            params: { uri: photo.uri }
+            params: { assetId: photo.id, uri: photo.uri }
         });
     };
 

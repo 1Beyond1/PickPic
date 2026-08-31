@@ -34,7 +34,7 @@ interface PhotoCardProps {
     index: number;
     total: number;
     onSwipeUp: () => void;
-    onSwipeDown: (zoneId?: string) => void;
+    onSwipeDown: (zoneId?: string) => Promise<boolean>;
     onTap: () => void;
     onHoverZone?: (zoneId: string | null) => void;
     enableCollections: boolean;
@@ -104,6 +104,29 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         return null;
     };
 
+    const resetCardPosition = () => {
+        translateX.value = withSpring(0);
+        translateY.value = withSpring(0);
+        scale.value = withSpring(1);
+        onHoverZone?.(null);
+    };
+
+    const completeSwipeDown = (zoneId?: string) => {
+        // The card is animated away before an async collection operation can
+        // finish. Put it back if that operation fails so the item remains
+        // actionable instead of becoming an invisible, unprocessed card.
+        void Promise.resolve()
+            .then(() => onSwipeDown(zoneId))
+            .then((succeeded) => {
+                if (succeeded === false) {
+                    resetCardPosition();
+                }
+            })
+            .catch(() => {
+                resetCardPosition();
+            });
+    };
+
     const pan = Gesture.Pan()
         .onUpdate((event) => {
             translateX.value = event.translationX;
@@ -130,12 +153,12 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                 if (matchedZoneId) {
                     translateX.value = withTiming(0);
                     translateY.value = withTiming(SCREEN_HEIGHT, {}, () => {
-                        runOnJS(onSwipeDown)(matchedZoneId);
+                        runOnJS(completeSwipeDown)(matchedZoneId);
                     });
                 } else {
                     translateX.value = withTiming(0);
                     translateY.value = withTiming(SCREEN_HEIGHT, {}, () => {
-                        runOnJS(onSwipeDown)();
+                        runOnJS(completeSwipeDown)();
                     });
                     if (onHoverZone) runOnJS(onHoverZone)(null);
                 }

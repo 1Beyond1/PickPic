@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
+import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ScalablePressable } from '../components/ScalablePressable'; // Import ScalablePressable
 import { BORDER_RADIUS, SPACING } from '../constants/theme';
@@ -12,13 +13,53 @@ import { useThemeColor } from '../hooks/useThemeColor';
 export default function PhotoDetailScreen() {
     const router = useRouter();
     const params = useLocalSearchParams();
-    const uri = params.uri as string;
+    const rawUri = params.uri;
+    const rawAssetId = params.assetId;
+    const uri = (Array.isArray(rawUri) ? rawUri[0] : rawUri) ?? '';
+    const assetId = (Array.isArray(rawAssetId) ? rawAssetId[0] : rawAssetId) ?? '';
+    const needsLocalUri = /^(ph|assets-library):\/\//.test(uri);
+    const [shareUri, setShareUri] = useState<string | null>(() => (
+        needsLocalUri ? null : uri
+    ));
     const { colors, isDark } = useThemeColor();
+
+    const resolveShareUri = useCallback(async () => {
+        if (!assetId || !needsLocalUri) return uri;
+
+        const info = await MediaLibrary.getAssetInfoAsync(assetId);
+        return info?.localUri || info?.uri || uri;
+    }, [assetId, needsLocalUri, uri]);
+
+    useEffect(() => {
+        let mounted = true;
+        setShareUri(needsLocalUri ? null : uri);
+
+        if (!assetId || !needsLocalUri) {
+            return () => {
+                mounted = false;
+            };
+        }
+
+        void resolveShareUri()
+            .then((resolvedUri) => {
+                if (mounted) setShareUri(resolvedUri);
+            })
+            .catch((error) => {
+                if (mounted) {
+                    console.warn('[PhotoDetail] Failed to resolve local photo URI:', error);
+                    setShareUri(uri);
+                }
+            });
+
+        return () => {
+            mounted = false;
+        };
+    }, [assetId, needsLocalUri, resolveShareUri, uri]);
 
     const handleShare = async () => {
         try {
             if (await Sharing.isAvailableAsync()) {
-                await Sharing.shareAsync(uri);
+                await Sharing.shareAsync(shareUri || await resolveShareUri());
             }
         } catch (error) {
             console.error('[PhotoDetail] Failed to share photo:', error);
