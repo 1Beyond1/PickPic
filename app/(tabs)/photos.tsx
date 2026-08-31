@@ -26,17 +26,30 @@ export default function PhotosScreen() {
         createAlbum, addAssetToAlbum, loadAlbums
     } = useMediaStore();
 
-    const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore();
+    const {
+        groupSize,
+        displayOrder,
+        selectedAlbumIds,
+        hasHydrated: settingsHydrated,
+    } = useSettingsStore();
 
     const [showNewAlbumModal, setShowNewAlbumModal] = useState(false);
     const [newAlbumName, setNewAlbumName] = useState('');
     const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
 
     useFocusEffect(useCallback(() => {
-        if (!hasHydrated) return;
+        if (!hasHydrated || !settingsHydrated) return;
         void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
         void loadAlbums();
-    }, [groupSize, displayOrder, selectedAlbumIds, hasHydrated, loadPhotos, loadAlbums]));
+    }, [
+        groupSize,
+        displayOrder,
+        selectedAlbumIds,
+        hasHydrated,
+        settingsHydrated,
+        loadPhotos,
+        loadAlbums,
+    ]));
 
     const processedIds = new Set(photoProcessedIds);
     const visiblePhotos = photos.filter(p => !processedIds.has(p.id));

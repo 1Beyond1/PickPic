@@ -665,8 +665,16 @@ export const useMediaStore = create<MediaState>()(
                 collectionQueue: state.collectionQueue,
                 videoTrashBin: state.videoTrashBin,
             }),
-            onRehydrateStorage: () => (state) => {
-                state?.setHasHydrated(true);
+            onRehydrateStorage: () => (state, error) => {
+                // A storage read error must not leave the media screens behind
+                // their hydration gate forever; continue with default queues.
+                if (error && typeof window !== 'undefined') {
+                    console.error('[MediaStore] Failed to rehydrate progress:', error);
+                }
+                // AsyncStorage's web adapter cannot access window during Expo's
+                // server-side/static render. Avoid a persisted write there.
+                if (!state && typeof window === 'undefined') return;
+                (state ?? useMediaStore.getState()).setHasHydrated(true);
             },
         }
     )

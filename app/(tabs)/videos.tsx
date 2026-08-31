@@ -28,7 +28,11 @@ export default function VideosScreen() {
         isConfirmingVideoTrash,
         addAssetToAlbum
     } = useMediaStore();
-    const { displayOrder, selectedAlbumIds } = useSettingsStore();
+    const {
+        displayOrder,
+        selectedAlbumIds,
+        hasHydrated: settingsHydrated,
+    } = useSettingsStore();
 
     const [activeId, setActiveId] = useState<string | null>(null);
     const [isMuted, setIsMuted] = useState(true);
@@ -46,9 +50,15 @@ export default function VideosScreen() {
     const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
 
     useFocusEffect(useCallback(() => {
-        if (!hasHydrated) return;
+        if (!hasHydrated || !settingsHydrated) return;
         void loadVideos(50, displayOrder, selectedAlbumIds);
-    }, [displayOrder, selectedAlbumIds, hasHydrated, loadVideos]));
+    }, [
+        displayOrder,
+        selectedAlbumIds,
+        hasHydrated,
+        settingsHydrated,
+        loadVideos,
+    ]));
 
     useFocusEffect(useCallback(() => {
         if (!showTrash) return;

@@ -469,31 +469,42 @@ async function processAsset(assetId: string): Promise<boolean> {
             labelsJson
         );
 
-        // Find similar photos
-        const asset = await AssetRepository.getById(assetId);
-        if (asset && asset.taken_at) {
-            const matches = await findSimilarPhotos(phash, asset.taken_at, assetId);
+        // Duplicate grouping is supplemental to the base analysis above. A
+        // malformed legacy hash or a transient group-database failure should
+        // not erase a successfully committed blur/ML result by falling into
+        // the per-asset ERROR handler.
+        try {
+            const asset = await AssetRepository.getById(assetId);
+            if (asset && asset.taken_at) {
+                const matches = await findSimilarPhotos(phash, asset.taken_at, assetId);
 
-            if (matches.length > 0) {
-                const targetGroupId = await DupGroupRepository.addAssetToMatchingGroups(
-                    assetId,
-                    matches,
-                    generateGroupId()
-                );
+                if (matches.length > 0) {
+                    const targetGroupId = await DupGroupRepository.addAssetToMatchingGroups(
+                        assetId,
+                        matches,
+                        generateGroupId()
+                    );
 
-                if (targetGroupId) {
-                    // Best-shot metadata is recoverable and must not turn an
-                    // otherwise complete scan/group transaction into ERROR.
-                    try {
-                        await selectBestShot(targetGroupId);
-                    } catch (bestShotError) {
-                        console.warn(
-                            `[AIScanner] Failed to update best shot for ${targetGroupId}:`,
-                            bestShotError
-                        );
+                    if (targetGroupId) {
+                        // Best-shot metadata is recoverable and must not turn
+                        // an otherwise complete scan/group transaction into
+                        // ERROR.
+                        try {
+                            await selectBestShot(targetGroupId);
+                        } catch (bestShotError) {
+                            console.warn(
+                                `[AIScanner] Failed to update best shot for ${targetGroupId}:`,
+                                bestShotError
+                            );
+                        }
                     }
                 }
             }
+        } catch (groupingError) {
+            console.warn(
+                `[AIScanner] Failed to update duplicate groups for ${assetId}; base result kept:`,
+                groupingError
+            );
         }
 
         return true;

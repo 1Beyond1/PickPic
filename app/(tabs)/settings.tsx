@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -69,13 +69,15 @@ export default function SettingsScreen() {
         theme, setTheme,
         language, setLanguage,
         selectedAlbumIds, setSelectedAlbums,
-        showDevOptions, enableAIClassification, setEnableAIClassification
+        showDevOptions, enableAIClassification, setEnableAIClassification,
+        hasHydrated: settingsHydrated,
     } = useSettingsStore();
 
     const {
         photoProcessedIds, videoProcessedIds,
         resetPhotoProgress, resetVideoProgress,
-        totalPhotos, totalVideos, refreshTotalCounts
+        totalPhotos, totalVideos, refreshTotalCounts,
+        hasHydrated: mediaHydrated,
     } = useMediaStore();
 
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
@@ -190,6 +192,14 @@ export default function SettingsScreen() {
         setShowAIWarningModal(false);
         setEnableAIClassification(true);
     };
+
+    if (!settingsHydrated || !mediaHydrated) {
+        return (
+            <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+                <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>

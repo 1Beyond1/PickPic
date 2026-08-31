@@ -83,12 +83,22 @@ export const useSettingsStore = create<SettingsState>()(
         {
             name: 'photoapp-settings',
             storage: createJSONStorage(() => AsyncStorage),
-            onRehydrateStorage: () => (state) => {
+            onRehydrateStorage: () => (state, error) => {
                 // Migration: convert legacy 'claude' and 'PPstyle' themes to 'WarmTerra'
                 if (state && ((state.theme as any) === 'claude' || (state.theme as any) === 'PPstyle')) {
                     state.setTheme('WarmTerra');
                 }
-                state?.setHasHydrated(true);
+                // Zustand passes undefined when storage read/parse fails. The
+                // app can safely continue with defaults, but must still leave
+                // the hydration gate or media screens would never load.
+                if (error && typeof window !== 'undefined') {
+                    console.error('[SettingsStore] Failed to rehydrate settings:', error);
+                }
+                // AsyncStorage's web adapter cannot access window during Expo's
+                // server-side/static render. There is no client store to open
+                // there, so avoid calling a persisted setter in that phase.
+                if (!state && typeof window === 'undefined') return;
+                (state ?? useSettingsStore.getState()).setHasHydrated(true);
             },
         }
     )

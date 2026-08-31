@@ -4,7 +4,7 @@
 
 import { FaceDetectionProvider, useFacesInPhoto } from '@infinitered/react-native-mlkit-face-detection';
 import { useImageLabeling, useImageLabelingModels, useImageLabelingProvider } from '@infinitered/react-native-mlkit-image-labeling';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { IMAGENET_LABELS } from '../services/ml/ImageNetLabels';
 import type { DetectedFace, ImageLabel } from '../services/ml/MLKitService';
 
@@ -213,7 +213,11 @@ function MLBridgeInner() {
 /**
  * MLBridge - Must be mounted at app root
  */
-export function MLBridge() {
+// RootLayout rerenders when navigation and app-level state change. The
+// provider hook creates its provider component inside the hook, so allowing
+// this no-prop bridge to rerender would remount MLBridgeInner and abandon an
+// in-flight native request. Keep the bridge subtree mounted for its lifetime.
+export const MLBridge = memo(function MLBridge() {
     const models = useImageLabelingModels(IMAGE_LABELING_MODELS);
 
     const { ImageLabelingModelProvider } = useImageLabelingProvider(models);
@@ -225,5 +229,5 @@ export function MLBridge() {
             </ImageLabelingModelProvider>
         </FaceDetectionProvider>
     );
-}
+});
 
