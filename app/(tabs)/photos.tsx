@@ -114,6 +114,11 @@ export default function PhotosScreen() {
     const handleUndo = (assetId: string) => {
         // useMediaStore undoAction
         useMediaStore.getState().undoAction(assetId);
+        // The queue can be restored after a restart, when its asset is no
+        // longer present in the in-memory batch. Reload using the current
+        // filter so undo makes the asset actionable again without leaking an
+        // item from another album scope into the deck.
+        void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
     };
 
     const [previewPhoto, setPreviewPhoto] = useState<any>(null);

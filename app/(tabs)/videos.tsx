@@ -139,6 +139,14 @@ export default function VideosScreen() {
         setSelectedVideoForCollection(null);
     };
 
+    const handleRestoreFromTrash = (assetId: string) => {
+        restoreFromTrash(assetId);
+        // A persisted trash item may belong to the filter that was active in
+        // an earlier session. Re-query the current scope instead of blindly
+        // inserting the restored asset into this feed.
+        void loadVideos(50, displayOrder, selectedAlbumIds);
+    };
+
     const onLayout = (event: any) => {
         const { height } = event.nativeEvent.layout;
         if (Math.abs(height - feedHeight) > 10) {
@@ -240,7 +248,7 @@ export default function VideosScreen() {
                                     </View>
                                     <Pressable
                                         style={[styles.restoreBtn, isConfirmingVideoTrash && { opacity: 0.5 }]}
-                                        onPress={() => restoreFromTrash(item.id)}
+                                        onPress={() => handleRestoreFromTrash(item.id)}
                                         disabled={isConfirmingVideoTrash}
                                     >
                                         <Text style={styles.restoreText}>{t('video_restore')}</Text>

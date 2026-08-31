@@ -38,11 +38,15 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     }, [visible, initialSelection, loadAlbums]);
 
     const toggleSelection = (id: string) => {
-        if (selectedIds.includes(id)) {
-            setSelectedIds(selectedIds.filter((item) => item !== id));
-        } else if (!maxSelection || selectedIds.length < maxSelection) {
-            setSelectedIds([...selectedIds, id]);
-        }
+        setSelectedIds((currentIds) => {
+            if (currentIds.includes(id)) {
+                return currentIds.filter((item) => item !== id);
+            }
+            if (maxSelection && currentIds.length >= maxSelection) {
+                return currentIds;
+            }
+            return [...currentIds, id];
+        });
     };
 
     const handleClearAll = () => {

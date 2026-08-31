@@ -472,7 +472,13 @@ export default function ScanResultsScreen() {
                 groupId={selectedSimilarGroup?.group.groupId || ''}
                 memberAssetIds={selectedSimilarGroup?.group.memberAssetIds || []}
                 originRect={selectedSimilarGroup?.origin || null}
-                onClose={() => setSelectedSimilarGroup(null)}
+                onClose={() => {
+                    setSelectedSimilarGroup(null);
+                    // The detail overlay can delete only part of a group and
+                    // remain open. Refresh on every close so the parent card
+                    // cannot keep showing its pre-deletion member count.
+                    void loadResults();
+                }}
                 onComplete={handleSimilarGroupComplete}
             />
 
