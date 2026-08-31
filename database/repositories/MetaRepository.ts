@@ -2,7 +2,7 @@
  * Meta Repository - Key/Value storage for scanner state
  */
 
-import { getDatabase } from '../db';
+import { getDatabase, withTransaction } from '../db';
 import { GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
 
 export interface ScanCursor {
@@ -37,11 +37,12 @@ export const MetaRepository = {
      * Set a meta value
      */
     async set(key: string, value: string): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)',
-            [key, value]
-        );
+        await withTransaction(async db => {
+            await db.runAsync(
+                'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)',
+                [key, value]
+            );
+        });
     },
 
     /**
@@ -99,18 +100,27 @@ export const MetaRepository = {
         if (!Number.isSafeInteger(takenAt) || !assetId) {
             throw new Error('Cannot persist an invalid scan cursor');
         }
-        await this.set(MetaKeys.SCAN_CURSOR_TAKEN_AT, takenAt.toString());
-        await this.set(MetaKeys.SCAN_CURSOR_ASSET_ID, assetId);
+        await withTransaction(async db => {
+            await db.runAsync(
+                'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)',
+                [MetaKeys.SCAN_CURSOR_TAKEN_AT, takenAt.toString()]
+            );
+            await db.runAsync(
+                'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)',
+                [MetaKeys.SCAN_CURSOR_ASSET_ID, assetId]
+            );
+        });
     },
 
     /**
      * Reset scan cursor (start from beginning)
      */
     async resetScanCursor(): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            'DELETE FROM meta WHERE key IN (?, ?)',
-            [MetaKeys.SCAN_CURSOR_TAKEN_AT, MetaKeys.SCAN_CURSOR_ASSET_ID]
-        );
+        await withTransaction(async db => {
+            await db.runAsync(
+                'DELETE FROM meta WHERE key IN (?, ?)',
+                [MetaKeys.SCAN_CURSOR_TAKEN_AT, MetaKeys.SCAN_CURSOR_ASSET_ID]
+            );
+        });
     },
 };

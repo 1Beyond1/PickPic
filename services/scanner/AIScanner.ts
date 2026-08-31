@@ -103,6 +103,25 @@ async function getFileSignature(uri: string): Promise<string | null> {
 }
 
 /**
+ * Use media-library metadata when the platform URI is not file-system backed
+ * (for example `ph://` on iOS). This keeps edited assets invalidatable even
+ * when FileSystem.getInfoAsync cannot inspect their URI.
+ */
+function getMediaLibrarySignature(asset: MediaLibrary.Asset): string | null {
+    if (!Number.isFinite(asset.modificationTime)
+        || !Number.isFinite(asset.width)
+        || !Number.isFinite(asset.height)) {
+        return null;
+    }
+
+    return `library_${asset.modificationTime}_${asset.width}_${asset.height}`;
+}
+
+async function getAssetSignature(asset: MediaLibrary.Asset): Promise<string | null> {
+    return await getFileSignature(asset.uri) ?? getMediaLibrarySignature(asset);
+}
+
+/**
  * Generate unique group ID
  */
 function generateGroupId(): string {
@@ -165,12 +184,17 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
             seenAssetIds.add(asset.id);
 
             // Check if asset exists and signature changed
-            const signature = await getFileSignature(asset.uri);
+            const signature = await getAssetSignature(asset);
             const existing = await AssetRepository.getById(asset.id);
 
             if (existing) {
-                // Check for signature change
-                const signatureChanged = await AssetRepository.resetIfSignatureChanged(asset.id, signature);
+                // Refresh library metadata and check for signature changes.
+                const signatureChanged = await AssetRepository.refreshLibraryMetadata(asset.id, {
+                    takenAt: asset.creationTime,
+                    width: asset.width,
+                    height: asset.height,
+                    fileSignature: signature,
+                });
                 if (signatureChanged) {
                     shouldResetCursor = true;
                     await DupGroupRepository.removeAssetFromGroups(asset.id);
@@ -241,8 +265,17 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
  */
 async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<string[]> {
     const assetIds = new Set<string>();
+    const requestedAlbumIds = Array.from(new Set(albumIds));
+    if (requestedAlbumIds.length === 0) return [];
 
-    for (const albumId of new Set(albumIds)) {
+    // Album IDs can become stale when the user deletes or renames an album
+    // outside the app. iOS treats an unknown album as an unscoped query, so
+    // validate the scope before requesting any assets.
+    const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+    const availableAlbumIds = new Set(albums.map(album => album.id));
+    const validAlbumIds = requestedAlbumIds.filter(albumId => availableAlbumIds.has(albumId));
+
+    for (const albumId of validAlbumIds) {
         let hasMore = true;
         let cursor: string | undefined;
 

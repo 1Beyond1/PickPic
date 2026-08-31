@@ -57,6 +57,22 @@ class MLBridgeQueue {
 // Global singleton
 export const mlBridgeQueue = new MLBridgeQueue();
 
+// Keep the model configuration stable. The image-labeling package loads its
+// asset list once but reacts to the configuration object in its model-loading
+// effect. Recreating this object on every render would repeatedly register the
+// same native model and can cause an endless load/render loop.
+const IMAGE_LABELING_MODELS = {
+    efficientnet: {
+        // Expo requires a statically analyzable require for bundled TFLite assets.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        model: require('../assets/ml/efficientnet-lite4.tflite'),
+        options: {
+            maxResultCount: 5,
+            confidenceThreshold: 0.4, // EfficientNet is more precise, 0.4 is good
+        },
+    },
+};
+
 /**
  * Inner component that processes requests
  */
@@ -198,17 +214,7 @@ function MLBridgeInner() {
  * MLBridge - Must be mounted at app root
  */
 export function MLBridge() {
-    const models = useImageLabelingModels({
-        efficientnet: {
-            // Expo requires a statically analyzable require for bundled TFLite assets.
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            model: require('../assets/ml/efficientnet-lite4.tflite'),
-            options: {
-                maxResultCount: 5,
-                confidenceThreshold: 0.4, // EfficientNet is more precise, 0.4 is good
-            },
-        },
-    });
+    const models = useImageLabelingModels(IMAGE_LABELING_MODELS);
 
     const { ImageLabelingModelProvider } = useImageLabelingProvider(models);
 

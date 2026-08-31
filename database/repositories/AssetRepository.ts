@@ -67,11 +67,10 @@ export const AssetRepository = {
      * Upsert an asset (insert or update)
      */
     async upsert(asset: Partial<AssetRecord> & { asset_id: string }): Promise<void> {
-        const db = await getDatabase();
-
-        const now = Date.now();
-        await db.runAsync(
-            `INSERT INTO assets (
+        await withTransaction(async db => {
+            const now = Date.now();
+            await db.runAsync(
+                `INSERT INTO assets (
         asset_id, taken_at, width, height, file_signature,
         algo_version, blur_score, mean_luma, phash, labels_json,
         status, error_message, updated_at
@@ -89,23 +88,24 @@ export const AssetRepository = {
         status = COALESCE(excluded.status, status),
         error_message = COALESCE(excluded.error_message, error_message),
         updated_at = ?`,
-            [
-                asset.asset_id,
-                asset.taken_at ?? null,
-                asset.width ?? null,
-                asset.height ?? null,
-                asset.file_signature ?? null,
-                asset.algo_version ?? null,
-                asset.blur_score ?? null,
-                asset.mean_luma ?? null,
-                asset.phash ?? null,
-                asset.labels_json ?? null,
-                asset.status ?? AssetStatus.PENDING,
-                asset.error_message ?? null,
-                now,
-                now,
-            ]
-        );
+                [
+                    asset.asset_id,
+                    asset.taken_at ?? null,
+                    asset.width ?? null,
+                    asset.height ?? null,
+                    asset.file_signature ?? null,
+                    asset.algo_version ?? null,
+                    asset.blur_score ?? null,
+                    asset.mean_luma ?? null,
+                    asset.phash ?? null,
+                    asset.labels_json ?? null,
+                    asset.status ?? AssetStatus.PENDING,
+                    asset.error_message ?? null,
+                    now,
+                    now,
+                ]
+            );
+        });
     },
 
     /**
@@ -267,40 +267,42 @@ export const AssetRepository = {
         faceCount: number = 0,
         labelsJson: string | null = null
     ): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            `UPDATE assets SET
+        await withTransaction(async db => {
+            await db.runAsync(
+                `UPDATE assets SET
         status = ?, blur_score = ?, mean_luma = ?, phash = ?,
         algo_version = ?, face_count = ?, labels_json = ?,
         error_message = NULL, updated_at = ?
        WHERE asset_id = ?`,
-            [
-                AssetStatus.DONE,
-                blurScore,
-                meanLuma,
-                phash,
-                algoVersion,
-                faceCount,
-                labelsJson,
-                Date.now(),
-                assetId,
-            ]
-        );
+                [
+                    AssetStatus.DONE,
+                    blurScore,
+                    meanLuma,
+                    phash,
+                    algoVersion,
+                    faceCount,
+                    labelsJson,
+                    Date.now(),
+                    assetId,
+                ]
+            );
+        });
     },
 
     /**
      * Mark asset as error
      */
     async markError(assetId: string, errorMessage: string): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            `UPDATE assets SET
+        await withTransaction(async db => {
+            await db.runAsync(
+                `UPDATE assets SET
              status = ?, algo_version = NULL, blur_score = NULL,
              mean_luma = NULL, phash = NULL, face_count = NULL,
              labels_json = NULL, error_message = ?, updated_at = ?
              WHERE asset_id = ?`,
-            [AssetStatus.ERROR, errorMessage, Date.now(), assetId]
-        );
+                [AssetStatus.ERROR, errorMessage, Date.now(), assetId]
+            );
+        });
     },
 
     /**
@@ -348,29 +350,75 @@ export const AssetRepository = {
     },
 
     /**
-     * Reset asset to pending if file_signature changed
+     * Refresh media-library metadata and reset derived results when the
+     * underlying asset signature changes.
+     *
+     * Some platforms expose library-only URIs that cannot be inspected by
+     * the file system. Metadata still needs to be refreshed in that case,
+     * while a non-null signature is required before invalidating results.
      */
-    async resetIfSignatureChanged(assetId: string, newSignature: string | null): Promise<boolean> {
-        if (newSignature === null) {
-            return false;
+    async refreshLibraryMetadata(
+        assetId: string,
+        metadata: {
+            takenAt: number;
+            width: number;
+            height: number;
+            fileSignature: string | null;
         }
+    ): Promise<boolean> {
+        return withTransaction(async db => {
+            const existing = await db.getFirstAsync<AssetRecord>(
+                'SELECT * FROM assets WHERE asset_id = ?',
+                [assetId]
+            );
+            if (!existing) return false;
 
-        const db = await getDatabase();
-        const existing = await this.getById(assetId);
+            const signatureChanged = metadata.fileSignature !== null
+                && existing.file_signature !== metadata.fileSignature;
+            const metadataChanged = existing.taken_at !== metadata.takenAt
+                || existing.width !== metadata.width
+                || existing.height !== metadata.height
+                || (metadata.fileSignature !== null && existing.file_signature !== metadata.fileSignature);
 
-        if (existing && existing.file_signature !== newSignature) {
+            if (!metadataChanged) return false;
+
+            if (signatureChanged) {
+                await db.runAsync(
+                    `UPDATE assets SET
+                 taken_at = ?, width = ?, height = ?, file_signature = ?,
+                 status = ?, algo_version = NULL, blur_score = NULL,
+                 mean_luma = NULL, phash = NULL, face_count = 0,
+                 labels_json = NULL, error_message = NULL, updated_at = ?
+                 WHERE asset_id = ?`,
+                    [
+                        metadata.takenAt,
+                        metadata.width,
+                        metadata.height,
+                        metadata.fileSignature,
+                        AssetStatus.PENDING,
+                        Date.now(),
+                        assetId,
+                    ]
+                );
+                return true;
+            }
+
             await db.runAsync(
                 `UPDATE assets SET
-           status = ?, file_signature = ?, algo_version = NULL,
-           blur_score = NULL, mean_luma = NULL, phash = NULL,
-           face_count = 0, labels_json = NULL, error_message = NULL,
-           updated_at = ?
-         WHERE asset_id = ?`,
-                [AssetStatus.PENDING, newSignature, Date.now(), assetId]
+             taken_at = ?, width = ?, height = ?,
+             file_signature = COALESCE(?, file_signature), updated_at = ?
+             WHERE asset_id = ?`,
+                [
+                    metadata.takenAt,
+                    metadata.width,
+                    metadata.height,
+                    metadata.fileSignature,
+                    Date.now(),
+                    assetId,
+                ]
             );
-            return true;
-        }
-        return false;
+            return false;
+        });
     },
 
     /**

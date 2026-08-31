@@ -202,6 +202,14 @@ async function loadAssetsForReview(
 
     const processed = new Set(processedIds);
     const normalizedAlbumIds = await normalizeAlbumIds(albumIds);
+    // An empty selection means "all albums" in persisted settings, but a
+    // non-empty selection whose IDs all disappeared means "nothing in scope".
+    // Keep those two states distinct so stale album IDs cannot widen a query.
+    const hasAlbumFilter = new Set(albumIds).size > 0;
+
+    if (hasAlbumFilter && normalizedAlbumIds.length === 0) {
+        return { assets: [], totalCount: null };
+    }
 
     if (normalizedAlbumIds.length > 0 && displayOrder !== 'random') {
         return {
@@ -224,7 +232,9 @@ async function loadAssetsForReview(
 
     const queryAlbums: Array<string | undefined> = normalizedAlbumIds.length > 0
         ? normalizedAlbumIds
-        : [undefined];
+        : hasAlbumFilter
+            ? []
+            : [undefined];
 
     for (const albumId of queryAlbums) {
         let after: string | undefined;
@@ -322,6 +332,13 @@ export const useMediaStore = create<MediaState>()(
         try {
             const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
             set({ albums });
+
+            const selectedAlbumIds = useSettingsStore.getState().selectedAlbumIds;
+            const availableAlbumIds = new Set(albums.map(album => album.id));
+            const validSelectedAlbumIds = selectedAlbumIds.filter(albumId => availableAlbumIds.has(albumId));
+            if (validSelectedAlbumIds.length !== selectedAlbumIds.length) {
+                useSettingsStore.getState().setSelectedAlbums(validSelectedAlbumIds);
+            }
         } catch (e) {
             console.error("Failed to load albums", e);
         }

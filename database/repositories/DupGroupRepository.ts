@@ -131,25 +131,26 @@ export const DupGroupRepository = {
         groupId: string,
         representativeAssetId: string
     ): Promise<void> {
-        const db = await getDatabase();
-        const now = Date.now();
-
-        await db.runAsync(
-            `INSERT INTO dup_groups (group_id, representative_asset_id, best_asset_id, created_at)
+        await withTransaction(async db => {
+            const now = Date.now();
+            await db.runAsync(
+                `INSERT INTO dup_groups (group_id, representative_asset_id, best_asset_id, created_at)
        VALUES (?, ?, NULL, ?)`,
-            [groupId, representativeAssetId, now]
-        );
+                [groupId, representativeAssetId, now]
+            );
+        });
     },
 
     /**
      * Add member to a group
      */
     async addMember(groupId: string, assetId: string, distance: number): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            `INSERT OR REPLACE INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)`,
-            [groupId, assetId, distance]
-        );
+        await withTransaction(async db => {
+            await db.runAsync(
+                `INSERT OR REPLACE INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)`,
+                [groupId, assetId, distance]
+            );
+        });
     },
 
     /**
@@ -203,11 +204,12 @@ export const DupGroupRepository = {
      * Update best_asset_id for a group
      */
     async updateBestAsset(groupId: string, bestAssetId: string): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            'UPDATE dup_groups SET best_asset_id = ? WHERE group_id = ?',
-            [bestAssetId, groupId]
-        );
+        await withTransaction(async db => {
+            await db.runAsync(
+                'UPDATE dup_groups SET best_asset_id = ? WHERE group_id = ?',
+                [bestAssetId, groupId]
+            );
+        });
     },
 
     /**
@@ -224,9 +226,10 @@ export const DupGroupRepository = {
      * Delete a group and its members
      */
     async deleteGroup(groupId: string): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync('DELETE FROM dup_members WHERE group_id = ?', [groupId]);
-        await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [groupId]);
+        await withTransaction(async db => {
+            await db.runAsync('DELETE FROM dup_members WHERE group_id = ?', [groupId]);
+            await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [groupId]);
+        });
     },
 
     /**
@@ -317,9 +320,10 @@ export const DupGroupRepository = {
      * Delete ALL groups and members (Clean reset)
      */
     async deleteAll(): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync('DELETE FROM dup_members');
-        await db.runAsync('DELETE FROM dup_groups');
+        await withTransaction(async db => {
+            await db.runAsync('DELETE FROM dup_members');
+            await db.runAsync('DELETE FROM dup_groups');
+        });
     },
 
     /**

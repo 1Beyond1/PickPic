@@ -2,7 +2,7 @@
  * Face Repository - Manages face detection data and clustering
  */
 
-import { getDatabase } from '../db';
+import { getDatabase, withTransaction } from '../db';
 
 export interface FaceGroup {
     face_id: string;
@@ -30,14 +30,14 @@ export const FaceRepository = {
         firstSeenAssetId: string,
         representativeUri?: string
     ): Promise<void> {
-        const db = await getDatabase();
-        const now = Date.now();
-
-        await db.runAsync(
-            `INSERT INTO face_groups (face_id, cluster_id, first_seen_asset_id, representative_uri, photo_count, created_at)
+        await withTransaction(async db => {
+            const now = Date.now();
+            await db.runAsync(
+                `INSERT INTO face_groups (face_id, cluster_id, first_seen_asset_id, representative_uri, photo_count, created_at)
              VALUES (?, NULL, ?, ?, 1, ?)`,
-            [faceId, firstSeenAssetId, representativeUri || null, now]
-        );
+                [faceId, firstSeenAssetId, representativeUri || null, now]
+            );
+        });
     },
 
     /**
@@ -50,13 +50,13 @@ export const FaceRepository = {
         boundingBox: { x: number; y: number; width: number; height: number },
         confidence: number
     ): Promise<void> {
-        const db = await getDatabase();
-
-        await db.runAsync(
-            `INSERT INTO face_instances (instance_id, face_id, asset_id, bounding_box, confidence)
+        await withTransaction(async db => {
+            await db.runAsync(
+                `INSERT INTO face_instances (instance_id, face_id, asset_id, bounding_box, confidence)
              VALUES (?, ?, ?, ?, ?)`,
-            [instanceId, faceId, assetId, JSON.stringify(boundingBox), confidence]
-        );
+                [instanceId, faceId, assetId, JSON.stringify(boundingBox), confidence]
+            );
+        });
     },
 
     /**
@@ -95,22 +95,24 @@ export const FaceRepository = {
      * Update cluster ID for a face group
      */
     async updateClusterId(faceId: string, clusterId: number): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            'UPDATE face_groups SET cluster_id = ? WHERE face_id = ?',
-            [clusterId, faceId]
-        );
+        await withTransaction(async db => {
+            await db.runAsync(
+                'UPDATE face_groups SET cluster_id = ? WHERE face_id = ?',
+                [clusterId, faceId]
+            );
+        });
     },
 
     /**
      * Increment photo count for a face group
      */
     async incrementPhotoCount(faceId: string): Promise<void> {
-        const db = await getDatabase();
-        await db.runAsync(
-            'UPDATE face_groups SET photo_count = photo_count + 1 WHERE face_id = ?',
-            [faceId]
-        );
+        await withTransaction(async db => {
+            await db.runAsync(
+                'UPDATE face_groups SET photo_count = photo_count + 1 WHERE face_id = ?',
+                [faceId]
+            );
+        });
     },
 
     /**
