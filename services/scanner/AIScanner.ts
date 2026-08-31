@@ -739,19 +739,17 @@ export async function resumeOnce(
         const requestedCount = options?.mode === 'count' ? options.count ?? BATCH_SIZE : BATCH_SIZE;
         const batchSize = Math.max(1, Math.min(Math.floor(requestedCount), 1000));
 
-        if (options?.mode === 'count') {
-            // A count scan must scope its preparation to the same bounded
-            // work set. Resetting all outdated/error rows first would clear
-            // valid results and duplicate groups for assets this invocation
-            // will not process.
-            const currentAlgoVersion = await MetaRepository.getGlobalAlgoVersion();
-            const candidates = await AssetRepository.getScanCandidateBatch(
-                currentAlgoVersion,
-                batchSize,
-                assetIds
-            );
-            assetIds = candidates.map(asset => asset.asset_id);
-        }
+        // resumeOnce is always bounded to one batch. Choose that exact work
+        // set before resetting errors/outdated results; otherwise a scoped
+        // album (or the default batch) could invalidate every matching result
+        // while only the first batch is processed.
+        const currentAlgoVersion = await MetaRepository.getGlobalAlgoVersion();
+        const candidates = await AssetRepository.getScanCandidateBatch(
+            currentAlgoVersion,
+            batchSize,
+            assetIds
+        );
+        assetIds = candidates.map(asset => asset.asset_id);
 
         const retried = await AssetRepository.resetErrors(assetIds);
         if (retried > 0) {
