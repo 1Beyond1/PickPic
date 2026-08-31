@@ -29,6 +29,38 @@ export interface PendingAsset {
 
 const BATCH_SIZE = 20;
 
+interface AssetScope {
+    clause: string;
+    params: string[];
+}
+
+/**
+ * Build a parameterized asset-id filter for scoped scanner operations.
+ * Undefined means the whole local index; an empty list means no assets.
+ */
+function createAssetScope(assetIds?: readonly string[]): AssetScope {
+    if (assetIds === undefined) {
+        return { clause: '', params: [] };
+    }
+
+    const uniqueAssetIds = Array.from(new Set(assetIds));
+    return {
+        clause: ` AND asset_id IN (${uniqueAssetIds.map(() => '?').join(', ')})`,
+        params: uniqueAssetIds,
+    };
+}
+
+function splitAssetIds(assetIds?: readonly string[]): Array<readonly string[] | undefined> {
+    if (assetIds === undefined) return [undefined];
+
+    const uniqueAssetIds = Array.from(new Set(assetIds));
+    const batches: Array<readonly string[]> = [];
+    for (let i = 0; i < uniqueAssetIds.length; i += 500) {
+        batches.push(uniqueAssetIds.slice(i, i + 500));
+    }
+    return batches;
+}
+
 export const AssetRepository = {
     /**
      * Upsert an asset (insert or update)
@@ -323,16 +355,45 @@ export const AssetRepository = {
     /**
      * Reset outdated assets to pending (algo_version mismatch)
      */
-    async resetOutdatedAssets(currentAlgoVersion: number): Promise<number> {
-        const db = await getDatabase();
-        const result = await db.runAsync(
-            `UPDATE assets SET
-       status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
-       face_count = 0, labels_json = NULL, error_message = NULL, updated_at = ?
-       WHERE status = ? AND (algo_version IS NULL OR algo_version < ?)`,
-            [AssetStatus.PENDING, Date.now(), AssetStatus.DONE, currentAlgoVersion]
-        );
-        return result.changes;
+    async resetOutdatedAssets(
+        currentAlgoVersion: number,
+        assetIds?: readonly string[]
+    ): Promise<string[]> {
+        const assetIdBatches = splitAssetIds(assetIds);
+        if (assetIdBatches.length === 0) return [];
+
+        return withTransaction(async db => {
+            const resetAssetIds: string[] = [];
+
+            for (const assetIdBatch of assetIdBatches) {
+                const scope = createAssetScope(assetIdBatch);
+                const outdated = await db.getAllAsync<{ asset_id: string }>(
+                    `SELECT asset_id FROM assets
+                     WHERE status = ? AND (algo_version IS NULL OR algo_version < ?)${scope.clause}`,
+                    [AssetStatus.DONE, currentAlgoVersion, ...scope.params]
+                );
+
+                if (outdated.length === 0) continue;
+
+                await db.runAsync(
+                    `UPDATE assets SET
+                     status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
+                     face_count = 0, labels_json = NULL, error_message = NULL, updated_at = ?
+                     WHERE status = ? AND (algo_version IS NULL OR algo_version < ?)${scope.clause}`,
+                    [
+                        AssetStatus.PENDING,
+                        Date.now(),
+                        AssetStatus.DONE,
+                        currentAlgoVersion,
+                        ...scope.params,
+                    ]
+                );
+
+                resetAssetIds.push(...outdated.map(asset => asset.asset_id));
+            }
+
+            return resetAssetIds;
+        });
     },
 
     /**
@@ -481,21 +542,31 @@ export const AssetRepository = {
     /**
      * Make failed assets eligible for an explicit resume/retry action.
      */
-    async resetErrors(): Promise<number> {
+    async resetErrors(assetIds?: readonly string[]): Promise<number> {
+        const assetIdBatches = splitAssetIds(assetIds);
+        if (assetIdBatches.length === 0) return 0;
+
         return withTransaction(async db => {
             // Repair legacy partial writes before retrying. Current group
             // creation is atomic, but older app versions could leave an ERROR
             // asset attached to one or more groups.
-            await db.runAsync(
-                `DELETE FROM dup_members
-                 WHERE asset_id IN (SELECT asset_id FROM assets WHERE status = ?)`,
-                [AssetStatus.ERROR]
-            );
-            await db.runAsync(
-                `DELETE FROM face_instances
-                 WHERE asset_id IN (SELECT asset_id FROM assets WHERE status = ?)`,
-                [AssetStatus.ERROR]
-            );
+            for (const assetIdBatch of assetIdBatches) {
+                const scope = createAssetScope(assetIdBatch);
+                await db.runAsync(
+                    `DELETE FROM dup_members
+                     WHERE asset_id IN (
+                         SELECT asset_id FROM assets WHERE status = ?${scope.clause}
+                     )`,
+                    [AssetStatus.ERROR, ...scope.params]
+                );
+                await db.runAsync(
+                    `DELETE FROM face_instances
+                     WHERE asset_id IN (
+                         SELECT asset_id FROM assets WHERE status = ?${scope.clause}
+                     )`,
+                    [AssetStatus.ERROR, ...scope.params]
+                );
+            }
             await db.runAsync(
                 'DELETE FROM dup_groups WHERE group_id NOT IN (SELECT DISTINCT group_id FROM dup_members)'
             );
@@ -526,15 +597,20 @@ export const AssetRepository = {
                 'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
             );
 
-            const result = await db.runAsync(
-                `UPDATE assets SET
-                 status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
-                 face_count = NULL, labels_json = NULL, error_message = NULL,
-                 updated_at = ?
-                 WHERE status = ?`,
-                [AssetStatus.PENDING, Date.now(), AssetStatus.ERROR]
-            );
-            return result.changes;
+            let resetCount = 0;
+            for (const assetIdBatch of assetIdBatches) {
+                const scope = createAssetScope(assetIdBatch);
+                const result = await db.runAsync(
+                    `UPDATE assets SET
+                     status = ?, blur_score = NULL, mean_luma = NULL, phash = NULL,
+                     face_count = NULL, labels_json = NULL, error_message = NULL,
+                     updated_at = ?
+                     WHERE status = ?${scope.clause}`,
+                    [AssetStatus.PENDING, Date.now(), AssetStatus.ERROR, ...scope.params]
+                );
+                resetCount += result.changes;
+            }
+            return resetCount;
         });
     },
 };

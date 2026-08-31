@@ -23,6 +23,63 @@ export interface SimilarityCandidate {
     distance: number;
 }
 
+async function removeAssetsFromGroupsInDatabase(
+    db: SQLite.SQLiteDatabase,
+    assetIds: readonly string[]
+): Promise<void> {
+    const affectedGroupIds = new Set<string>();
+
+    // Keep batches below SQLite's bind-parameter limit.
+    for (let i = 0; i < assetIds.length; i += 500) {
+        const batch = assetIds.slice(i, i + 500);
+        const placeholders = batch.map(() => '?').join(', ');
+        const groups = await db.getAllAsync<{ group_id: string }>(
+            `SELECT DISTINCT group_id FROM dup_members
+             WHERE asset_id IN (${placeholders})`,
+            batch
+        );
+        groups.forEach(group => affectedGroupIds.add(group.group_id));
+
+        await db.runAsync(
+            `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
+            batch
+        );
+    }
+
+    for (const groupId of affectedGroupIds) {
+        const members = await db.getAllAsync<DupMember>(
+            'SELECT * FROM dup_members WHERE group_id = ? ORDER BY distance ASC',
+            [groupId]
+        );
+
+        if (members.length === 0) {
+            await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [groupId]);
+            continue;
+        }
+
+        const group = await db.getFirstAsync<DupGroup>(
+            'SELECT * FROM dup_groups WHERE group_id = ?',
+            [groupId]
+        );
+        if (!group) continue;
+
+        const memberIds = new Set(members.map(member => member.asset_id));
+        const representativeAssetId = memberIds.has(group.representative_asset_id ?? '')
+            ? group.representative_asset_id
+            : members[0].asset_id;
+        const bestAssetId = memberIds.has(group.best_asset_id ?? '')
+            ? group.best_asset_id
+            : members[0].asset_id;
+
+        await db.runAsync(
+            `UPDATE dup_groups
+             SET representative_asset_id = ?, best_asset_id = ?
+             WHERE group_id = ?`,
+            [representativeAssetId, bestAssetId, groupId]
+        );
+    }
+}
+
 async function mergeGroupsInDatabase(
     db: SQLite.SQLiteDatabase,
     targetGroupId: string,
@@ -262,48 +319,20 @@ export const DupGroupRepository = {
      * repair the affected representatives/best-shot references.
      */
     async removeAssetFromGroups(assetId: string): Promise<void> {
+        await this.removeAssetsFromGroups([assetId]);
+    },
+
+    /**
+     * Remove several assets from duplicate groups without clearing unrelated
+     * groups. This is used when a scoped scan invalidates only part of the
+     * local index.
+     */
+    async removeAssetsFromGroups(assetIds: readonly string[]): Promise<void> {
+        const uniqueAssetIds = Array.from(new Set(assetIds));
+        if (uniqueAssetIds.length === 0) return;
+
         await withTransaction(async db => {
-            const affectedGroups = await db.getAllAsync<{ group_id: string }>(
-                'SELECT DISTINCT group_id FROM dup_members WHERE asset_id = ?',
-                [assetId]
-            );
-
-            if (affectedGroups.length === 0) return;
-
-            await db.runAsync('DELETE FROM dup_members WHERE asset_id = ?', [assetId]);
-
-            for (const { group_id: groupId } of affectedGroups) {
-                const members = await db.getAllAsync<DupMember>(
-                    'SELECT * FROM dup_members WHERE group_id = ? ORDER BY distance ASC',
-                    [groupId]
-                );
-
-                if (members.length === 0) {
-                    await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [groupId]);
-                    continue;
-                }
-
-                const group = await db.getFirstAsync<DupGroup>(
-                    'SELECT * FROM dup_groups WHERE group_id = ?',
-                    [groupId]
-                );
-                if (!group) continue;
-
-                const memberIds = new Set(members.map(member => member.asset_id));
-                const representativeAssetId = memberIds.has(group.representative_asset_id ?? '')
-                    ? group.representative_asset_id
-                    : members[0].asset_id;
-                const bestAssetId = memberIds.has(group.best_asset_id ?? '')
-                    ? group.best_asset_id
-                    : members[0].asset_id;
-
-                await db.runAsync(
-                    `UPDATE dup_groups
-                     SET representative_asset_id = ?, best_asset_id = ?
-                     WHERE group_id = ?`,
-                    [representativeAssetId, bestAssetId, groupId]
-                );
-            }
+            await removeAssetsFromGroupsInDatabase(db, uniqueAssetIds);
         });
     },
 };

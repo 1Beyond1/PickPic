@@ -10,6 +10,16 @@ export interface ScanCursor {
     assetId: string | null;
 }
 
+function parseStoredInteger(value: string | null): number | null {
+    if (value === null) return null;
+
+    const normalized = value.trim();
+    if (!/^-?\d+$/.test(normalized)) return null;
+
+    const parsed = Number(normalized);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 export const MetaRepository = {
     /**
      * Get a meta value by key
@@ -39,7 +49,12 @@ export const MetaRepository = {
      */
     async getGlobalAlgoVersion(): Promise<number> {
         const value = await this.get(MetaKeys.GLOBAL_ALGO_VERSION);
-        const storedVersion = value ? parseInt(value, 10) : 0;
+        const parsedVersion = parseStoredInteger(value);
+        const storedVersion = parsedVersion ?? 0;
+
+        if (value !== null && parsedVersion === null) {
+            console.warn(`[MetaRepository] Invalid stored algorithm version: ${value}`);
+        }
 
         // Keep existing databases aligned when the app ships a new scanner
         // implementation. The next scan will then invalidate old results.
@@ -57,10 +72,23 @@ export const MetaRepository = {
     async getScanCursor(): Promise<ScanCursor> {
         const takenAtStr = await this.get(MetaKeys.SCAN_CURSOR_TAKEN_AT);
         const assetId = await this.get(MetaKeys.SCAN_CURSOR_ASSET_ID);
+        const takenAt = parseStoredInteger(takenAtStr);
+        const hasAssetId = assetId !== null && assetId.length > 0;
+
+        if (
+            (takenAtStr !== null && takenAt === null) ||
+            (takenAt === null) !== (!hasAssetId)
+        ) {
+            console.warn('[MetaRepository] Invalid or incomplete scan cursor; restarting from the beginning.');
+        }
+
+        if (takenAt === null || !hasAssetId) {
+            return { takenAt: null, assetId: null };
+        }
 
         return {
-            takenAt: takenAtStr ? parseInt(takenAtStr, 10) : null,
-            assetId: assetId,
+            takenAt,
+            assetId,
         };
     },
 
@@ -68,6 +96,9 @@ export const MetaRepository = {
      * Update scan cursor
      */
     async setScanCursor(takenAt: number, assetId: string): Promise<void> {
+        if (!Number.isSafeInteger(takenAt) || !assetId) {
+            throw new Error('Cannot persist an invalid scan cursor');
+        }
         await this.set(MetaKeys.SCAN_CURSOR_TAKEN_AT, takenAt.toString());
         await this.set(MetaKeys.SCAN_CURSOR_ASSET_ID, assetId);
     },

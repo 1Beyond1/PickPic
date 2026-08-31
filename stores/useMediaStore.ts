@@ -370,18 +370,26 @@ export const useMediaStore = create<MediaState>()(
     },
 
     resetBatch: () => {
+        if (get().isConfirmingDeletion) return;
+        // Invalidate a load that may still be paging before clearing the
+        // current batch, otherwise its completion can repopulate this list.
+        photoLoadRequestId++;
         set((state) => state.isConfirmingDeletion
             ? state
             : { photos: [], currentIndex: 0, deleteQueue: [], collectionQueue: [] });
     },
 
     resetPhotoProgress: () => {
+        if (get().isConfirmingDeletion) return;
+        photoLoadRequestId++;
         set((state) => state.isConfirmingDeletion
             ? state
             : { photoProcessedIds: [], photos: [], deleteQueue: [], collectionQueue: [] });
     },
 
     resetVideoProgress: () => {
+        if (get().isConfirmingVideoTrash) return;
+        videoLoadRequestId++;
         set((state) => state.isConfirmingVideoTrash
             ? state
             : { videoProcessedIds: [], videos: [], videoTrashBin: [] });

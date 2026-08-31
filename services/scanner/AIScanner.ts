@@ -264,15 +264,20 @@ async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<s
 /**
  * Reset outdated assets (algo_version mismatch)
  */
-async function resetOutdatedAssets(): Promise<void> {
+async function resetOutdatedAssets(assetIds?: readonly string[]): Promise<void> {
     const globalVersion = await MetaRepository.getGlobalAlgoVersion();
-    const reset = await AssetRepository.resetOutdatedAssets(globalVersion);
+    const resetAssetIds = await AssetRepository.resetOutdatedAssets(globalVersion, assetIds);
 
-    if (reset > 0) {
-        // Existing duplicate groups were built from the previous algorithm.
-        await DupGroupRepository.deleteAll();
+    if (resetAssetIds.length > 0) {
+        if (assetIds === undefined) {
+            // A full scan invalidates the complete duplicate index.
+            await DupGroupRepository.deleteAll();
+        } else {
+            // A limited/album scan must not discard groups outside its scope.
+            await DupGroupRepository.removeAssetsFromGroups(resetAssetIds);
+        }
         await MetaRepository.resetScanCursor();
-        console.log(`[AIScanner] Reset ${reset} outdated assets.`);
+        console.log(`[AIScanner] Reset ${resetAssetIds.length} outdated assets.`);
     }
 }
 
@@ -558,15 +563,16 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
         const accessibleAssetIds = await syncAssetsToDatabase();
         if (shouldStop) return;
 
+        const scanAssetIds = accessibleAssetIds ? Array.from(accessibleAssetIds) : undefined;
+
         // Reset outdated assets
-        await resetOutdatedAssets();
+        await resetOutdatedAssets(scanAssetIds);
         if (shouldStop) return;
 
         // Report initial progress
         await reportProgress();
 
         // Process batches until done or stopped
-        const scanAssetIds = accessibleAssetIds ? Array.from(accessibleAssetIds) : undefined;
         while (!shouldStop) {
             const hasMore = await processBatch(BATCH_SIZE, scanAssetIds);
             await reportProgress();
@@ -626,21 +632,10 @@ export async function resumeOnce(
         const accessibleAssetIds = await syncAssetsToDatabase();
         if (shouldStop) return;
 
-        const retried = await AssetRepository.resetErrors();
-        if (retried > 0) {
-            // Failed assets may be older than the persisted cursor. Rewind so
-            // the explicit retry action cannot skip them.
-            await MetaRepository.resetScanCursor();
-            console.log(`[AIScanner] Retrying ${retried} previously failed assets.`);
-        }
-
-        // Reset outdated assets
-        await resetOutdatedAssets();
-        if (shouldStop) return;
-
         let assetIds: string[] | undefined;
         if (options?.mode === 'album') {
             assetIds = await getPhotoAssetIdsForAlbums(options.albumIds ?? []);
+            if (shouldStop) return;
         }
 
         if (accessibleAssetIds) {
@@ -650,6 +645,18 @@ export async function resumeOnce(
                 assetIds = Array.from(accessibleAssetIds);
             }
         }
+
+        const retried = await AssetRepository.resetErrors(assetIds);
+        if (retried > 0) {
+            // Failed assets may be older than the persisted cursor. Rewind so
+            // the explicit retry action cannot skip them.
+            await MetaRepository.resetScanCursor();
+            console.log(`[AIScanner] Retrying ${retried} previously failed assets.`);
+        }
+
+        // Reset outdated assets
+        await resetOutdatedAssets(assetIds);
+        if (shouldStop) return;
 
         const requestedCount = options?.mode === 'count' ? options.count ?? BATCH_SIZE : BATCH_SIZE;
         const batchSize = Math.max(1, Math.min(Math.floor(requestedCount), 1000));

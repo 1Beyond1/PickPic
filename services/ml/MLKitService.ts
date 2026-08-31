@@ -109,8 +109,7 @@ export const MLKitService = {
         try {
             const queue = getBridgeQueue();
             if (!queue.isAvailable?.()) {
-                console.warn('[MLKit] Bridge queue not available, skipping face detection');
-                return [];
+                throw new Error('ML bridge is unavailable for face detection');
             }
 
             return await enqueueRequest<DetectedFace[]>(queue, 'detectFaces', imageUri);
@@ -127,8 +126,7 @@ export const MLKitService = {
         try {
             const queue = getBridgeQueue();
             if (!queue.isAvailable?.()) {
-                console.warn('[MLKit] Bridge queue not available, skipping object detection');
-                return [];
+                throw new Error('ML bridge is unavailable for image labeling');
             }
 
             return await enqueueRequest<ImageLabel[]>(queue, 'labelImage', imageUri);
