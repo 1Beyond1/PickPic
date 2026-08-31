@@ -169,6 +169,7 @@ export default function VideosScreen() {
                         <VideoFeedItem
                             video={item}
                             isActive={item.id === activeId}
+                            isScreenFocused={isScreenFocused}
                             shouldPlay={item.id === activeId && isScreenFocused}
                             isMuted={isMuted}
                             toggleMute={() => setIsMuted(prev => !prev)}

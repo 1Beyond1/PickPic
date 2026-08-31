@@ -37,6 +37,7 @@ export default function RootLayout() {
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
   const mediaPermissionGrantedRef = useRef(false);
+  const initialCheckDone = useRef(false);
   mediaPermissionGrantedRef.current = mediaPermission?.granted === true;
 
   // Permissions can be revoked in system settings after the initial route
@@ -50,6 +51,7 @@ export default function RootLayout() {
         const permission = await getMediaPermission();
         if (mounted && !permission.granted) {
           mediaPermissionGrantedRef.current = false;
+          initialCheckDone.current = false;
           setShowAnnouncement(false);
           setShowAIGuide(false);
           if (isScanning()) {
@@ -110,8 +112,6 @@ export default function RootLayout() {
 
   // Show announcement first, then AI guide
   // Show announcement first, then AI guide (Check ONLY once on startup)
-  const initialCheckDone = useRef(false);
-
   useEffect(() => {
     // Do not cover the permission gate with onboarding. On a fresh install
     // the user must grant media access before the AI guide can start a scan.

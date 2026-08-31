@@ -14,6 +14,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 interface VideoFeedItemProps {
     video: PhotoAsset;
     isActive: boolean;
+    isScreenFocused: boolean;
     shouldPlay: boolean;
     isMuted: boolean;
     toggleMute: () => void;
@@ -27,6 +28,7 @@ interface VideoFeedItemProps {
 export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     video,
     isActive,
+    isScreenFocused,
     shouldPlay,
     isMuted,
     toggleMute,
@@ -85,6 +87,15 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
 
     const playbackUri = playbackSource?.assetId === video.id ? playbackSource.uri : null;
     const baseShouldPlay = shouldPlay && !isFullscreen;
+
+    // Android fullscreen is implemented with a React Native Modal. Tab
+    // screens stay mounted when blurred, so close that separate window when
+    // the videos tab loses focus instead of leaving it above another tab.
+    useEffect(() => {
+        if (!isScreenFocused && isFullscreen) {
+            setIsFullscreen(false);
+        }
+    }, [isFullscreen, isScreenFocused]);
 
     useEffect(() => {
         let mounted = true;
