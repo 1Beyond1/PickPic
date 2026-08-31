@@ -177,19 +177,16 @@ export default function ScanResultsScreen() {
                             // Invalidate a load that may have started before
                             // the deletion and could otherwise reinsert this
                             // asset into the list when it finishes.
-                            const invalidatedRequestId = ++loadRequestIdRef.current;
+                            loadRequestIdRef.current += 1;
                             try {
                                 await AssetRepository.removeAssetAndDerivedData(assetId);
                             } catch (cleanupError) {
                                 console.error('[ScanResults] Failed to clean deleted asset from index:', cleanupError);
                             }
                             setBlurryPhotos(prev => prev.filter(p => p.assetId !== assetId));
-                            // The invalidated request intentionally cannot
-                            // clear loading in its finally block. Do it here
-                            // unless another refresh has already started.
-                            if (loadRequestIdRef.current === invalidatedRequestId) {
-                                setLoading(false);
-                            }
+                            // The deleted asset may also belong to a similar
+                            // group, so refresh both result tabs from SQLite.
+                            void loadResults();
                         } catch (error) {
                             Alert.alert(t('delete_failed'), String(error));
                         }

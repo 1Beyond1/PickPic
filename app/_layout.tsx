@@ -1,8 +1,9 @@
-import { Stack } from 'expo-router';
+import * as MediaLibrary from 'expo-media-library';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { AppState, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AIScanGuideModal } from '../components/AIScanGuideModal';
 import { AnnouncementModal } from '../components/AnnouncementModal';
@@ -19,6 +20,11 @@ void SplashScreen.preventAutoHideAsync().catch(error => {
 });
 
 export default function RootLayout() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const [, , getMediaPermission] = MediaLibrary.usePermissions({
+    granularPermissions: ['photo', 'video'],
+  });
   const {
     dismissedAnnouncementVersion,
     dismissAnnouncement,
@@ -30,6 +36,36 @@ export default function RootLayout() {
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
+
+  // Permissions can be revoked in system settings after the initial route
+  // has already replaced the permission screen. Keep the gate active for
+  // every route and send the user back when access is no longer granted.
+  useEffect(() => {
+    let mounted = true;
+
+    const redirectIfPermissionRevoked = async () => {
+      try {
+        const permission = await getMediaPermission();
+        if (mounted && !permission.granted && pathname !== '/') {
+          router.replace('/');
+        }
+      } catch (error) {
+        console.error('[RootLayout] Failed to refresh media permission:', error);
+      }
+    };
+
+    void redirectIfPermissionRevoked();
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        void redirectIfPermissionRevoked();
+      }
+    });
+
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, [getMediaPermission, pathname, router]);
 
   // Initialize app
   useEffect(() => {

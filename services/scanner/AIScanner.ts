@@ -644,6 +644,7 @@ export async function resumeOnce(
     console.log('[AIScanner] Resuming for one batch...');
     isRunning = true;
     shouldStop = false;
+    currentBatch = 0;
     callbacks = cbs ?? {};
     resetMLFailureState();
 
@@ -742,6 +743,7 @@ export async function resetAllProgress(): Promise<void> {
         }
     }
     await AssetRepository.resetAll();
+    currentBatch = 0;
     console.log('[AIScanner] Full progress reset.');
 }
 

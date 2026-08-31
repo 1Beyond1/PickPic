@@ -29,6 +29,7 @@ export const useScannerStore = create<ScannerState>((set) => ({
         progress: {
             ...state.progress,
             isRunning,
+            ...(isRunning ? { currentBatch: 0 } : {}),
         },
     })),
     setLastError: (lastError) => set({ lastError }),
