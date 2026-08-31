@@ -122,13 +122,13 @@ export default function RootLayout() {
     // Priority 1: Show announcement if not dismissed
     if (dismissedAnnouncementVersion !== APP_VERSION) {
       const timer = setTimeout(() => {
-        setShowAnnouncement(true);
+        if (mediaPermissionGrantedRef.current) setShowAnnouncement(true);
       }, 500);
       return () => clearTimeout(timer);
     } else if (aiGuideShownVersion !== APP_VERSION) {
       // Priority 2: Show AI guide if announcement dismissed
       const timer = setTimeout(() => {
-        setShowAIGuide(true);
+        if (mediaPermissionGrantedRef.current) setShowAIGuide(true);
       }, 500);
       return () => clearTimeout(timer);
     }
