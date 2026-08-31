@@ -42,7 +42,6 @@ export function useAIScanner(): UseAIScannerResult {
 
     // Actions from store
     const setProgress = useScannerStore(state => state.setProgress);
-    const setIsRunning = useScannerStore(state => state.setIsRunning);
     const setLastError = useScannerStore(state => state.setLastError);
 
     // Initialize database and fetch initial status

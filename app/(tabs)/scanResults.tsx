@@ -177,13 +177,19 @@ export default function ScanResultsScreen() {
                             // Invalidate a load that may have started before
                             // the deletion and could otherwise reinsert this
                             // asset into the list when it finishes.
-                            loadRequestIdRef.current += 1;
+                            const invalidatedRequestId = ++loadRequestIdRef.current;
                             try {
                                 await AssetRepository.removeAssetAndDerivedData(assetId);
                             } catch (cleanupError) {
                                 console.error('[ScanResults] Failed to clean deleted asset from index:', cleanupError);
                             }
                             setBlurryPhotos(prev => prev.filter(p => p.assetId !== assetId));
+                            // The invalidated request intentionally cannot
+                            // clear loading in its finally block. Do it here
+                            // unless another refresh has already started.
+                            if (loadRequestIdRef.current === invalidatedRequestId) {
+                                setLoading(false);
+                            }
                         } catch (error) {
                             Alert.alert(t('delete_failed'), String(error));
                         }

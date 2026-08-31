@@ -24,7 +24,13 @@ export const useScannerStore = create<ScannerState>((set) => ({
     lastError: null,
 
     setProgress: (progress) => set({ progress, isRunning: progress.isRunning }),
-    setIsRunning: (isRunning) => set({ isRunning }),
+    setIsRunning: (isRunning) => set((state) => ({
+        isRunning,
+        progress: {
+            ...state.progress,
+            isRunning,
+        },
+    })),
     setLastError: (lastError) => set({ lastError }),
     incrementProgress: (success: boolean) => set((state) => ({
         progress: {

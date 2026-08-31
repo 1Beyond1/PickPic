@@ -3,6 +3,7 @@
  */
 
 import { getDatabase, withTransaction } from '../db';
+import { repairDuplicateGroupsInDatabase } from './DupGroupRepository';
 import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
 
 export interface AssetRecord {
@@ -156,33 +157,7 @@ export const AssetRepository = {
                 );
             }
 
-            // Repair groups whose representative/best asset was removed, then
-            // delete groups that no longer have any members.
-            await transactionDb.runAsync(
-                'DELETE FROM dup_groups WHERE group_id NOT IN (SELECT DISTINCT group_id FROM dup_members)'
-            );
-            await transactionDb.runAsync(
-                `UPDATE dup_groups
-                 SET representative_asset_id = (
-                     SELECT asset_id FROM dup_members
-                     WHERE dup_members.group_id = dup_groups.group_id
-                     ORDER BY distance ASC
-                     LIMIT 1
-                 ),
-                 best_asset_id = CASE
-                     WHEN best_asset_id IS NULL OR EXISTS (
-                         SELECT 1 FROM dup_members
-                         WHERE dup_members.group_id = dup_groups.group_id
-                           AND dup_members.asset_id = dup_groups.best_asset_id
-                     ) THEN best_asset_id
-                     ELSE (
-                         SELECT asset_id FROM dup_members
-                         WHERE dup_members.group_id = dup_groups.group_id
-                         ORDER BY distance ASC
-                         LIMIT 1
-                     )
-                 END`
-            );
+            await repairDuplicateGroupsInDatabase(transactionDb);
             await transactionDb.runAsync(
                 'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
             );
@@ -201,31 +176,7 @@ export const AssetRepository = {
             await transactionDb.runAsync('DELETE FROM face_instances WHERE asset_id = ?', [assetId]);
             await transactionDb.runAsync('DELETE FROM assets WHERE asset_id = ?', [assetId]);
 
-            await transactionDb.runAsync(
-                'DELETE FROM dup_groups WHERE group_id NOT IN (SELECT DISTINCT group_id FROM dup_members)'
-            );
-            await transactionDb.runAsync(
-                `UPDATE dup_groups
-                 SET representative_asset_id = (
-                     SELECT asset_id FROM dup_members
-                     WHERE dup_members.group_id = dup_groups.group_id
-                     ORDER BY distance ASC
-                     LIMIT 1
-                 ),
-                 best_asset_id = CASE
-                     WHEN best_asset_id IS NULL OR EXISTS (
-                         SELECT 1 FROM dup_members
-                         WHERE dup_members.group_id = dup_groups.group_id
-                           AND dup_members.asset_id = dup_groups.best_asset_id
-                     ) THEN best_asset_id
-                     ELSE (
-                         SELECT asset_id FROM dup_members
-                         WHERE dup_members.group_id = dup_groups.group_id
-                         ORDER BY distance ASC
-                         LIMIT 1
-                     )
-                 END`
-            );
+            await repairDuplicateGroupsInDatabase(transactionDb);
             await transactionDb.runAsync(
                 'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
             );
@@ -567,32 +518,7 @@ export const AssetRepository = {
                     [AssetStatus.ERROR, ...scope.params]
                 );
             }
-            await db.runAsync(
-                'DELETE FROM dup_groups WHERE group_id NOT IN (SELECT DISTINCT group_id FROM dup_members)'
-            );
-            await db.runAsync(
-                `UPDATE dup_groups
-                 SET representative_asset_id = CASE
-                     WHEN representative_asset_id IS NULL OR NOT EXISTS (
-                         SELECT 1 FROM dup_members
-                         WHERE dup_members.group_id = dup_groups.group_id
-                           AND dup_members.asset_id = dup_groups.representative_asset_id
-                     ) THEN (
-                         SELECT asset_id FROM dup_members
-                         WHERE dup_members.group_id = dup_groups.group_id
-                         ORDER BY distance ASC LIMIT 1
-                     ) ELSE representative_asset_id END,
-                     best_asset_id = CASE
-                     WHEN best_asset_id IS NULL OR NOT EXISTS (
-                         SELECT 1 FROM dup_members
-                         WHERE dup_members.group_id = dup_groups.group_id
-                           AND dup_members.asset_id = dup_groups.best_asset_id
-                     ) THEN (
-                         SELECT asset_id FROM dup_members
-                         WHERE dup_members.group_id = dup_groups.group_id
-                         ORDER BY distance ASC LIMIT 1
-                     ) ELSE best_asset_id END`
-            );
+            await repairDuplicateGroupsInDatabase(db);
             await db.runAsync(
                 'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
             );

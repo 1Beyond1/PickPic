@@ -23,61 +23,69 @@ export interface SimilarityCandidate {
     distance: number;
 }
 
+/**
+ * Restore the duplicate-group invariants after members are removed or after
+ * repairing data written by an older app version. A group represents at least
+ * two assets; its representative and best-shot pointers must also reference a
+ * remaining member.
+ */
+export async function repairDuplicateGroupsInDatabase(
+    db: SQLite.SQLiteDatabase
+): Promise<void> {
+    await db.runAsync(
+        `DELETE FROM dup_members
+         WHERE group_id NOT IN (SELECT group_id FROM dup_groups)
+            OR group_id IN (
+                SELECT group_id FROM dup_members
+                GROUP BY group_id
+                HAVING COUNT(*) < 2
+            )`
+    );
+    await db.runAsync(
+        'DELETE FROM dup_groups WHERE group_id NOT IN (SELECT DISTINCT group_id FROM dup_members)'
+    );
+    await db.runAsync(
+        `UPDATE dup_groups
+         SET representative_asset_id = CASE
+             WHEN representative_asset_id IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM dup_members
+                 WHERE dup_members.group_id = dup_groups.group_id
+                   AND dup_members.asset_id = dup_groups.representative_asset_id
+             ) THEN (
+                 SELECT asset_id FROM dup_members
+                 WHERE dup_members.group_id = dup_groups.group_id
+                 ORDER BY distance ASC, asset_id ASC
+                 LIMIT 1
+             ) ELSE representative_asset_id END,
+             best_asset_id = CASE
+             WHEN best_asset_id IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM dup_members
+                 WHERE dup_members.group_id = dup_groups.group_id
+                   AND dup_members.asset_id = dup_groups.best_asset_id
+             ) THEN (
+                 SELECT asset_id FROM dup_members
+                 WHERE dup_members.group_id = dup_groups.group_id
+                 ORDER BY distance ASC, asset_id ASC
+                 LIMIT 1
+             ) ELSE best_asset_id END`
+    );
+}
+
 async function removeAssetsFromGroupsInDatabase(
     db: SQLite.SQLiteDatabase,
     assetIds: readonly string[]
 ): Promise<void> {
-    const affectedGroupIds = new Set<string>();
-
     // Keep batches below SQLite's bind-parameter limit.
     for (let i = 0; i < assetIds.length; i += 500) {
         const batch = assetIds.slice(i, i + 500);
         const placeholders = batch.map(() => '?').join(', ');
-        const groups = await db.getAllAsync<{ group_id: string }>(
-            `SELECT DISTINCT group_id FROM dup_members
-             WHERE asset_id IN (${placeholders})`,
-            batch
-        );
-        groups.forEach(group => affectedGroupIds.add(group.group_id));
-
         await db.runAsync(
             `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
             batch
         );
     }
 
-    for (const groupId of affectedGroupIds) {
-        const members = await db.getAllAsync<DupMember>(
-            'SELECT * FROM dup_members WHERE group_id = ? ORDER BY distance ASC',
-            [groupId]
-        );
-
-        if (members.length === 0) {
-            await db.runAsync('DELETE FROM dup_groups WHERE group_id = ?', [groupId]);
-            continue;
-        }
-
-        const group = await db.getFirstAsync<DupGroup>(
-            'SELECT * FROM dup_groups WHERE group_id = ?',
-            [groupId]
-        );
-        if (!group) continue;
-
-        const memberIds = new Set(members.map(member => member.asset_id));
-        const representativeAssetId = memberIds.has(group.representative_asset_id ?? '')
-            ? group.representative_asset_id
-            : members[0].asset_id;
-        const bestAssetId = memberIds.has(group.best_asset_id ?? '')
-            ? group.best_asset_id
-            : members[0].asset_id;
-
-        await db.runAsync(
-            `UPDATE dup_groups
-             SET representative_asset_id = ?, best_asset_id = ?
-             WHERE group_id = ?`,
-            [representativeAssetId, bestAssetId, groupId]
-        );
-    }
+    await repairDuplicateGroupsInDatabase(db);
 }
 
 async function mergeGroupsInDatabase(

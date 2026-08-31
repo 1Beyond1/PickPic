@@ -4,6 +4,7 @@
  */
 
 import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
 import { runMigrations } from './migrations';
 import { DB_NAME } from './schema';
 
@@ -75,6 +76,19 @@ export function withTransaction<T>(
 ): Promise<T> {
     const operation = transactionQueue.then(async () => {
         const db = await getDatabase();
+
+        // Expo's regular async transaction is not exclusive: unrelated async
+        // queries can run between BEGIN and COMMIT. Native callers therefore
+        // use an exclusive transaction so UI deletes and scanner writes cannot
+        // be interleaved into the same unit of work. Web does not implement
+        // the exclusive API, so retain the queued fallback there.
+        if (Platform.OS !== 'web') {
+            let result!: T;
+            await db.withExclusiveTransactionAsync(async transactionDb => {
+                result = await fn(transactionDb);
+            });
+            return result;
+        }
 
         await db.execAsync('BEGIN TRANSACTION;');
         try {
