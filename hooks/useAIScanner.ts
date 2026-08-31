@@ -104,8 +104,12 @@ export function useAIScanner(): UseAIScannerResult {
             await scanner.resetCursor();
         }
 
+        // A successful reset makes the previous run error no longer
+        // actionable. Keep it visible when reset itself fails, but clear it
+        // before publishing the fresh zeroed status.
+        setLastError(null);
         await refreshStatus();
-    }, [refreshStatus]);
+    }, [refreshStatus, setLastError]);
 
     return {
         progress,
