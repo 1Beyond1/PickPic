@@ -4,6 +4,7 @@
 
 import * as SQLite from 'expo-sqlite';
 import { getDatabase, withTransaction } from '../db';
+import { AssetStatus } from '../schema';
 
 export interface DupGroup {
     group_id: string;
@@ -27,7 +28,9 @@ export interface SimilarityCandidate {
  * Restore the duplicate-group invariants after members are removed or after
  * repairing data written by an older app version. A group represents at least
  * two assets; its representative and best-shot pointers must also reference a
- * remaining member.
+ * remaining member. Only completed assets are valid members: invalidating an
+ * asset commits its PENDING/ERROR status before the follow-up index cleanup,
+ * so the repair must also cover a crash between those transactions.
  */
 export async function repairDuplicateGroupsInDatabase(
     db: SQLite.SQLiteDatabase
@@ -41,8 +44,10 @@ export async function repairDuplicateGroupsInDatabase(
             OR NOT EXISTS (
                    SELECT 1 FROM assets AS asset
                    WHERE asset.asset_id = member.asset_id
+                     AND asset.status = ?
                )
-            `
+            `,
+        [AssetStatus.DONE]
     );
     await db.runAsync(
         `DELETE FROM dup_members
