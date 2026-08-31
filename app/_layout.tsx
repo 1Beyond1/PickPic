@@ -38,7 +38,17 @@ export default function RootLayout() {
   const [appReady, setAppReady] = useState(false);
   const mediaPermissionGrantedRef = useRef(false);
   const initialCheckDone = useRef(false);
-  mediaPermissionGrantedRef.current = mediaPermission?.granted === true;
+
+  // Keep the ref synchronized when the hook publishes a new permission
+  // snapshot. Do not assign it during render: an async refresh can already
+  // have observed revocation while the hook still exposes its previous
+  // snapshot, and an unrelated render would otherwise restore the stale
+  // granted value before the next delayed onboarding callback runs.
+  useEffect(() => {
+    if (mediaPermission) {
+      mediaPermissionGrantedRef.current = mediaPermission.granted;
+    }
+  }, [mediaPermission]);
 
   // Permissions can be revoked in system settings after the initial route
   // has already replaced the permission screen. Keep the gate active for
