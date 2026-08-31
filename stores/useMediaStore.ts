@@ -86,7 +86,11 @@ async function normalizeAlbumIds(albumIds: readonly string[]): Promise<string[]>
     const availableAlbumIds = new Set(albums.map(album => album.id));
     const validAlbumIds = requestedAlbumIds.filter(albumId => availableAlbumIds.has(albumId));
 
-    if (validAlbumIds.length !== requestedAlbumIds.length) {
+    // An empty selection means "all albums". If every previously selected
+    // album disappeared, keep the stale IDs so this filter remains an empty
+    // scope until the user explicitly clears it. Collapsing it to [] here
+    // would silently widen the query to the whole library.
+    if (validAlbumIds.length > 0 && validAlbumIds.length !== requestedAlbumIds.length) {
         useSettingsStore.getState().setSelectedAlbums(validAlbumIds);
     }
 
@@ -341,7 +345,11 @@ export const useMediaStore = create<MediaState>()(
             const selectedAlbumIds = useSettingsStore.getState().selectedAlbumIds;
             const availableAlbumIds = new Set(albums.map(album => album.id));
             const validSelectedAlbumIds = selectedAlbumIds.filter(albumId => availableAlbumIds.has(albumId));
-            if (validSelectedAlbumIds.length !== selectedAlbumIds.length) {
+            // Do not turn an all-invalid non-empty selection into []: [] means
+            // "all albums" everywhere else in the app and would widen the
+            // user's scope after an external album deletion. Keep the stale
+            // IDs until the user clears or replaces the filter.
+            if (validSelectedAlbumIds.length > 0 && validSelectedAlbumIds.length !== selectedAlbumIds.length) {
                 useSettingsStore.getState().setSelectedAlbums(validSelectedAlbumIds);
             }
         } catch (e) {

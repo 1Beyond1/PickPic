@@ -266,7 +266,9 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
 async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<string[]> {
     const assetIds = new Set<string>();
     const requestedAlbumIds = Array.from(new Set(albumIds));
-    if (requestedAlbumIds.length === 0) return [];
+    if (requestedAlbumIds.length === 0) {
+        throw new Error('At least one album must be selected for an album scan');
+    }
 
     // Album IDs can become stale when the user deletes or renames an album
     // outside the app. iOS treats an unknown album as an unscoped query, so
@@ -274,6 +276,11 @@ async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<s
     const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
     const availableAlbumIds = new Set(albums.map(album => album.id));
     const validAlbumIds = requestedAlbumIds.filter(albumId => availableAlbumIds.has(albumId));
+
+    if (shouldStop) return [];
+    if (validAlbumIds.length !== requestedAlbumIds.length) {
+        throw new Error('One or more selected albums are no longer available');
+    }
 
     for (const albumId of validAlbumIds) {
         let hasMore = true;
