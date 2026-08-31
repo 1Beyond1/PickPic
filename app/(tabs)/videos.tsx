@@ -183,6 +183,10 @@ export default function VideosScreen() {
                     showsVerticalScrollIndicator={false}
                     onViewableItemsChanged={onViewableItemsChanged}
                     viewabilityConfig={viewabilityConfig}
+                    // Processed items are removed from the head as the user
+                    // advances. Keep the currently visible video anchored
+                    // while that data update changes its index.
+                    maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
                     snapToInterval={feedHeight}
                     snapToAlignment="start"
                     decelerationRate="fast"
