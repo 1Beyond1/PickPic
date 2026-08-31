@@ -3,7 +3,7 @@ import { ResizeMode, Video } from 'expo-av';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Dimensions, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
 import { PhotoAsset } from '../stores/useMediaStore';
@@ -42,6 +42,8 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     const [playbackSource, setPlaybackSource] = useState<{ assetId: string; uri: string } | null>(() => (
         needsLocalUri ? null : { assetId: video.id, uri: video.uri }
     ));
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const fullscreenVideoRef = useRef<Video>(null);
 
     const resolvePlaybackUri = useCallback(async () => {
         if (!needsLocalUri) return video.uri;
@@ -82,6 +84,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     }, [needsLocalUri, resolvePlaybackUri, video.id, video.uri]);
 
     const playbackUri = playbackSource?.assetId === video.id ? playbackSource.uri : null;
+    const baseShouldPlay = shouldPlay && !isFullscreen;
 
     useEffect(() => {
         let mounted = true;
@@ -91,7 +94,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
             if (!player) return;
 
             try {
-                if (shouldPlay) {
+                if (baseShouldPlay) {
                     await player.playAsync();
                 } else {
                     await player.pauseAsync();
@@ -110,7 +113,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
         return () => {
             mounted = false;
         };
-    }, [playbackUri, shouldPlay]);
+    }, [baseShouldPlay, playbackUri]);
 
     const handleShare = async () => {
         try {
@@ -123,7 +126,17 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     };
 
     const handleLongPress = async () => {
+        if (!playbackUri) return;
+
         try {
+            // expo-av's native fullscreen API is not supported on Android.
+            // Use a local full-screen player there so the documented long
+            // press action works on both mobile platforms.
+            if (Platform.OS === 'android') {
+                setIsFullscreen(true);
+                return;
+            }
+
             if (videoRef.current) {
                 await videoRef.current.presentFullscreenPlayer();
             }
@@ -150,7 +163,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                         resizeMode={ResizeMode.CONTAIN}
                         isLooping
                         isMuted={isMuted}
-                        shouldPlay={shouldPlay}
+                        shouldPlay={baseShouldPlay}
                     />
                 ) : (
                     <View style={styles.videoPlaceholder}>
@@ -203,6 +216,37 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                     <Text style={styles.actionText}>{t('video_delete')}</Text>
                 </ScalablePressable>
             </View>
+
+            {Platform.OS === 'android' && isFullscreen && playbackUri && (
+                <Modal
+                    visible={isFullscreen}
+                    animationType="fade"
+                    presentationStyle="fullScreen"
+                    statusBarTranslucent
+                    navigationBarTranslucent
+                    onRequestClose={() => setIsFullscreen(false)}
+                >
+                    <View style={styles.fullscreenContainer}>
+                        <Video
+                            ref={fullscreenVideoRef}
+                            style={styles.fullscreenVideo}
+                            source={{ uri: playbackUri }}
+                            resizeMode={ResizeMode.CONTAIN}
+                            isLooping
+                            isMuted={isMuted}
+                            shouldPlay
+                        />
+                        <Pressable
+                            style={[styles.fullscreenCloseButton, { top: insets.top + 12 }]}
+                            onPress={() => setIsFullscreen(false)}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('cancel')}
+                        >
+                            <Ionicons name="close" size={28} color={COLORS.white} />
+                        </Pressable>
+                    </View>
+                </Modal>
+            )}
         </View>
     );
 };
@@ -227,6 +271,25 @@ const styles = StyleSheet.create({
         height: '100%',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    fullscreenContainer: {
+        flex: 1,
+        backgroundColor: '#000',
+        justifyContent: 'center',
+    },
+    fullscreenVideo: {
+        width: '100%',
+        height: '100%',
+    },
+    fullscreenCloseButton: {
+        position: 'absolute',
+        right: 16,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(0,0,0,0.55)',
     },
     overlayContainer: {
         position: 'absolute',
