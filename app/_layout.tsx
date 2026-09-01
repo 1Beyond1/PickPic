@@ -9,6 +9,7 @@ import { AIScanGuideModal } from '../components/AIScanGuideModal';
 import { AnnouncementModal } from '../components/AnnouncementModal';
 import { MLBridge } from '../components/MLBridge';
 import { COLORS } from '../constants/theme';
+import { AssetRepository } from '../database';
 import { isScanning, start as startScanner, stop as stopScanner } from '../services/scanner';
 import { useMediaStore } from '../stores/useMediaStore';
 import { useScannerStore } from '../stores/useScannerStore';
@@ -165,6 +166,7 @@ export default function RootLayout() {
 
       const mediaStore = useMediaStore.getState();
       mediaStore.clearLoadedMedia();
+      let indexCleanupPromise: Promise<void> | null = null;
       if (isPermissionScopeChange) {
         // The permission hook has not necessarily published the new scope
         // yet. Hide all persisted queue items until it does so.
@@ -177,10 +179,18 @@ export default function RootLayout() {
           // Permission-scope changes use hasIncrementalChanges=false and must
           // not remove progress that may become visible again later.
           mediaStore.removeDeletedAssets(deletedAssetIds);
+          indexCleanupPromise = AssetRepository.removeAssetsAndDerivedData(deletedAssetIds)
+            .catch(error => {
+              // The media is already gone. Keep the UI refresh, and let the
+              // next complete scan repair the index if this cleanup failed.
+              console.error('[RootLayout] Failed to clean externally deleted assets from scan index:', error);
+            });
         }
         mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none');
         mediaStore.pruneUnavailableQueuedAssets(mediaPermissionScopeRef.current ?? 'none');
-        mediaStore.notifyMediaLibraryRefresh();
+        if (!indexCleanupPromise) {
+          mediaStore.notifyMediaLibraryRefresh();
+        }
       }
       if (isScanning()) {
         stopScanner();
@@ -192,6 +202,14 @@ export default function RootLayout() {
         void mediaStore.refreshTotalCounts();
         void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
         void mediaStore.loadVideos(50, displayOrder, selectedAlbumIds);
+      }
+
+      if (indexCleanupPromise) {
+        void indexCleanupPromise.then(() => {
+          // Refresh scanner status only after the index transaction has
+          // committed, otherwise deleted rows can be reported once more.
+          useMediaStore.getState().notifyMediaLibraryRefresh();
+        });
       }
 
       if (isPermissionScopeChange) {

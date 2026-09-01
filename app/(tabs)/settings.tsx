@@ -210,6 +210,7 @@ export default function SettingsScreen() {
     };
 
     const handleScanBatch = async (options: { mode: 'album' | 'count'; albumIds?: string[]; count?: number }) => {
+        if (isResettingScanner) return;
         console.log('[Settings] Scan batch with options:', options);
         await resumeOnce(options);
     };
@@ -381,9 +382,10 @@ export default function SettingsScreen() {
                             style={({ pressed }) => [
                                 styles.scanButton,
                                 { backgroundColor: isRunning ? colors.danger : colors.primary },
-                                pressed && { opacity: 0.8 }
+                                (pressed || isResettingScanner) && { opacity: 0.5 }
                             ]}
                             onPress={isRunning ? stop : start}
+                            disabled={isResettingScanner}
                         >
                             <Ionicons
                                 name={isRunning ? "stop" : "play"}
@@ -400,10 +402,10 @@ export default function SettingsScreen() {
                             style={({ pressed }) => [
                                 styles.scanButton,
                                 { backgroundColor: colors.surface, flex: 0.4 },
-                                pressed && { opacity: 0.8 }
+                                (pressed || isResettingScanner) && { opacity: 0.5 }
                             ]}
                             onPress={() => setShowScanBatchModal(true)}
-                            disabled={isRunning}
+                            disabled={isRunning || isResettingScanner}
                         >
                             <Text style={[styles.scanButtonText, { color: colors.text }]}>{t('scan_batch' as any)}</Text>
                         </Pressable>

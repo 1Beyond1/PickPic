@@ -68,6 +68,35 @@ function splitAssetIds(assetIds?: readonly string[]): Array<readonly string[] | 
     return batches;
 }
 
+async function removeAssetsAndDerivedDataInDatabase(
+    db: Awaited<ReturnType<typeof getDatabase>>,
+    assetIds: readonly string[]
+): Promise<void> {
+    const uniqueAssetIds = Array.from(new Set(assetIds));
+    for (let i = 0; i < uniqueAssetIds.length; i += 500) {
+        const batch = uniqueAssetIds.slice(i, i + 500);
+        const placeholders = batch.map(() => '?').join(', ');
+
+        await db.runAsync(
+            `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
+            batch
+        );
+        await db.runAsync(
+            `DELETE FROM face_instances WHERE asset_id IN (${placeholders})`,
+            batch
+        );
+        await db.runAsync(
+            `DELETE FROM assets WHERE asset_id IN (${placeholders})`,
+            batch
+        );
+    }
+
+    await repairDuplicateGroupsInDatabase(db);
+    await db.runAsync(
+        'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
+    );
+}
+
 export const AssetRepository = {
     /**
      * Upsert an asset (insert or update)
@@ -178,14 +207,22 @@ export const AssetRepository = {
      */
     async removeAssetAndDerivedData(assetId: string): Promise<void> {
         await withTransaction(async transactionDb => {
-            await transactionDb.runAsync('DELETE FROM dup_members WHERE asset_id = ?', [assetId]);
-            await transactionDb.runAsync('DELETE FROM face_instances WHERE asset_id = ?', [assetId]);
-            await transactionDb.runAsync('DELETE FROM assets WHERE asset_id = ?', [assetId]);
+            await removeAssetsAndDerivedDataInDatabase(transactionDb, [assetId]);
+        });
+    },
 
-            await repairDuplicateGroupsInDatabase(transactionDb);
-            await transactionDb.runAsync(
-                'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
-            );
+    /**
+     * Remove several assets from the local scan index after the media itself
+     * was deleted outside the app. The media-library listener can provide a
+     * batch of deleted IDs, so keep the dependent rows and group repair in one
+     * transaction instead of exposing a partially cleaned index.
+     */
+    async removeAssetsAndDerivedData(assetIds: readonly string[]): Promise<void> {
+        const uniqueAssetIds = Array.from(new Set(assetIds));
+        if (uniqueAssetIds.length === 0) return;
+
+        await withTransaction(async transactionDb => {
+            await removeAssetsAndDerivedDataInDatabase(transactionDb, uniqueAssetIds);
         });
     },
 
