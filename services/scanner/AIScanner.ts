@@ -419,7 +419,10 @@ async function rewindCursorForPendingAssets(): Promise<void> {
 /**
  * Process a single asset
  */
-async function processAsset(assetId: string): Promise<boolean> {
+async function processAsset(
+    assetId: string,
+    similarityCandidateAssetIds?: readonly string[]
+): Promise<boolean> {
     const imageOps = getImageOps();
     let gray: GrayImageRef | null = null;
 
@@ -561,7 +564,13 @@ async function processAsset(assetId: string): Promise<boolean> {
         try {
             const asset = await AssetRepository.getById(assetId);
             if (asset && asset.taken_at) {
-                const matches = await findSimilarPhotos(phash, asset.taken_at, assetId);
+                const matches = await findSimilarPhotos(
+                    phash,
+                    asset.taken_at,
+                    assetId,
+                    undefined,
+                    similarityCandidateAssetIds
+                );
 
                 if (matches.length > 0) {
                     const targetGroupId = await DupGroupRepository.addAssetToMatchingGroups(
@@ -613,7 +622,8 @@ async function processAsset(assetId: string): Promise<boolean> {
  */
 async function processBatch(
     batchSize: number = BATCH_SIZE,
-    assetIds?: readonly string[]
+    assetIds?: readonly string[],
+    similarityCandidateAssetIds?: readonly string[]
 ): Promise<boolean> {
     const batch = assetIds
         ? await AssetRepository.getPendingBatchForAssetIds(assetIds, batchSize)
@@ -643,7 +653,7 @@ async function processBatch(
         }
 
         // Process asset
-        const success = await processAsset(asset.asset_id);
+        const success = await processAsset(asset.asset_id, similarityCandidateAssetIds);
 
         // Yield after each asset
         await yieldToMainThread();
@@ -741,7 +751,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
 
         // Process batches until done or stopped
         while (!shouldStop) {
-            const hasMore = await processBatch(BATCH_SIZE, scanAssetIds);
+            const hasMore = await processBatch(BATCH_SIZE, scanAssetIds, scanAssetIds);
             await reportProgress(scanAssetIds);
 
             if (!hasMore) {
@@ -846,7 +856,7 @@ export async function resumeOnce(
         if (shouldStop) return;
 
         // Process one batch
-        await processBatch(batchSize, assetIds);
+        await processBatch(batchSize, assetIds, visiblePhotoIds);
         await reportProgress(visiblePhotoIds);
 
         if (shouldStop) {

@@ -543,24 +543,50 @@ export const AssetRepository = {
         takenAt: number,
         windowSeconds: number = 120,
         limit: number = 10,
-        excludeAssetId?: string
+        excludeAssetId?: string,
+        candidateAssetIds?: readonly string[]
     ): Promise<AssetRecord[]> {
         const db = await getDatabase();
         const minTime = takenAt - windowSeconds * 1000;
         const maxTime = takenAt + windowSeconds * 1000;
 
         const exclusion = excludeAssetId ? ' AND asset_id != ?' : '';
-        const params: (string | number)[] = [AssetStatus.DONE, minTime, maxTime];
-        if (excludeAssetId) params.push(excludeAssetId);
-        params.push(takenAt, limit);
+        const recentAssets: AssetRecord[] = [];
 
-        return db.getAllAsync<AssetRecord>(
-            `SELECT * FROM assets
-       WHERE status = ? AND taken_at BETWEEN ? AND ?${exclusion}
-       ORDER BY ABS(taken_at - ?) ASC, taken_at DESC, asset_id ASC
-       LIMIT ?`,
-            params
-        );
+        // Limited permission keeps inaccessible records in the local index
+        // for recovery, so scope candidate reads to the current visible set.
+        // Query each SQLite-safe chunk with the same limit; the global top N
+        // must be present in the top N of at least one chunk.
+        for (const candidateBatch of splitAssetIds(candidateAssetIds)) {
+            if (candidateBatch !== undefined && candidateBatch.length === 0) continue;
+
+            const scope = createAssetScope(candidateBatch);
+            const params: (string | number)[] = [AssetStatus.DONE, minTime, maxTime];
+            if (excludeAssetId) params.push(excludeAssetId);
+            params.push(...scope.params, takenAt, limit);
+
+            recentAssets.push(...await db.getAllAsync<AssetRecord>(
+                `SELECT * FROM assets
+                 WHERE status = ? AND taken_at BETWEEN ? AND ?${exclusion}${scope.clause}
+                 ORDER BY ABS(taken_at - ?) ASC, taken_at DESC, asset_id ASC
+                 LIMIT ?`,
+                params
+            ));
+        }
+
+        if (candidateAssetIds === undefined) return recentAssets;
+
+        recentAssets.sort((a, b) => {
+            const distanceDifference = Math.abs((a.taken_at ?? 0) - takenAt)
+                - Math.abs((b.taken_at ?? 0) - takenAt);
+            if (distanceDifference !== 0) return distanceDifference;
+            if (a.taken_at !== b.taken_at) {
+                return (b.taken_at ?? 0) - (a.taken_at ?? 0);
+            }
+            return a.asset_id.localeCompare(b.asset_id);
+        });
+
+        return recentAssets.slice(0, limit);
     },
 
     /**

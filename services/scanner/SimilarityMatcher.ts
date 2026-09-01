@@ -34,7 +34,8 @@ export async function findSimilarPhotos(
     targetPhash: string,
     targetTakenAt: number,
     targetAssetId?: string,
-    config: SimilarityConfig = DEFAULT_SIMILARITY_CONFIG
+    config: SimilarityConfig = DEFAULT_SIMILARITY_CONFIG,
+    candidateAssetIds?: readonly string[]
 ): Promise<SimilarityMatch[]> {
     const imageOps = getImageOps();
 
@@ -43,7 +44,8 @@ export async function findSimilarPhotos(
         targetTakenAt,
         config.timeWindowSeconds,
         config.maxCompareCount,
-        targetAssetId
+        targetAssetId,
+        candidateAssetIds
     );
 
     const matches: SimilarityMatch[] = [];
