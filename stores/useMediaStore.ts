@@ -56,6 +56,8 @@ interface MediaState {
 
     refreshTotalCounts: () => Promise<void>;
 
+    clearLoadedMedia: () => void;
+
     resetBatch: () => void;
     resetPhotoProgress: () => void;
     resetVideoProgress: () => void;
@@ -657,7 +659,25 @@ export const useMediaStore = create<MediaState>()(
         } catch (e) {
             console.error("Failed to refresh total counts", e);
         }
-    }
+        },
+
+    clearLoadedMedia: () => {
+        // Invalidate in-flight requests so a result fetched under an older
+        // permission scope cannot repopulate the feed after it is cleared.
+        albumLoadRequestId++;
+        photoLoadRequestId++;
+        totalCountsRequestId++;
+        videoLoadRequestId++;
+        set({
+            photos: [],
+            videos: [],
+            albums: [],
+            currentIndex: 0,
+            videoCurrentIndex: 0,
+            totalPhotos: 0,
+            totalVideos: 0,
+        });
+    },
         }),
         {
             name: 'photoapp-media-progress',

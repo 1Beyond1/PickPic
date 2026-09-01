@@ -37,6 +37,7 @@ export default function RootLayout() {
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
   const mediaPermissionGrantedRef = useRef(false);
+  const mediaPermissionScopeRef = useRef<'none' | 'limited' | 'full' | null>(null);
   const initialCheckDone = useRef(false);
 
   // Keep the ref synchronized when the hook publishes a new permission
@@ -45,9 +46,35 @@ export default function RootLayout() {
   // snapshot, and an unrelated render would otherwise restore the stale
   // granted value before the next delayed onboarding callback runs.
   useEffect(() => {
-    if (mediaPermission) {
-      mediaPermissionGrantedRef.current = mediaPermission.granted;
+    if (!mediaPermission) return;
+
+    const currentScope = !mediaPermission.granted
+      ? 'none'
+      : mediaPermission.accessPrivileges === 'limited'
+        ? 'limited'
+        : 'full';
+    const previousScope = mediaPermissionScopeRef.current;
+
+    mediaPermissionGrantedRef.current = mediaPermission.granted;
+
+    if (previousScope !== null && previousScope !== currentScope) {
+      const mediaStore = useMediaStore.getState();
+      mediaStore.clearLoadedMedia();
+
+      if (isScanning()) {
+        stopScanner();
+      }
+
+      if (currentScope !== 'none') {
+        const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
+        void mediaStore.loadAlbums();
+        void mediaStore.refreshTotalCounts();
+        void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+        void mediaStore.loadVideos(50, displayOrder, selectedAlbumIds);
+      }
     }
+
+    mediaPermissionScopeRef.current = currentScope;
   }, [mediaPermission]);
 
   // Permissions can be revoked in system settings after the initial route
