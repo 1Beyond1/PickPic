@@ -121,6 +121,41 @@ async function getAssetSignature(asset: MediaLibrary.Asset): Promise<string | nu
     return await getFileSignature(asset.uri) ?? getMediaLibrarySignature(asset);
 }
 
+const STATUS_MEDIA_PAGE_SIZE = 100;
+
+/**
+ * Resolve the photo IDs currently visible to a limited-permission user.
+ * A null result means full access, while an empty set means no access.
+ */
+async function getVisiblePhotoIdsForStatus(): Promise<ReadonlySet<string> | null> {
+    const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+    if (!permission.granted) return new Set();
+    if (permission.accessPrivileges !== 'limited') return null;
+
+    const visibleIds = new Set<string>();
+    let after: string | undefined;
+
+    while (true) {
+        const result = await MediaLibrary.getAssetsAsync({
+            mediaType: 'photo',
+            first: STATUS_MEDIA_PAGE_SIZE,
+            ...(after ? { after } : {}),
+        });
+
+        for (const asset of result.assets) {
+            visibleIds.add(asset.id);
+        }
+
+        if (!result.hasNextPage) break;
+        if (!result.endCursor || result.endCursor === after) {
+            throw new Error('Media library returned an invalid pagination cursor while reading scan status');
+        }
+        after = result.endCursor;
+    }
+
+    return visibleIds;
+}
+
 /**
  * Generate unique group ID
  */
@@ -646,8 +681,8 @@ import { useScannerStore } from '../../stores/useScannerStore';
 /**
  * Report current progress
  */
-async function reportProgress(): Promise<void> {
-    const counts = await AssetRepository.getStatusCounts();
+async function reportProgress(assetIds?: readonly string[]): Promise<void> {
+    const counts = await AssetRepository.getStatusCounts(assetIds);
     const progress = {
         totalPending: counts.pending,
         totalDone: counts.done,
@@ -702,12 +737,12 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
         }
 
         // Report initial progress
-        await reportProgress();
+        await reportProgress(scanAssetIds);
 
         // Process batches until done or stopped
         while (!shouldStop) {
             const hasMore = await processBatch(BATCH_SIZE, scanAssetIds);
-            await reportProgress();
+            await reportProgress(scanAssetIds);
 
             if (!hasMore) {
                 break;
@@ -765,6 +800,10 @@ export async function resumeOnce(
         const accessibleAssetIds = await syncAssetsToDatabase();
         if (shouldStop) return;
 
+        const visiblePhotoIds = accessibleAssetIds
+            ? Array.from(accessibleAssetIds)
+            : undefined;
+
         let assetIds: string[] | undefined;
         if (options?.mode === 'album') {
             assetIds = await getPhotoAssetIdsForAlbums(options.albumIds ?? []);
@@ -808,7 +847,7 @@ export async function resumeOnce(
 
         // Process one batch
         await processBatch(batchSize, assetIds);
-        await reportProgress();
+        await reportProgress(visiblePhotoIds);
 
         if (shouldStop) {
             console.log('[AIScanner] One batch stopped.');
@@ -830,7 +869,10 @@ export async function resumeOnce(
  * Get current scanner status
  */
 export async function getStatus(): Promise<ScanProgress> {
-    const counts = await AssetRepository.getStatusCounts();
+    const visiblePhotoIds = await getVisiblePhotoIdsForStatus();
+    const counts = await AssetRepository.getStatusCounts(
+        visiblePhotoIds ? Array.from(visiblePhotoIds) : undefined
+    );
     return {
         totalPending: counts.pending,
         totalDone: counts.done,
