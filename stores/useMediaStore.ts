@@ -36,6 +36,7 @@ interface MediaState {
     hasPermission: boolean;
     permissionScope: MediaPermissionScope | null;
     permissionRefreshVersion: number;
+    mediaLibraryRefreshVersion: number;
     hasHydrated: boolean;
 
     // Actions
@@ -68,6 +69,7 @@ interface MediaState {
     setPermission: (status: boolean) => void;
     setPermissionScope: (scope: MediaPermissionScope) => void;
     notifyPermissionRefresh: () => void;
+    notifyMediaLibraryRefresh: () => void;
     setHasHydrated: (status: boolean) => void;
 }
 
@@ -339,6 +341,7 @@ export const useMediaStore = create<MediaState>()(
     hasPermission: false,
     permissionScope: null,
     permissionRefreshVersion: 0,
+    mediaLibraryRefreshVersion: 0,
     hasHydrated: false,
 
     setPermission: (status) => set({ hasPermission: status }),
@@ -347,6 +350,10 @@ export const useMediaStore = create<MediaState>()(
     )),
     notifyPermissionRefresh: () => set((state) => ({
         permissionRefreshVersion: state.permissionRefreshVersion + 1,
+        mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion + 1,
+    })),
+    notifyMediaLibraryRefresh: () => set((state) => ({
+        mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion + 1,
     })),
     setHasHydrated: (status) => set({ hasHydrated: status }),
 

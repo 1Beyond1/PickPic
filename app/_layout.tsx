@@ -124,19 +124,26 @@ export default function RootLayout() {
     };
   }, [getMediaPermission, pathname, router]);
 
-  // iOS reports changes to the selected subset while the permission remains
-  // `limited` through the media-library change listener. The privilege string
-  // alone cannot distinguish that event, so refresh the visible media state
-  // and notify result/detail screens explicitly. Web has no native listener.
+  // MediaLibrary reports both ordinary asset changes and iOS changes to the
+  // selected subset while the permission remains `limited`. The privilege
+  // string alone cannot distinguish the latter event, so refresh the visible
+  // media state and notify result/detail screens explicitly. Web has no native
+  // listener.
   useEffect(() => {
     if (Platform.OS === 'web') return;
 
     const subscription = MediaLibrary.addListener(event => {
-      if (event.hasIncrementalChanges !== false) return;
+      const isPermissionScopeChange = event.hasIncrementalChanges === false;
+      const isIncrementalMediaChange = event.hasIncrementalChanges === true || Platform.OS === 'android';
+      if (!isPermissionScopeChange && !isIncrementalMediaChange) return;
 
       const mediaStore = useMediaStore.getState();
       mediaStore.clearLoadedMedia();
-      mediaStore.notifyPermissionRefresh();
+      if (isPermissionScopeChange) {
+        mediaStore.notifyPermissionRefresh();
+      } else {
+        mediaStore.notifyMediaLibraryRefresh();
+      }
       if (isScanning()) {
         stopScanner();
       }
@@ -149,9 +156,11 @@ export default function RootLayout() {
         void mediaStore.loadVideos(50, displayOrder, selectedAlbumIds);
       }
 
-      void getMediaPermission().catch(error => {
-        console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);
-      });
+      if (isPermissionScopeChange) {
+        void getMediaPermission().catch(error => {
+          console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);
+        });
+      }
     });
 
     return () => subscription.remove();
