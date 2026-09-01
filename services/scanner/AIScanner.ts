@@ -732,20 +732,21 @@ async function reportProgress(assetIds?: readonly string[]): Promise<void> {
 }
 
 /**
- * Publish a permission-aware snapshot after cancellation during scan setup.
- * Setup can already have synced or reset database rows before shouldStop is
- * observed, but the normal batch loop has not reached its progress report in
- * that case.
+ * Publish a permission-aware snapshot after cancellation or a fatal scan
+ * failure. Setup can already have synced or reset database rows before
+ * shouldStop is observed, and a fatal setup/database error can otherwise
+ * leave the settings screen showing the previous progress snapshot.
  */
-async function reportCurrentStatusAfterStop(): Promise<void> {
+async function reportCurrentStatus(): Promise<void> {
     try {
         const progress = await getStatus();
         callbacks.onProgress?.(progress);
         useScannerStore.getState().setProgress(progress);
     } catch (error) {
-        // Cancellation should still finish even if the best-effort status
-        // refresh is blocked by a simultaneous permission/database change.
-        console.warn('[AIScanner] Failed to publish status after stopping:', error);
+        // The original scan error/cancellation should still be surfaced even
+        // if this best-effort status refresh is blocked by a simultaneous
+        // permission or database change.
+        console.warn('[AIScanner] Failed to publish current status:', error);
     }
 }
 
@@ -814,9 +815,12 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
         console.error('[AIScanner] Scan error:', error);
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
         useScannerStore.getState().setLastError(error instanceof Error ? error : new Error(String(error)));
+        if (!shouldStop) {
+            await reportCurrentStatus();
+        }
     } finally {
         if (shouldStop) {
-            await reportCurrentStatusAfterStop();
+            await reportCurrentStatus();
         }
         isRunning = false;
         useScannerStore.getState().setIsRunning(false);
@@ -917,9 +921,12 @@ export async function resumeOnce(
         console.error('[AIScanner] Resume error:', error);
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
         useScannerStore.getState().setLastError(error instanceof Error ? error : new Error(String(error)));
+        if (!shouldStop) {
+            await reportCurrentStatus();
+        }
     } finally {
         if (shouldStop) {
-            await reportCurrentStatusAfterStop();
+            await reportCurrentStatus();
         }
         isRunning = false;
         useScannerStore.getState().setIsRunning(false);
