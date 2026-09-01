@@ -205,7 +205,11 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
                     // permanently unreachable in the next incremental pass.
                     shouldResetCursor = true;
                 }
-                if (signatureChanged) {
+                if (scanOrderChanged || signatureChanged) {
+                    // Similarity matching is constrained by taken_at. Remove
+                    // the old membership whenever the scan-order metadata
+                    // changes, then reprocess the asset so it can join groups
+                    // in its new time window.
                     await DupGroupRepository.removeAssetFromGroups(asset.id);
                 }
             } else {
@@ -340,6 +344,20 @@ async function resetOutdatedAssets(assetIds?: readonly string[]): Promise<void> 
         }
         await MetaRepository.resetScanCursor();
         console.log(`[AIScanner] Reset ${resetAssetIds.length} outdated assets.`);
+    }
+}
+
+/**
+ * Recover an incremental scan whose process ended after an asset was reset
+ * to PENDING but before the matching cursor rewind was persisted.
+ */
+async function rewindCursorForPendingAssets(): Promise<void> {
+    const cursor = await MetaRepository.getScanCursor();
+    if (cursor.takenAt === null || cursor.assetId === null) return;
+
+    if (await AssetRepository.hasPendingBeforeCursor(cursor.takenAt, cursor.assetId)) {
+        await MetaRepository.resetScanCursor();
+        console.log('[AIScanner] Rewound cursor for pending asset recovery.');
     }
 }
 
@@ -657,6 +675,15 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
         // Reset outdated assets
         await resetOutdatedAssets(scanAssetIds);
         if (shouldStop) return;
+
+        // A previous run can be interrupted after marking an asset PENDING
+        // but before persisting the rewind requested by the sync. Only the
+        // unscoped incremental path uses the cursor; bounded scans choose an
+        // explicit work set and therefore do not need this query.
+        if (scanAssetIds === undefined) {
+            await rewindCursorForPendingAssets();
+            if (shouldStop) return;
+        }
 
         // Report initial progress
         await reportProgress();

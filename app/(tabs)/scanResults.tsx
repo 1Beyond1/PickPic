@@ -269,12 +269,14 @@ export default function ScanResultsScreen() {
     const [selectedCategory, setSelectedCategory] = useState<CategoryGroup | null>(null);
     const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
+    const getCategoryDisplayTitle = (title: string): string => {
+        const categoryTitleKey = `ai_category_${title}`;
+        const translatedTitle = t(categoryTitleKey as any);
+        return translatedTitle === categoryTitleKey ? title : translatedTitle;
+    };
+
     // Render AI Category Card
     const renderCategoryCard = ({ item }: { item: CategoryGroup }) => {
-        const categoryTitleKey = `ai_category_${item.title}`;
-        const translatedTitle = t(categoryTitleKey as any);
-        const categoryTitle = translatedTitle === categoryTitleKey ? item.title : translatedTitle;
-
         return (
             <Pressable
                 style={styles.categoryCard}
@@ -288,7 +290,7 @@ export default function ScanResultsScreen() {
                 <CategoryThumbnail assetId={item.coverAsset?.asset_id} />
                 <View style={styles.categoryInfoOverlay}>
                     <Text style={styles.categoryTitle} numberOfLines={1}>
-                        {categoryTitle}
+                        {getCategoryDisplayTitle(item.title)}
                     </Text>
                     <Text style={styles.categoryCount}>{item.count}</Text>
                 </View>
@@ -498,7 +500,7 @@ export default function ScanResultsScreen() {
                     {/* Header */}
                     <View style={styles.modalHeader}>
                         <Text style={[styles.modalTitle, { color: colors.text }]}>
-                            {selectedCategory?.title}
+                            {selectedCategory ? getCategoryDisplayTitle(selectedCategory.title) : ''}
                         </Text>
                         <Pressable
                             style={styles.closeButton}

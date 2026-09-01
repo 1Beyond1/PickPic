@@ -319,6 +319,35 @@ export const AssetRepository = {
     },
 
     /**
+     * Detect a pending asset that sorts before the persisted incremental
+     * cursor. This is a recovery guard for a process exit between writing an
+     * asset as PENDING and persisting the cursor rewind for that change.
+     */
+    async hasPendingBeforeCursor(
+        cursorTakenAt: number | null,
+        cursorAssetId: string | null
+    ): Promise<boolean> {
+        if (cursorTakenAt === null || cursorAssetId === null) {
+            return false;
+        }
+
+        const db = await getDatabase();
+        const pending = await db.getFirstAsync<{ asset_id: string }>(
+            `SELECT asset_id FROM assets
+             WHERE status = ?
+               AND (
+                   taken_at IS NULL
+                   OR taken_at < ?
+                   OR (taken_at = ? AND asset_id < ?)
+               )
+             LIMIT 1`,
+            [AssetStatus.PENDING, cursorTakenAt, cursorTakenAt, cursorAssetId]
+        );
+
+        return pending !== null;
+    },
+
+    /**
      * Mark asset as done with scan results
      */
     async markDone(
@@ -430,11 +459,14 @@ export const AssetRepository = {
 
     /**
      * Refresh media-library metadata and reset derived results when the
-     * underlying asset signature changes.
+     * underlying content or its scan-order metadata changes.
      *
-     * Some platforms expose library-only URIs that cannot be inspected by
-     * the file system. Metadata still needs to be refreshed in that case,
-     * while a non-null signature is required before invalidating results.
+     * Similarity matching uses taken_at as part of its candidate window, so a
+     * changed creation time must be rescanned even when the file signature is
+     * unchanged. Some platforms expose library-only URIs that cannot be
+     * inspected by the file system; metadata still needs to be refreshed in
+     * that case, while a non-null signature is required before invalidating
+     * results for content changes.
      */
     async refreshLibraryMetadata(
         assetId: string,
@@ -461,10 +493,12 @@ export const AssetRepository = {
 
             if (!metadataChanged) return false;
 
-            if (signatureChanged) {
+            const scanOrderChanged = existing.taken_at !== metadata.takenAt;
+
+            if (signatureChanged || scanOrderChanged) {
                 await db.runAsync(
                     `UPDATE assets SET
-                 taken_at = ?, width = ?, height = ?, file_signature = ?,
+                 taken_at = ?, width = ?, height = ?, file_signature = COALESCE(?, file_signature),
                  status = ?, algo_version = NULL, blur_score = NULL,
                  mean_luma = NULL, phash = NULL, face_count = 0,
                  labels_json = NULL, error_message = NULL, updated_at = ?
