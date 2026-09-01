@@ -14,6 +14,7 @@ interface AlbumSelectorProps {
     onConfirm: (selectedIds: string[]) => void;
     initialSelection?: string[];
     maxSelection?: number; // Optional max selection limit
+    editableOnly?: boolean; // Hide read-only system albums such as iOS smart albums
     titleKey?: string; // Optional custom title key
 }
 
@@ -23,6 +24,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     onConfirm,
     initialSelection = EMPTY_SELECTION,
     maxSelection,
+    editableOnly = false,
     titleKey = 'album_selector_title',
 }) => {
     const { albums, loadAlbums } = useMediaStore();
@@ -53,6 +55,10 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
         setSelectedIds([]);
     };
 
+    const visibleAlbums = editableOnly
+        ? albums.filter(album => album.type !== 'smartAlbum')
+        : albums;
+
     return (
         <Modal
             visible={visible}
@@ -79,7 +85,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
                     )}
 
                     <FlatList
-                        data={albums}
+                        data={visibleAlbums}
                         keyExtractor={(item) => item.id}
                         contentContainerStyle={styles.listContent}
                         renderItem={({ item }) => {

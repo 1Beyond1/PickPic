@@ -325,6 +325,7 @@ export default function VideosScreen() {
                 visible={showAlbumSelector}
                 onClose={() => setShowAlbumSelector(false)}
                 onConfirm={handleConfirmCollection}
+                editableOnly
             />
         </View>
     );
