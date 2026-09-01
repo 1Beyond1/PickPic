@@ -288,9 +288,22 @@ export default function VideosScreen() {
                             style={[styles.confirmDeleteBtn, isConfirmingVideoTrash && { opacity: 0.6 }]}
                             onPress={async () => {
                             try {
-                                await confirmVideoTrash(visibleVideoTrashBin.map(video => video.id));
+                                const requestedIds = visibleVideoTrashBin.map(video => video.id);
+                                await confirmVideoTrash(requestedIds);
                                 if (useMediaStore.getState().isConfirmingVideoTrash) return;
-                                setShowTrash(false);
+
+                                // The store keeps assets that failed the
+                                // last-moment visibility check. Close only
+                                // when every item that this confirmation
+                                // started with is gone; otherwise leave the
+                                // trash open so the remaining items can be
+                                // retried instead of implying success.
+                                const remainingTrashIds = new Set(
+                                    useMediaStore.getState().videoTrashBin.map(video => video.id)
+                                );
+                                if (requestedIds.every(id => !remainingTrashIds.has(id))) {
+                                    setShowTrash(false);
+                                }
                             } catch (error) {
                                 console.error('Failed to permanently delete videos', error);
                                 Alert.alert(

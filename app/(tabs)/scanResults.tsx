@@ -185,6 +185,14 @@ export default function ScanResultsScreen() {
             )));
         } catch (error) {
             console.error('[ScanResults] Load error:', error);
+            if (requestId === loadRequestIdRef.current) {
+                // A failed refresh must not leave the previous result set
+                // actionable. Clear both surfaces so a transient native,
+                // permission, or database error fails closed.
+                setBlurryPhotos([]);
+                setSimilarGroups([]);
+                setSelectedSimilarGroup(null);
+            }
         } finally {
             if (requestId === loadRequestIdRef.current) {
                 setLoading(false);
