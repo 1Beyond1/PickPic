@@ -161,7 +161,7 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
     // With limited access, getAssetsAsync intentionally omits media the user
     // did not grant. Those assets are inaccessible, not deleted; removing
     // them from the local index would lose their previous scan results.
-    const hasFullPhotoAccess = permission.accessPrivileges !== 'limited';
+    const startedWithLimitedPhotoAccess = permission.accessPrivileges === 'limited';
 
     let hasMore = true;
     let cursor: string | undefined;
@@ -246,6 +246,22 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
     }
 
     if (shouldStop) return null;
+
+    // Permission scope can change while the app is backgrounded. Never treat
+    // a partial snapshot as a complete library sync, or records outside the
+    // current selection could be removed from the local index.
+    const finalPermission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+    if (shouldStop) return null;
+    if (!finalPermission.granted) {
+        throw new Error('Photo library permission changed during scanning');
+    }
+
+    const endedWithLimitedPhotoAccess = finalPermission.accessPrivileges === 'limited';
+    if (endedWithLimitedPhotoAccess !== startedWithLimitedPhotoAccess) {
+        throw new Error('Photo library access changed during scanning; please retry');
+    }
+
+    const hasFullPhotoAccess = !startedWithLimitedPhotoAccess;
 
     if (hasFullPhotoAccess) {
         const removed = await AssetRepository.removeMissingAssets(seenAssetIds);
