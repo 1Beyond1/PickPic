@@ -42,6 +42,7 @@ export default function ScanResultsScreen() {
 
     const { enableAIClassification } = useSettingsStore();
     const permissionScope = useMediaStore(state => state.permissionScope);
+    const permissionRefreshVersion = useMediaStore(state => state.permissionRefreshVersion);
 
     const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'ai'>('blur');
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
@@ -55,7 +56,7 @@ export default function ScanResultsScreen() {
         origin: { x: number; y: number; width: number; height: number };
     } | null>(null);
     const [processedGroupIds, setProcessedGroupIds] = useState<Set<string>>(new Set());
-    const previousPermissionScopeRef = useRef<typeof permissionScope>(null);
+    const previousPermissionRefreshVersionRef = useRef(permissionRefreshVersion);
 
     // AI Categories Hook
     // Category loading reads the complete DONE snapshot. Defer that work
@@ -273,11 +274,8 @@ export default function ScanResultsScreen() {
     const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
     useEffect(() => {
-        if (permissionScope === null) return;
-
-        const previousScope = previousPermissionScopeRef.current;
-        previousPermissionScopeRef.current = permissionScope;
-        if (previousScope === null || previousScope === permissionScope) return;
+        if (permissionRefreshVersion === previousPermissionRefreshVersionRef.current) return;
+        previousPermissionRefreshVersionRef.current = permissionRefreshVersion;
 
         // Invalidate and clear every result surface immediately. Otherwise a
         // full-access snapshot can remain visible while the new permission
@@ -295,7 +293,7 @@ export default function ScanResultsScreen() {
         if (activeTab === 'ai' && enableAIClassification) {
             void refreshAI();
         }
-    }, [activeTab, enableAIClassification, loadResults, permissionScope, refreshAI]);
+    }, [activeTab, enableAIClassification, loadResults, permissionRefreshVersion, permissionScope, refreshAI]);
 
     const getCategoryDisplayTitle = (title: string): string => {
         const categoryTitleKey = `ai_category_${title}`;

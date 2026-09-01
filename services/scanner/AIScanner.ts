@@ -371,7 +371,7 @@ async function rewindCursorForPendingAssets(): Promise<void> {
     const cursor = await MetaRepository.getScanCursor();
     if (cursor.takenAt === null || cursor.assetId === null) return;
 
-    if (await AssetRepository.hasPendingBeforeCursor(cursor.takenAt, cursor.assetId)) {
+    if (await AssetRepository.hasPendingAtOrBeforeCursor(cursor.takenAt, cursor.assetId)) {
         await MetaRepository.resetScanCursor();
         console.log('[AIScanner] Rewound cursor for pending asset recovery.');
     }

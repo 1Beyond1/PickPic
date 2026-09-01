@@ -23,23 +23,19 @@ export default function PhotoDetailScreen() {
         needsLocalUri ? null : uri
     ));
     const permissionScope = useMediaStore(state => state.permissionScope);
-    const previousPermissionScopeRef = useRef<typeof permissionScope>(null);
+    const permissionRefreshVersion = useMediaStore(state => state.permissionRefreshVersion);
+    const previousPermissionRefreshVersionRef = useRef(permissionRefreshVersion);
     const { colors, isDark } = useThemeColor();
 
     useEffect(() => {
-        if (permissionScope === null) return;
-
-        const previousScope = previousPermissionScopeRef.current;
-        previousPermissionScopeRef.current = permissionScope;
-        if (previousScope === null || previousScope === permissionScope) return;
+        if (permissionRefreshVersion === previousPermissionRefreshVersionRef.current) return;
+        previousPermissionRefreshVersionRef.current = permissionRefreshVersion;
 
         // The URI in the route may refer to a photo that was removed from a
         // limited grant. Leave the detail screen before it can keep showing
         // that old route snapshot.
-        if (permissionScope !== 'none') {
-            router.replace('/(tabs)/photos');
-        }
-    }, [permissionScope, router]);
+        router.replace(permissionScope === 'none' ? '/' : '/(tabs)/photos');
+    }, [permissionRefreshVersion, permissionScope, router]);
 
     const resolveShareUri = useCallback(async () => {
         if (!assetId || !needsLocalUri) return uri;

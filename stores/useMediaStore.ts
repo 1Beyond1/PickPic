@@ -35,6 +35,7 @@ interface MediaState {
     isConfirmingVideoTrash: boolean;
     hasPermission: boolean;
     permissionScope: MediaPermissionScope | null;
+    permissionRefreshVersion: number;
     hasHydrated: boolean;
 
     // Actions
@@ -66,6 +67,7 @@ interface MediaState {
     resetVideoProgress: () => void;
     setPermission: (status: boolean) => void;
     setPermissionScope: (scope: MediaPermissionScope) => void;
+    notifyPermissionRefresh: () => void;
     setHasHydrated: (status: boolean) => void;
 }
 
@@ -336,12 +338,16 @@ export const useMediaStore = create<MediaState>()(
     isConfirmingVideoTrash: false,
     hasPermission: false,
     permissionScope: null,
+    permissionRefreshVersion: 0,
     hasHydrated: false,
 
     setPermission: (status) => set({ hasPermission: status }),
     setPermissionScope: (scope) => set((state) => (
         state.permissionScope === scope ? state : { permissionScope: scope }
     )),
+    notifyPermissionRefresh: () => set((state) => ({
+        permissionRefreshVersion: state.permissionRefreshVersion + 1,
+    })),
     setHasHydrated: (status) => set({ hasHydrated: status }),
 
     loadAlbums: async () => {

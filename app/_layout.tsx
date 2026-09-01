@@ -3,7 +3,7 @@ import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
-import { AppState, StyleSheet } from 'react-native';
+import { AppState, Platform, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AIScanGuideModal } from '../components/AIScanGuideModal';
 import { AnnouncementModal } from '../components/AnnouncementModal';
@@ -74,7 +74,12 @@ export default function RootLayout() {
       }
     }
 
-    useMediaStore.getState().setPermissionScope(currentScope);
+    const mediaStore = useMediaStore.getState();
+    const scopeChanged = previousScope !== null && previousScope !== currentScope;
+    mediaStore.setPermissionScope(currentScope);
+    if (scopeChanged) {
+      mediaStore.notifyPermissionRefresh();
+    }
     mediaPermissionScopeRef.current = currentScope;
   }, [mediaPermission]);
 
@@ -118,6 +123,39 @@ export default function RootLayout() {
       subscription.remove();
     };
   }, [getMediaPermission, pathname, router]);
+
+  // iOS reports changes to the selected subset while the permission remains
+  // `limited` through the media-library change listener. The privilege string
+  // alone cannot distinguish that event, so refresh the visible media state
+  // and notify result/detail screens explicitly. Web has no native listener.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const subscription = MediaLibrary.addListener(event => {
+      if (event.hasIncrementalChanges !== false) return;
+
+      const mediaStore = useMediaStore.getState();
+      mediaStore.clearLoadedMedia();
+      mediaStore.notifyPermissionRefresh();
+      if (isScanning()) {
+        stopScanner();
+      }
+
+      if (mediaPermissionGrantedRef.current) {
+        const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
+        void mediaStore.loadAlbums();
+        void mediaStore.refreshTotalCounts();
+        void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+        void mediaStore.loadVideos(50, displayOrder, selectedAlbumIds);
+      }
+
+      void getMediaPermission().catch(error => {
+        console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);
+      });
+    });
+
+    return () => subscription.remove();
+  }, [getMediaPermission]);
 
   // Initialize app
   useEffect(() => {

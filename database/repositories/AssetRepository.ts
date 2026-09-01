@@ -319,11 +319,13 @@ export const AssetRepository = {
     },
 
     /**
-     * Detect a pending asset that sorts before the persisted incremental
-     * cursor. This is a recovery guard for a process exit between writing an
-     * asset as PENDING and persisting the cursor rewind for that change.
+     * Detect a pending asset that sorts at or before the persisted
+     * incremental cursor. This is a recovery guard for a process exit
+     * between writing an asset as PENDING and persisting the cursor rewind
+     * for that change. Equality matters when the cursor asset itself was
+     * edited after the previous scan.
      */
-    async hasPendingBeforeCursor(
+    async hasPendingAtOrBeforeCursor(
         cursorTakenAt: number | null,
         cursorAssetId: string | null
     ): Promise<boolean> {
@@ -338,7 +340,7 @@ export const AssetRepository = {
                AND (
                    taken_at IS NULL
                    OR taken_at < ?
-                   OR (taken_at = ? AND asset_id < ?)
+                   OR (taken_at = ? AND asset_id <= ?)
                )
              LIMIT 1`,
             [AssetStatus.PENDING, cursorTakenAt, cursorTakenAt, cursorAssetId]
