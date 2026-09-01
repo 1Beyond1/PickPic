@@ -942,6 +942,14 @@ export const useMediaStore = create<MediaState>()(
     refreshTotalCounts: async () => {
         const requestId = ++totalCountsRequestId;
         try {
+            // expo-media-library exposes a web permission shim, but asset
+            // queries are native-only. Keep app startup quiet and preserve
+            // the zero-count initial state on platforms without a media
+            // library implementation.
+            if (!(await MediaLibrary.isAvailableAsync())) {
+                return;
+            }
+
             const photoResult = await MediaLibrary.getAssetsAsync({
                 mediaType: 'photo',
                 first: 1,
