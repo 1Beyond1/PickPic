@@ -24,7 +24,9 @@ export default function PhotoDetailScreen() {
     ));
     const permissionScope = useMediaStore(state => state.permissionScope);
     const permissionRefreshVersion = useMediaStore(state => state.permissionRefreshVersion);
+    const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion);
     const previousPermissionRefreshVersionRef = useRef(permissionRefreshVersion);
+    const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
     const { colors, isDark } = useThemeColor();
 
     useEffect(() => {
@@ -36,6 +38,34 @@ export default function PhotoDetailScreen() {
         // that old route snapshot.
         router.replace(permissionScope === 'none' ? '/' : '/(tabs)/photos');
     }, [permissionRefreshVersion, permissionScope, router]);
+
+    useEffect(() => {
+        if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current) return;
+        previousMediaLibraryRefreshVersionRef.current = mediaLibraryRefreshVersion;
+        if (!assetId) return;
+
+        let active = true;
+        void MediaLibrary.getAssetInfoAsync(assetId, {
+            shouldDownloadFromNetwork: false,
+        })
+            .then(info => {
+                if (!active || info) return;
+
+                // A regular media-library change may have removed the asset
+                // shown by this route. Do not leave a stale URI on screen or
+                // available to the share action after that deletion.
+                router.replace(permissionScope === 'none' ? '/' : '/(tabs)/photos');
+            })
+            .catch(error => {
+                if (active) {
+                    console.warn('[PhotoDetail] Failed to verify asset after media-library refresh:', error);
+                }
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [assetId, mediaLibraryRefreshVersion, permissionScope, router]);
 
     const resolveShareUri = useCallback(async () => {
         if (!assetId || !needsLocalUri) return uri;
