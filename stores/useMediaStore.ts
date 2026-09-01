@@ -116,8 +116,8 @@ interface MediaState {
     removeDeletedAssets: (assetIds: readonly string[]) => void;
     pruneUnavailableQueuedAssets: (scope: MediaPermissionScope) => void;
 
-    confirmDeletion: (assetIds?: readonly string[]) => Promise<void>;
-    confirmVideoTrash: (assetIds?: readonly string[]) => Promise<void>;
+    confirmDeletion: (assetIds?: readonly string[]) => Promise<string[]>;
+    confirmVideoTrash: (assetIds?: readonly string[]) => Promise<string[]>;
 
     refreshTotalCounts: () => Promise<void>;
 
@@ -835,9 +835,9 @@ export const useMediaStore = create<MediaState>()(
     },
 
     confirmDeletion: async (assetIds) => {
-        if (get().isConfirmingDeletion) return;
+        if (get().isConfirmingDeletion) return [];
         const requestedIds = assetIds === undefined ? null : new Set(assetIds);
-        if (requestedIds?.size === 0) return;
+        if (requestedIds?.size === 0) return [];
         set({ isConfirmingDeletion: true });
         try {
             const state = get();
@@ -856,7 +856,7 @@ export const useMediaStore = create<MediaState>()(
                 && (requestedIds === null || requestedIds.has(asset.id))
             ));
             const ids = Array.from(new Set(selectedDeleteQueue.map(asset => asset.id)));
-            if (ids.length === 0) return;
+            if (ids.length === 0) return [];
 
             // Batch delete all at once - system will show ONE permission dialog
             const deleted = await MediaLibrary.deleteAssetsAsync(ids);
@@ -878,6 +878,7 @@ export const useMediaStore = create<MediaState>()(
             // keeps the progress count meaningful and prevents the persisted
             // list from growing forever as the user cleans up their library.
             get().removeDeletedAssets(ids);
+            return ids;
         } catch (e) {
             // Keep the queue so the user can retry after fixing permissions or
             // another temporary media-library failure.
@@ -890,9 +891,9 @@ export const useMediaStore = create<MediaState>()(
     },
 
     confirmVideoTrash: async (assetIds) => {
-        if (get().isConfirmingVideoTrash) return;
+        if (get().isConfirmingVideoTrash) return [];
         const requestedIds = assetIds === undefined ? null : new Set(assetIds);
-        if (requestedIds?.size === 0) return;
+        if (requestedIds?.size === 0) return [];
         set({ isConfirmingVideoTrash: true });
         try {
             const state = get();
@@ -907,13 +908,14 @@ export const useMediaStore = create<MediaState>()(
                 && (requestedIds === null || requestedIds.has(video.id))
             ));
             const deletedIds = new Set(selectedVideoTrashBin.map(video => video.id));
-            if (deletedIds.size === 0) return;
+            if (deletedIds.size === 0) return [];
 
             const deleted = await MediaLibrary.deleteAssetsAsync(selectedVideoTrashBin);
             if (!deleted) {
                 throw new Error('Media library did not confirm video deletion');
             }
             get().removeDeletedAssets(Array.from(deletedIds));
+            return Array.from(deletedIds);
         } catch (e) {
             console.error("Video deletion failed", e);
             throw e;

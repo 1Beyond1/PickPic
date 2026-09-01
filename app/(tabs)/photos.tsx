@@ -204,9 +204,12 @@ export default function PhotosScreen() {
                     style={[styles.actionButton, { backgroundColor: colors.primary }, isConfirmingDeletion && { opacity: 0.6 }]}
                     onPress={async () => {
                     try {
-                        await confirmDeletion(visibleDeleteQueueIds); // Wait for deletion to complete
+                        const deletedIds = await confirmDeletion(visibleDeleteQueueIds); // Wait for deletion to complete
                         if (useMediaStore.getState().isConfirmingDeletion) return;
-                        resetBatch(visibleDeleteQueueIds);
+                        // Keep any item that failed the last-moment visibility
+                        // check in the persisted queue so it can be retried
+                        // after the permission or media-library state recovers.
+                        resetBatch(deletedIds);
                         loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                     } catch (error) {
                         console.error('Failed to confirm photo deletion', error);
