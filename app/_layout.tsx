@@ -39,6 +39,7 @@ export default function RootLayout() {
   const mediaHasHydrated = useMediaStore(state => state.hasHydrated);
   const mediaPermissionGrantedRef = useRef(false);
   const mediaPermissionScopeRef = useRef<'none' | 'limited' | 'full' | null>(null);
+  const previousMediaPermissionRef = useRef<typeof mediaPermission>(null);
   const queueVisibilityInitializedRef = useRef(false);
   const initialCheckDone = useRef(false);
 
@@ -56,10 +57,21 @@ export default function RootLayout() {
         ? 'limited'
         : 'full';
     const previousScope = mediaPermissionScopeRef.current;
+    const permissionSnapshotChanged = previousMediaPermissionRef.current !== mediaPermission;
 
     mediaPermissionGrantedRef.current = mediaPermission.granted;
 
-    if (previousScope !== null && previousScope !== currentScope) {
+    // Android 14 keeps the coarse privilege at `limited` when the user edits
+    // the selected-photo set. The permission hook still publishes a new
+    // response object, so treat a new limited snapshot as a media-scope
+    // refresh even though the privilege string did not change.
+    const limitedSelectionChanged = permissionSnapshotChanged
+      && previousScope === 'limited'
+      && currentScope === 'limited';
+    const scopeChanged = previousScope !== null && previousScope !== currentScope;
+    const mediaSnapshotChanged = scopeChanged || limitedSelectionChanged;
+
+    if (previousScope !== null && mediaSnapshotChanged) {
       const mediaStore = useMediaStore.getState();
       mediaStore.clearLoadedMedia();
 
@@ -77,16 +89,18 @@ export default function RootLayout() {
     }
 
     const mediaStore = useMediaStore.getState();
-    const scopeChanged = previousScope !== null && previousScope !== currentScope;
     mediaStore.setPermissionScope(currentScope);
-    if (mediaHasHydrated && (!queueVisibilityInitializedRef.current || scopeChanged)) {
+    if (mediaHasHydrated && (!queueVisibilityInitializedRef.current || mediaSnapshotChanged)) {
       mediaStore.refreshQueuedAssetVisibility(currentScope);
       mediaStore.pruneUnavailableQueuedAssets(currentScope);
       queueVisibilityInitializedRef.current = true;
     }
     if (scopeChanged) {
       mediaStore.notifyPermissionRefresh();
+    } else if (limitedSelectionChanged) {
+      mediaStore.notifyMediaLibraryRefresh();
     }
+    previousMediaPermissionRef.current = mediaPermission;
     mediaPermissionScopeRef.current = currentScope;
   }, [mediaHasHydrated, mediaPermission]);
 
