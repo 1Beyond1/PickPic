@@ -94,7 +94,21 @@ function MLBridgeInner() {
     // The queue becomes available only after the labeling hook has a usable
     // model. This prevents requests from being accepted during model startup.
     useEffect(() => {
-        if (!labeler) {
+        const labelerState = labeler as unknown as {
+            isLoaded?: boolean | (() => boolean);
+        } | undefined;
+        let modelReady = false;
+
+        try {
+            const loadedState = labelerState?.isLoaded;
+            modelReady = typeof loadedState === 'function'
+                ? loadedState.call(labeler)
+                : loadedState === true;
+        } catch (error) {
+            console.warn('[MLBridge] Failed to check model readiness:', error);
+        }
+
+        if (!modelReady) {
             mlBridgeQueue.markUnavailable();
             return;
         }
