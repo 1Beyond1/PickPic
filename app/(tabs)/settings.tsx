@@ -78,6 +78,7 @@ export default function SettingsScreen() {
         resetPhotoProgress, resetVideoProgress,
         totalPhotos, totalVideos, refreshTotalCounts,
         hasHydrated: mediaHydrated, getVisibleProcessedCounts, mediaLibraryRefreshVersion,
+        isConfirmingDeletion, isConfirmingVideoTrash,
     } = useMediaStore();
 
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
@@ -433,9 +434,11 @@ export default function SettingsScreen() {
                     <Pressable
                         style={({ pressed }) => [
                             styles.resetButton,
+                            isConfirmingDeletion && { opacity: 0.5 },
                             pressed && { opacity: 0.8, transform: [{ scale: 0.98 }] }
                         ]}
                         onPress={handleResetPhotoProgress}
+                        disabled={isConfirmingDeletion}
                     >
                         <Text style={styles.resetButtonText}>{t('settings_reset_photos')}</Text>
                     </Pressable>
@@ -452,9 +455,11 @@ export default function SettingsScreen() {
                     <Pressable
                         style={({ pressed }) => [
                             styles.resetButton,
+                            isConfirmingVideoTrash && { opacity: 0.5 },
                             pressed && { opacity: 0.8, transform: [{ scale: 0.98 }] }
                         ]}
                         onPress={handleResetVideoProgress}
+                        disabled={isConfirmingVideoTrash}
                     >
                         <Text style={styles.resetButtonText}>{t('settings_reset_videos')}</Text>
                     </Pressable>
@@ -679,11 +684,12 @@ export default function SettingsScreen() {
                                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
                             </Pressable>
                             <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.danger, alignItems: 'center' }}
+                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.danger, alignItems: 'center', opacity: isConfirmingDeletion ? 0.5 : 1 }}
                                 onPress={() => {
                                     resetPhotoProgress();
                                     setShowResetPhotosConfirm(false);
                                 }}
+                                disabled={isConfirmingDeletion}
                             >
                                 <Text style={{ color: 'white', fontWeight: '600' }}>{t('confirm')}</Text>
                             </Pressable>
@@ -710,11 +716,12 @@ export default function SettingsScreen() {
                                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
                             </Pressable>
                             <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.danger, alignItems: 'center' }}
+                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.danger, alignItems: 'center', opacity: isConfirmingVideoTrash ? 0.5 : 1 }}
                                 onPress={() => {
                                     resetVideoProgress();
                                     setShowResetVideosConfirm(false);
                                 }}
+                                disabled={isConfirmingVideoTrash}
                             >
                                 <Text style={{ color: 'white', fontWeight: '600' }}>{t('confirm')}</Text>
                             </Pressable>
