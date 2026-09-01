@@ -11,6 +11,25 @@ export interface PhotoAsset extends MediaLibrary.Asset {
 
 export type MediaPermissionScope = 'none' | 'limited' | 'full';
 
+function getVisibleQueuedAssets<T extends { id: string }>(
+    assets: readonly T[],
+    permissionScope: MediaPermissionScope | null,
+    hiddenQueuedAssetIds: readonly string[] | null,
+): T[] {
+    // A null scope or an unresolved limited scope must fail closed. The root
+    // layout fills in the scope after permission hydration, and the async
+    // visibility check fills in hiddenQueuedAssetIds for limited access.
+    if (permissionScope === 'full' && hiddenQueuedAssetIds === null) {
+        return [...assets];
+    }
+    if (permissionScope !== 'limited' || hiddenQueuedAssetIds === null) {
+        return [];
+    }
+
+    const hiddenIds = new Set(hiddenQueuedAssetIds);
+    return assets.filter(asset => !hiddenIds.has(asset.id));
+}
+
 interface MediaState {
     photos: PhotoAsset[];
     videos: PhotoAsset[];
@@ -37,6 +56,7 @@ interface MediaState {
     permissionScope: MediaPermissionScope | null;
     permissionRefreshVersion: number;
     mediaLibraryRefreshVersion: number;
+    hiddenQueuedAssetIds: string[] | null;
     hasHydrated: boolean;
 
     // Actions
@@ -56,20 +76,21 @@ interface MediaState {
     markVideoAsProcessed: (asset: PhotoAsset) => void;
     restoreFromTrash: (assetId: string) => void;
 
-    confirmDeletion: () => Promise<void>;
-    confirmVideoTrash: () => Promise<void>;
+    confirmDeletion: (assetIds?: readonly string[]) => Promise<void>;
+    confirmVideoTrash: (assetIds?: readonly string[]) => Promise<void>;
 
     refreshTotalCounts: () => Promise<void>;
 
     clearLoadedMedia: () => void;
 
-    resetBatch: () => void;
+    resetBatch: (assetIds?: readonly string[]) => void;
     resetPhotoProgress: () => void;
     resetVideoProgress: () => void;
     setPermission: (status: boolean) => void;
     setPermissionScope: (scope: MediaPermissionScope) => void;
     notifyPermissionRefresh: () => void;
     notifyMediaLibraryRefresh: () => void;
+    refreshQueuedAssetVisibility: (scope: MediaPermissionScope) => void;
     setHasHydrated: (status: boolean) => void;
 }
 
@@ -316,6 +337,7 @@ let albumLoadRequestId = 0;
 let photoLoadRequestId = 0;
 let totalCountsRequestId = 0;
 let videoLoadRequestId = 0;
+let queueVisibilityRequestId = 0;
 
 export const useMediaStore = create<MediaState>()(
     persist(
@@ -342,6 +364,7 @@ export const useMediaStore = create<MediaState>()(
     permissionScope: null,
     permissionRefreshVersion: 0,
     mediaLibraryRefreshVersion: 0,
+    hiddenQueuedAssetIds: null,
     hasHydrated: false,
 
     setPermission: (status) => set({ hasPermission: status }),
@@ -355,6 +378,41 @@ export const useMediaStore = create<MediaState>()(
     notifyMediaLibraryRefresh: () => set((state) => ({
         mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion + 1,
     })),
+    refreshQueuedAssetVisibility: (scope) => {
+        const requestId = ++queueVisibilityRequestId;
+        const queuedAssetIds = Array.from(new Set([
+            ...get().deleteQueue,
+            ...get().collectionQueue,
+            ...get().videoTrashBin,
+        ].map(asset => asset.id)));
+
+        if (scope === 'full') {
+            set({ hiddenQueuedAssetIds: null });
+            return;
+        }
+
+        // Hide the current queue conservatively until every queued asset has
+        // been checked under the new permission scope. Assets queued from the
+        // current visible feed are not in this snapshot and remain actionable
+        // for the current scope.
+        set({ hiddenQueuedAssetIds: queuedAssetIds });
+        if (scope === 'none' || queuedAssetIds.length === 0) return;
+
+        void Promise.all(queuedAssetIds.map(async assetId => {
+            try {
+                const info = await MediaLibrary.getAssetInfoAsync(assetId, {
+                    shouldDownloadFromNetwork: false,
+                });
+                return info?.id === assetId ? null : assetId;
+            } catch {
+                return assetId;
+            }
+        })).then(hiddenAssetIds => {
+            if (requestId === queueVisibilityRequestId) {
+                set({ hiddenQueuedAssetIds: hiddenAssetIds.filter((assetId): assetId is string => assetId !== null) });
+            }
+        });
+    },
     setHasHydrated: (status) => set({ hasHydrated: status }),
 
     loadAlbums: async () => {
@@ -566,14 +624,32 @@ export const useMediaStore = create<MediaState>()(
         }
     },
 
-    resetBatch: () => {
+    resetBatch: (assetIds) => {
         if (get().isConfirmingDeletion) return;
         // Invalidate a load that may still be paging before clearing the
         // current batch, otherwise its completion can repopulate this list.
         photoLoadRequestId++;
-        set((state) => state.isConfirmingDeletion
-            ? state
-            : { photos: [], currentIndex: 0, deleteQueue: [], collectionQueue: [] });
+        const selectedIds = assetIds === undefined ? null : new Set(assetIds);
+        set((state) => {
+            if (state.isConfirmingDeletion) return state;
+            if (selectedIds === null) {
+                return {
+                    photos: [],
+                    currentIndex: 0,
+                    deleteQueue: [],
+                    collectionQueue: [],
+                    hiddenQueuedAssetIds: state.permissionScope === 'full' ? null : [],
+                };
+            }
+
+            return {
+                photos: [],
+                currentIndex: 0,
+                deleteQueue: state.deleteQueue.filter(asset => !selectedIds.has(asset.id)),
+                collectionQueue: state.collectionQueue.filter(asset => !selectedIds.has(asset.id)),
+                hiddenQueuedAssetIds: state.hiddenQueuedAssetIds?.filter(id => !selectedIds.has(id)) ?? null,
+            };
+        });
     },
 
     resetPhotoProgress: () => {
@@ -581,7 +657,13 @@ export const useMediaStore = create<MediaState>()(
         photoLoadRequestId++;
         set((state) => state.isConfirmingDeletion
             ? state
-            : { photoProcessedIds: [], photos: [], deleteQueue: [], collectionQueue: [] });
+            : {
+                photoProcessedIds: [],
+                photos: [],
+                deleteQueue: [],
+                collectionQueue: [],
+                hiddenQueuedAssetIds: state.permissionScope === 'full' ? null : [],
+            });
     },
 
     resetVideoProgress: () => {
@@ -589,18 +671,32 @@ export const useMediaStore = create<MediaState>()(
         videoLoadRequestId++;
         set((state) => state.isConfirmingVideoTrash
             ? state
-            : { videoProcessedIds: [], videos: [], videoTrashBin: [] });
+            : {
+                videoProcessedIds: [],
+                videos: [],
+                videoTrashBin: [],
+                hiddenQueuedAssetIds: state.permissionScope === 'full' ? null : [],
+            });
     },
 
-    confirmDeletion: async () => {
+    confirmDeletion: async (assetIds) => {
         if (get().isConfirmingDeletion) return;
-        const { deleteQueue } = get();
-        if (deleteQueue.length === 0) return;
+        const state = get();
+        const visibleDeleteQueue = getVisibleQueuedAssets(
+            state.deleteQueue,
+            state.permissionScope,
+            state.hiddenQueuedAssetIds,
+        );
+        const requestedIds = assetIds === undefined ? null : new Set(assetIds);
+        const selectedDeleteQueue = visibleDeleteQueue.filter(asset => (
+            requestedIds === null || requestedIds.has(asset.id)
+        ));
+        const ids = Array.from(new Set(selectedDeleteQueue.map(asset => asset.id)));
+        if (ids.length === 0) return;
 
         set({ isConfirmingDeletion: true });
         try {
             // Batch delete all at once - system will show ONE permission dialog
-            const ids = deleteQueue.map(a => a.id);
             const deleted = await MediaLibrary.deleteAssetsAsync(ids);
             if (!deleted) {
                 throw new Error('Media library did not confirm photo deletion');
@@ -623,6 +719,7 @@ export const useMediaStore = create<MediaState>()(
             set((state) => ({
                 deleteQueue: state.deleteQueue.filter(asset => !deletedIds.has(asset.id)),
                 photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
+                hiddenQueuedAssetIds: state.hiddenQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
             }));
         } catch (e) {
             // Keep the queue so the user can retry after fixing permissions or
@@ -635,21 +732,31 @@ export const useMediaStore = create<MediaState>()(
 
     },
 
-    confirmVideoTrash: async () => {
+    confirmVideoTrash: async (assetIds) => {
         if (get().isConfirmingVideoTrash) return;
-        const { videoTrashBin } = get();
-        if (videoTrashBin.length === 0) return;
+        const state = get();
+        const visibleVideoTrashBin = getVisibleQueuedAssets(
+            state.videoTrashBin,
+            state.permissionScope,
+            state.hiddenQueuedAssetIds,
+        );
+        const requestedIds = assetIds === undefined ? null : new Set(assetIds);
+        const selectedVideoTrashBin = visibleVideoTrashBin.filter(video => (
+            requestedIds === null || requestedIds.has(video.id)
+        ));
+        const deletedIds = new Set(selectedVideoTrashBin.map(video => video.id));
+        if (deletedIds.size === 0) return;
 
         set({ isConfirmingVideoTrash: true });
         try {
-            const deletedIds = new Set(videoTrashBin.map(video => video.id));
-            const deleted = await MediaLibrary.deleteAssetsAsync(videoTrashBin);
+            const deleted = await MediaLibrary.deleteAssetsAsync(selectedVideoTrashBin);
             if (!deleted) {
                 throw new Error('Media library did not confirm video deletion');
             }
             set((state) => ({
                 videoTrashBin: state.videoTrashBin.filter(video => !deletedIds.has(video.id)),
                 videoProcessedIds: state.videoProcessedIds.filter(id => !deletedIds.has(id)),
+                hiddenQueuedAssetIds: state.hiddenQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
             }));
         } catch (e) {
             console.error("Video deletion failed", e);

@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
@@ -26,7 +26,8 @@ export default function VideosScreen() {
         videoProcessedIds,
         markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
         isConfirmingVideoTrash,
-        addAssetToAlbum
+        addAssetToAlbum,
+        permissionScope, hiddenQueuedAssetIds, mediaLibraryRefreshVersion,
     } = useMediaStore();
     const {
         displayOrder,
@@ -45,6 +46,25 @@ export default function VideosScreen() {
     videosRef.current = videos;
     const processedVideoIds = new Set(videoProcessedIds);
     const visibleVideos = videos.filter(video => !processedVideoIds.has(video.id));
+    const hiddenQueueIds = new Set(hiddenQueuedAssetIds ?? []);
+    const visibleVideoTrashBin = permissionScope === 'full' && hiddenQueuedAssetIds === null
+        ? videoTrashBin
+        : permissionScope === 'limited' && hasHydrated && hiddenQueuedAssetIds !== null
+            ? videoTrashBin.filter(video => !hiddenQueueIds.has(video.id))
+            : [];
+
+    const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
+    useEffect(() => {
+        if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current) return;
+        previousMediaLibraryRefreshVersionRef.current = mediaLibraryRefreshVersion;
+
+        // Close local previews/selectors when the underlying media snapshot
+        // changes. Persisted trash is retained for recovery and projected
+        // through the permission-aware visible list above.
+        setShowTrash(false);
+        setShowAlbumSelector(false);
+        setSelectedVideoForCollection(null);
+    }, [mediaLibraryRefreshVersion]);
 
     // Dynamic height state
     const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
@@ -215,9 +235,9 @@ export default function VideosScreen() {
             >
                 <View style={[styles.blurIcon, { backgroundColor: isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.8)' }]}>
                     <Ionicons name="trash-bin-outline" size={24} color={colors.text} />
-                    {videoTrashBin.length > 0 && (
+                    {visibleVideoTrashBin.length > 0 && (
                         <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{videoTrashBin.length}</Text>
+                            <Text style={styles.badgeText}>{visibleVideoTrashBin.length}</Text>
                         </View>
                     )}
                 </View>
@@ -233,11 +253,11 @@ export default function VideosScreen() {
                         </Pressable>
                     </View>
 
-                    {videoTrashBin.length === 0 ? (
+                    {visibleVideoTrashBin.length === 0 ? (
                         <Text style={[styles.emptyTextSmall, { color: colors.textSecondary }]}>{t('video_empty')}</Text>
                     ) : (
                         <FlatList
-                            data={videoTrashBin}
+                            data={visibleVideoTrashBin}
                             keyExtractor={item => item.id}
                             horizontal
                             contentContainerStyle={{ gap: 10, paddingVertical: 20 }}
@@ -263,12 +283,12 @@ export default function VideosScreen() {
                         />
                     )}
 
-                    {videoTrashBin.length > 0 && (
+                    {visibleVideoTrashBin.length > 0 && (
                         <Pressable
                             style={[styles.confirmDeleteBtn, isConfirmingVideoTrash && { opacity: 0.6 }]}
                             onPress={async () => {
                             try {
-                                await confirmVideoTrash();
+                                await confirmVideoTrash(visibleVideoTrashBin.map(video => video.id));
                                 if (useMediaStore.getState().isConfirmingVideoTrash) return;
                                 setShowTrash(false);
                             } catch (error) {

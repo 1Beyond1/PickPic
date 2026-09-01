@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 // import { BlurView } from 'expo-blur';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -23,7 +23,8 @@ export default function PhotosScreen() {
         photoProcessedIds,
         markForDeletion, markAsSkipped,
         confirmDeletion, deleteQueue, resetBatch, isConfirmingDeletion,
-        createAlbum, addAssetToAlbum, loadAlbums
+        createAlbum, addAssetToAlbum, loadAlbums,
+        permissionScope, hiddenQueuedAssetIds, mediaLibraryRefreshVersion,
     } = useMediaStore();
 
     const {
@@ -36,6 +37,7 @@ export default function PhotosScreen() {
     const [showNewAlbumModal, setShowNewAlbumModal] = useState(false);
     const [newAlbumName, setNewAlbumName] = useState('');
     const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
+    const [previewPhoto, setPreviewPhoto] = useState<any>(null);
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
@@ -53,6 +55,28 @@ export default function PhotosScreen() {
 
     const processedIds = new Set(photoProcessedIds);
     const visiblePhotos = photos.filter(p => !processedIds.has(p.id));
+    const hiddenQueueIds = new Set(hiddenQueuedAssetIds ?? []);
+    const visibleDeleteQueue = permissionScope === 'full' && hiddenQueuedAssetIds === null
+        ? deleteQueue
+        : permissionScope === 'limited' && hasHydrated && hiddenQueuedAssetIds !== null
+            ? deleteQueue.filter(asset => !hiddenQueueIds.has(asset.id))
+            : [];
+    const visibleDeleteQueueIds = visibleDeleteQueue.map(photo => photo.id);
+
+    const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
+    useEffect(() => {
+        if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current) return;
+        previousMediaLibraryRefreshVersionRef.current = mediaLibraryRefreshVersion;
+
+        // A library or permission change invalidates the local preview and
+        // collection dialog, whose route/asset snapshot may no longer be
+        // accessible. Persisted review queues are kept for recovery, but are
+        // filtered separately by the permission-aware queue projection.
+        setPreviewPhoto(null);
+        setPendingCollectionPhoto(null);
+        setNewAlbumName('');
+        setShowNewAlbumModal(false);
+    }, [mediaLibraryRefreshVersion]);
 
     // Drop zones disabled for v0.1.1
     const dropZones: any[] = [];
@@ -121,18 +145,16 @@ export default function PhotosScreen() {
         void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
     };
 
-    const [previewPhoto, setPreviewPhoto] = useState<any>(null);
-
     const handleBatchFinished = () => {
         // If no photos to delete, show message and auto-proceed
-        if (deleteQueue.length === 0) {
+        if (visibleDeleteQueue.length === 0) {
             return (
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                     <Text style={[styles.emptyText, { color: colors.text }]}>{t('no_delete_this_batch' as any)}</Text>
                     <Pressable
                         style={[styles.actionButton, { backgroundColor: colors.primary }]}
                         onPress={() => {
-                            resetBatch();
+                            resetBatch(visibleDeleteQueueIds);
                             loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                         }}
                     >
@@ -150,11 +172,11 @@ export default function PhotosScreen() {
                 <Text style={[styles.emptyText, { color: colors.text }]}>{t('photos_finished')}</Text>
 
                 <GlassContainer style={styles.statsContainer}>
-                    <Text style={[styles.statText, { color: colors.text, marginBottom: 10 }]}>{t('photos_delete_count', { count: deleteQueue.length })}</Text>
+                    <Text style={[styles.statText, { color: colors.text, marginBottom: 10 }]}>{t('photos_delete_count', { count: visibleDeleteQueue.length })}</Text>
 
                     {/* Thumbnails Grid */}
                     <View style={styles.thumbnailsGrid}>
-                        {deleteQueue.slice(0, 9).map((photo) => (
+                        {visibleDeleteQueue.slice(0, 9).map((photo) => (
                             <Pressable
                                 key={photo.id}
                                 onPress={() => handleUndo(photo.id)}
@@ -169,22 +191,22 @@ export default function PhotosScreen() {
                                 </View>
                             </Pressable>
                         ))}
-                        {deleteQueue.length > 9 && (
+                        {visibleDeleteQueue.length > 9 && (
                             <View style={styles.moreCount}>
-                                <Text style={{ color: colors.textSecondary }}>+{deleteQueue.length - 9}</Text>
+                                <Text style={{ color: colors.textSecondary }}>+{visibleDeleteQueue.length - 9}</Text>
                             </View>
                         )}
                     </View>
-                    {deleteQueue.length > 0 && <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 5 }}>{t('thumbnail_tap_undo' as any)}</Text>}
+                    {visibleDeleteQueue.length > 0 && <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 5 }}>{t('thumbnail_tap_undo' as any)}</Text>}
                 </GlassContainer>
 
                 <Pressable
                     style={[styles.actionButton, { backgroundColor: colors.primary }, isConfirmingDeletion && { opacity: 0.6 }]}
                     onPress={async () => {
                     try {
-                        await confirmDeletion(); // Wait for deletion to complete
+                        await confirmDeletion(visibleDeleteQueueIds); // Wait for deletion to complete
                         if (useMediaStore.getState().isConfirmingDeletion) return;
-                        resetBatch();
+                        resetBatch(visibleDeleteQueueIds);
                         loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                     } catch (error) {
                         console.error('Failed to confirm photo deletion', error);
@@ -199,7 +221,7 @@ export default function PhotosScreen() {
                 <Pressable
                     style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: 10 }, isConfirmingDeletion && { opacity: 0.6 }]}
                     onPress={() => {
-                    resetBatch();
+                    resetBatch(visibleDeleteQueueIds);
                     loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                 }}
                     disabled={isConfirmingDeletion}
@@ -221,7 +243,7 @@ export default function PhotosScreen() {
     // A persisted delete queue can outlive the in-memory review batch. Keep
     // the confirmation screen reachable after a restart, even when there
     // are no remaining photos to load.
-    if (visiblePhotos.length === 0 && (photos.length > 0 || deleteQueue.length > 0)) {
+    if (visiblePhotos.length === 0 && (photos.length > 0 || visibleDeleteQueue.length > 0)) {
         return (
             <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
                 {handleBatchFinished()}

@@ -36,8 +36,10 @@ export default function RootLayout() {
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
+  const mediaHasHydrated = useMediaStore(state => state.hasHydrated);
   const mediaPermissionGrantedRef = useRef(false);
   const mediaPermissionScopeRef = useRef<'none' | 'limited' | 'full' | null>(null);
+  const queueVisibilityInitializedRef = useRef(false);
   const initialCheckDone = useRef(false);
 
   // Keep the ref synchronized when the hook publishes a new permission
@@ -77,11 +79,15 @@ export default function RootLayout() {
     const mediaStore = useMediaStore.getState();
     const scopeChanged = previousScope !== null && previousScope !== currentScope;
     mediaStore.setPermissionScope(currentScope);
+    if (mediaHasHydrated && (!queueVisibilityInitializedRef.current || scopeChanged)) {
+      mediaStore.refreshQueuedAssetVisibility(currentScope);
+      queueVisibilityInitializedRef.current = true;
+    }
     if (scopeChanged) {
       mediaStore.notifyPermissionRefresh();
     }
     mediaPermissionScopeRef.current = currentScope;
-  }, [mediaPermission]);
+  }, [mediaHasHydrated, mediaPermission]);
 
   // Permissions can be revoked in system settings after the initial route
   // has already replaced the permission screen. Keep the gate active for
@@ -140,8 +146,12 @@ export default function RootLayout() {
       const mediaStore = useMediaStore.getState();
       mediaStore.clearLoadedMedia();
       if (isPermissionScopeChange) {
+        // The permission hook has not necessarily published the new scope
+        // yet. Hide all persisted queue items until it does so.
+        mediaStore.refreshQueuedAssetVisibility('none');
         mediaStore.notifyPermissionRefresh();
       } else {
+        mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none');
         mediaStore.notifyMediaLibraryRefresh();
       }
       if (isScanning()) {
@@ -157,9 +167,26 @@ export default function RootLayout() {
       }
 
       if (isPermissionScopeChange) {
-        void getMediaPermission().catch(error => {
-          console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);
-        });
+        void getMediaPermission()
+          .then(permission => {
+            // A limited-to-limited selection change keeps the same coarse
+            // privilege string, so the permission hook may not publish a
+            // changed value. Apply the refreshed scope here as well, or the
+            // conservative hidden-queue snapshot above would never resolve.
+            const refreshedScope = !permission.granted
+              ? 'none'
+              : permission.accessPrivileges === 'limited'
+                ? 'limited'
+                : 'full';
+            mediaPermissionGrantedRef.current = permission.granted;
+            mediaPermissionScopeRef.current = refreshedScope;
+            const refreshedStore = useMediaStore.getState();
+            refreshedStore.setPermissionScope(refreshedScope);
+            refreshedStore.refreshQueuedAssetVisibility(refreshedScope);
+          })
+          .catch(error => {
+            console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);
+          });
       }
     });
 
