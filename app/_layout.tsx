@@ -40,8 +40,13 @@ export default function RootLayout() {
   const mediaPermissionGrantedRef = useRef(false);
   const mediaPermissionScopeRef = useRef<'none' | 'limited' | 'full' | null>(null);
   const previousMediaPermissionRef = useRef<typeof mediaPermission>(null);
+  const pathnameRef = useRef(pathname);
   const queueVisibilityInitializedRef = useRef(false);
   const initialCheckDone = useRef(false);
+
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
 
   // Keep the ref synchronized when the hook publishes a new permission
   // snapshot. Do not assign it during render: an async refresh can already
@@ -121,7 +126,7 @@ export default function RootLayout() {
           if (isScanning()) {
             stopScanner();
           }
-          if (pathname !== '/') {
+          if (pathnameRef.current !== '/') {
             router.replace('/');
           }
         } else if (mounted) {
@@ -143,7 +148,7 @@ export default function RootLayout() {
       mounted = false;
       subscription.remove();
     };
-  }, [getMediaPermission, pathname, router]);
+  }, [getMediaPermission, router]);
 
   // MediaLibrary reports both ordinary asset changes and iOS changes to the
   // selected subset while the permission remains `limited`. The privilege
