@@ -93,6 +93,7 @@ interface MediaState {
     notifyPermissionRefresh: () => void;
     notifyMediaLibraryRefresh: () => void;
     refreshQueuedAssetVisibility: (scope: MediaPermissionScope) => void;
+    getVisibleProcessedCounts: () => Promise<{ photos: number; videos: number }>;
     setHasHydrated: (status: boolean) => void;
 }
 
@@ -332,6 +333,34 @@ async function loadAssetsForReview(
     }
 
     return { assets: selected.slice(0, count), totalCount };
+}
+
+async function getVisibleAssetIds(mediaType: MediaType): Promise<Set<string>> {
+    const permission = await MediaLibrary.getPermissionsAsync(false, [mediaType]);
+    if (!permission.granted) return new Set();
+
+    const visibleIds = new Set<string>();
+    let after: string | undefined;
+
+    while (true) {
+        const result = await MediaLibrary.getAssetsAsync({
+            mediaType,
+            first: 100,
+            ...(after ? { after } : {}),
+        });
+
+        for (const asset of result.assets) {
+            visibleIds.add(asset.id);
+        }
+
+        if (!result.hasNextPage) break;
+        if (!result.endCursor || result.endCursor === after) {
+            throw new Error(`Media library returned an invalid pagination cursor while reading visible ${mediaType} assets`);
+        }
+        after = result.endCursor;
+    }
+
+    return visibleIds;
 }
 
 let activeMediaLoads = 0;
@@ -670,6 +699,19 @@ export const useMediaStore = create<MediaState>()(
                 get().removeDeletedAssets(idsToRemove);
             }
         });
+    },
+
+    getVisibleProcessedCounts: async () => {
+        const [visiblePhotoIds, visibleVideoIds] = await Promise.all([
+            getVisibleAssetIds('photo'),
+            getVisibleAssetIds('video'),
+        ]);
+        const state = get();
+
+        return {
+            photos: state.photoProcessedIds.filter(id => visiblePhotoIds.has(id)).length,
+            videos: state.videoProcessedIds.filter(id => visibleVideoIds.has(id)).length,
+        };
     },
 
     resetBatch: (assetIds) => {

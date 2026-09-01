@@ -77,7 +77,7 @@ export default function SettingsScreen() {
         photoProcessedIds, videoProcessedIds,
         resetPhotoProgress, resetVideoProgress,
         totalPhotos, totalVideos, refreshTotalCounts,
-        hasHydrated: mediaHydrated,
+        hasHydrated: mediaHydrated, getVisibleProcessedCounts, mediaLibraryRefreshVersion,
     } = useMediaStore();
 
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
@@ -114,10 +114,43 @@ export default function SettingsScreen() {
     const [showResetPhotosConfirm, setShowResetPhotosConfirm] = useState(false);
     const [showResetVideosConfirm, setShowResetVideosConfirm] = useState(false);
     const [isResettingScanner, setIsResettingScanner] = useState(false);
+    const [visibleProcessedCounts, setVisibleProcessedCounts] = useState({ photos: 0, videos: 0 });
 
     useFocusEffect(useCallback(() => {
         void refreshTotalCounts();
     }, [refreshTotalCounts]));
+
+    useFocusEffect(useCallback(() => {
+        let active = true;
+
+        // These values intentionally participate in the callback identity:
+        // a reset, media-library event, or permission change must trigger a
+        // fresh intersection with the currently visible asset IDs.
+        void mediaLibraryRefreshVersion;
+        void photoProcessedIds;
+        void videoProcessedIds;
+
+        if (!mediaHydrated) {
+            return () => {
+                active = false;
+            };
+        }
+
+        void getVisibleProcessedCounts()
+            .then(counts => {
+                if (active) setVisibleProcessedCounts(counts);
+            })
+            .catch(error => {
+                if (!active) return;
+                console.error('[Settings] Failed to refresh visible progress:', error);
+                // Do not expose a stale count after a permission/read error.
+                setVisibleProcessedCounts({ photos: 0, videos: 0 });
+            });
+
+        return () => {
+            active = false;
+        };
+    }, [getVisibleProcessedCounts, mediaHydrated, mediaLibraryRefreshVersion, photoProcessedIds, videoProcessedIds]));
 
     useFocusEffect(useCallback(() => {
         const onBackPress = () => {
@@ -394,7 +427,7 @@ export default function SettingsScreen() {
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('tab_photos')} {t('photos_header')}</Text>
                     <View style={styles.progressRow}>
                         <Text style={[styles.progressText, { color: colors.textSecondary }]}>
-                            {t('settings_progress_photos', { processed: photoProcessedIds.length, total: totalPhotos })}
+                            {t('settings_progress_photos', { processed: visibleProcessedCounts.photos, total: totalPhotos })}
                         </Text>
                     </View>
                     <Pressable
@@ -413,7 +446,7 @@ export default function SettingsScreen() {
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('tab_videos')} {t('photos_header')}</Text>
                     <View style={styles.progressRow}>
                         <Text style={[styles.progressText, { color: colors.textSecondary }]}>
-                            {t('settings_progress_videos', { processed: videoProcessedIds.length, total: totalVideos })}
+                            {t('settings_progress_videos', { processed: visibleProcessedCounts.videos, total: totalVideos })}
                         </Text>
                     </View>
                     <Pressable
