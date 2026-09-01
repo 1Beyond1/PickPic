@@ -15,6 +15,7 @@ import {
     start as startScanner,
     stop as stopScanner
 } from '../services/scanner';
+import { useMediaStore } from '../stores/useMediaStore';
 import { useScannerStore } from '../stores/useScannerStore';
 
 export interface UseAIScannerResult {
@@ -39,6 +40,7 @@ export function useAIScanner(): UseAIScannerResult {
     const progress = useScannerStore(state => state.progress);
     const isRunning = useScannerStore(state => state.isRunning);
     const lastError = useScannerStore(state => state.lastError);
+    const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion);
 
     // Actions from store
     const setProgress = useScannerStore(state => state.setProgress);
@@ -46,17 +48,29 @@ export function useAIScanner(): UseAIScannerResult {
 
     // Initialize database and fetch initial status
     useEffect(() => {
+        let active = true;
+
         const init = async () => {
             try {
                 await getDatabase(); // Ensure DB is initialized
+                // A media snapshot can change while this asynchronous status
+                // read is in flight. Do not let a refresh started during a
+                // scan overwrite progress published by the scanner itself.
+                if (!active || isScannerRunning()) return;
                 const status = await getStatus();
-                setProgress(status);
+                if (active && !isScannerRunning()) {
+                    setProgress(status);
+                }
             } catch (error) {
                 console.error('[useAIScanner] Init error:', error);
             }
         };
         init();
-    }, [setProgress]);
+
+        return () => {
+            active = false;
+        };
+    }, [mediaLibraryRefreshVersion, setProgress]);
 
     // Start scanning
     const start = useCallback(async () => {
