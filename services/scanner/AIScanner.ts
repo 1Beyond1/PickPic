@@ -704,6 +704,24 @@ async function reportProgress(assetIds?: readonly string[]): Promise<void> {
     useScannerStore.getState().setProgress(progress);
 }
 
+/**
+ * Publish a permission-aware snapshot after cancellation during scan setup.
+ * Setup can already have synced or reset database rows before shouldStop is
+ * observed, but the normal batch loop has not reached its progress report in
+ * that case.
+ */
+async function reportCurrentStatusAfterStop(): Promise<void> {
+    try {
+        const progress = await getStatus();
+        callbacks.onProgress?.(progress);
+        useScannerStore.getState().setProgress(progress);
+    } catch (error) {
+        // Cancellation should still finish even if the best-effort status
+        // refresh is blocked by a simultaneous permission/database change.
+        console.warn('[AIScanner] Failed to publish status after stopping:', error);
+    }
+}
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -770,6 +788,9 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
         useScannerStore.getState().setLastError(error instanceof Error ? error : new Error(String(error)));
     } finally {
+        if (shouldStop) {
+            await reportCurrentStatusAfterStop();
+        }
         isRunning = false;
         useScannerStore.getState().setIsRunning(false);
     }
@@ -870,6 +891,9 @@ export async function resumeOnce(
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
         useScannerStore.getState().setLastError(error instanceof Error ? error : new Error(String(error)));
     } finally {
+        if (shouldStop) {
+            await reportCurrentStatusAfterStop();
+        }
         isRunning = false;
         useScannerStore.getState().setIsRunning(false);
     }
