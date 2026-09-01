@@ -46,8 +46,11 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
         needsLocalUri ? null : { assetId: video.id, uri: video.uri }
     ));
     const [isFullscreen, setIsFullscreen] = useState(false);
-    const [isNativeFullscreen, setIsNativeFullscreen] = useState(false);
+    const [nativeFullscreenUpdate, setNativeFullscreenUpdate] = useState<VideoFullscreenUpdate | null>(null);
     const fullscreenVideoRef = useRef<Video>(null);
+
+    const isNativeFullscreen = nativeFullscreenUpdate === VideoFullscreenUpdate.PLAYER_WILL_PRESENT
+        || nativeFullscreenUpdate === VideoFullscreenUpdate.PLAYER_DID_PRESENT;
 
     const resolvePlaybackUri = useCallback(async () => {
         if (!needsLocalUri) return video.uri;
@@ -113,15 +116,14 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
             // the fullscreen callback will retry once it reports DID_PRESENT.
             console.warn('[VideoFeedItem] Failed to dismiss fullscreen video:', error);
         });
-    }, [isNativeFullscreen, isScreenFocused]);
+    }, [isNativeFullscreen, isScreenFocused, nativeFullscreenUpdate]);
 
     const handleFullscreenUpdate = useCallback((event: VideoFullscreenUpdateEvent) => {
         if (Platform.OS !== 'ios') return;
 
-        setIsNativeFullscreen(
-            event.fullscreenUpdate === VideoFullscreenUpdate.PLAYER_WILL_PRESENT
-            || event.fullscreenUpdate === VideoFullscreenUpdate.PLAYER_DID_PRESENT
-        );
+        // Keep the concrete event, not only a boolean, so a dismiss request
+        // rejected during presentation is retried when DID_PRESENT arrives.
+        setNativeFullscreenUpdate(event.fullscreenUpdate);
     }, []);
 
     useEffect(() => {
