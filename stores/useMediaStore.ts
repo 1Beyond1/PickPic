@@ -9,6 +9,8 @@ export interface PhotoAsset extends MediaLibrary.Asset {
     // Add any custom properties if needed later
 }
 
+export type MediaPermissionScope = 'none' | 'limited' | 'full';
+
 interface MediaState {
     photos: PhotoAsset[];
     videos: PhotoAsset[];
@@ -32,6 +34,7 @@ interface MediaState {
     isConfirmingDeletion: boolean;
     isConfirmingVideoTrash: boolean;
     hasPermission: boolean;
+    permissionScope: MediaPermissionScope | null;
     hasHydrated: boolean;
 
     // Actions
@@ -62,6 +65,7 @@ interface MediaState {
     resetPhotoProgress: () => void;
     resetVideoProgress: () => void;
     setPermission: (status: boolean) => void;
+    setPermissionScope: (scope: MediaPermissionScope) => void;
     setHasHydrated: (status: boolean) => void;
 }
 
@@ -331,9 +335,13 @@ export const useMediaStore = create<MediaState>()(
     isConfirmingDeletion: false,
     isConfirmingVideoTrash: false,
     hasPermission: false,
+    permissionScope: null,
     hasHydrated: false,
 
     setPermission: (status) => set({ hasPermission: status }),
+    setPermissionScope: (scope) => set((state) => (
+        state.permissionScope === scope ? state : { permissionScope: scope }
+    )),
     setHasHydrated: (status) => set({ hasHydrated: status }),
 
     loadAlbums: async () => {

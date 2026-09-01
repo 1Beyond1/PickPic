@@ -4,11 +4,12 @@ import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { ScalablePressable } from '../components/ScalablePressable'; // Import ScalablePressable
 import { BORDER_RADIUS, SPACING } from '../constants/theme';
 import { useThemeColor } from '../hooks/useThemeColor';
+import { useMediaStore } from '../stores/useMediaStore';
 
 export default function PhotoDetailScreen() {
     const router = useRouter();
@@ -21,7 +22,24 @@ export default function PhotoDetailScreen() {
     const [shareUri, setShareUri] = useState<string | null>(() => (
         needsLocalUri ? null : uri
     ));
+    const permissionScope = useMediaStore(state => state.permissionScope);
+    const previousPermissionScopeRef = useRef<typeof permissionScope>(null);
     const { colors, isDark } = useThemeColor();
+
+    useEffect(() => {
+        if (permissionScope === null) return;
+
+        const previousScope = previousPermissionScopeRef.current;
+        previousPermissionScopeRef.current = permissionScope;
+        if (previousScope === null || previousScope === permissionScope) return;
+
+        // The URI in the route may refer to a photo that was removed from a
+        // limited grant. Leave the detail screen before it can keep showing
+        // that old route snapshot.
+        if (permissionScope !== 'none') {
+            router.replace('/(tabs)/photos');
+        }
+    }, [permissionScope, router]);
 
     const resolveShareUri = useCallback(async () => {
         if (!assetId || !needsLocalUri) return uri;

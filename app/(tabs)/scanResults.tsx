@@ -17,6 +17,7 @@ import { AssetRepository, DupGroupRepository } from '../../database';
 import { CategoryGroup, useAICategories } from '../../hooks/useAICategories';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
+import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
 interface BlurryPhoto {
@@ -40,6 +41,7 @@ export default function ScanResultsScreen() {
     const { t } = useI18n();
 
     const { enableAIClassification } = useSettingsStore();
+    const permissionScope = useMediaStore(state => state.permissionScope);
 
     const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'ai'>('blur');
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
@@ -53,6 +55,7 @@ export default function ScanResultsScreen() {
         origin: { x: number; y: number; width: number; height: number };
     } | null>(null);
     const [processedGroupIds, setProcessedGroupIds] = useState<Set<string>>(new Set());
+    const previousPermissionScopeRef = useRef<typeof permissionScope>(null);
 
     // AI Categories Hook
     // Category loading reads the complete DONE snapshot. Defer that work
@@ -268,6 +271,31 @@ export default function ScanResultsScreen() {
     // Category Detail State
     const [selectedCategory, setSelectedCategory] = useState<CategoryGroup | null>(null);
     const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (permissionScope === null) return;
+
+        const previousScope = previousPermissionScopeRef.current;
+        previousPermissionScopeRef.current = permissionScope;
+        if (previousScope === null || previousScope === permissionScope) return;
+
+        // Invalidate and clear every result surface immediately. Otherwise a
+        // full-access snapshot can remain visible while the new permission
+        // scope is still being loaded.
+        loadRequestIdRef.current += 1;
+        setBlurryPhotos([]);
+        setSimilarGroups([]);
+        setSelectedSimilarGroup(null);
+        setSelectedCategory(null);
+        setSelectedPhoto(null);
+
+        if (permissionScope !== 'none') {
+            void loadResults();
+        }
+        if (activeTab === 'ai' && enableAIClassification) {
+            void refreshAI();
+        }
+    }, [activeTab, enableAIClassification, loadResults, permissionScope, refreshAI]);
 
     const getCategoryDisplayTitle = (title: string): string => {
         const categoryTitleKey = `ai_category_${title}`;

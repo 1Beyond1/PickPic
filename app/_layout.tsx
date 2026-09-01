@@ -74,6 +74,7 @@ export default function RootLayout() {
       }
     }
 
+    useMediaStore.getState().setPermissionScope(currentScope);
     mediaPermissionScopeRef.current = currentScope;
   }, [mediaPermission]);
 

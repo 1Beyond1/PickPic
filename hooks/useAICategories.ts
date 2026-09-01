@@ -69,6 +69,12 @@ export function useAICategories(enabled = true): AICategoriesState {
     const loadCategories = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
         setIsLoading(true);
+        // Do not keep rendering a category snapshot while its permission
+        // scope is being revalidated. A scope change can make every asset in
+        // the previous snapshot inaccessible.
+        setPeopleGroups([]);
+        setObjectGroups([]);
+        setUncategorizedGroup(null);
         try {
             // Read one completed-asset snapshot so people and object
             // categories use the same dataset and large libraries are not
