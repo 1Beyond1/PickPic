@@ -46,6 +46,19 @@ async function getCurrentlyVisibleQueuedAssets<T extends { id: string }>(
     return assets.filter((_, index) => visible[index]);
 }
 
+function retainHiddenQueuedAssetIds(
+    hiddenIds: readonly string[] | null,
+    remainingAssetIds: readonly string[],
+): string[] {
+    const remainingIds = new Set(remainingAssetIds);
+    if (hiddenIds === null) {
+        // A null hidden list means visibility has not been resolved yet. Keep
+        // every remaining queue item hidden until a fresh check completes.
+        return Array.from(remainingIds);
+    }
+    return Array.from(new Set(hiddenIds.filter(id => remainingIds.has(id))));
+}
+
 interface MediaState {
     photos: PhotoAsset[];
     videos: PhotoAsset[];
@@ -744,16 +757,32 @@ export const useMediaStore = create<MediaState>()(
                     currentIndex: 0,
                     deleteQueue: [],
                     collectionQueue: [],
-                    hiddenQueuedAssetIds: state.permissionScope === 'full' ? null : [],
+                    hiddenQueuedAssetIds: state.permissionScope === 'full'
+                        ? null
+                        : retainHiddenQueuedAssetIds(
+                            state.hiddenQueuedAssetIds,
+                            state.videoTrashBin.map(video => video.id),
+                        ),
                 };
             }
 
+            const deleteQueue = state.deleteQueue.filter(asset => !selectedIds.has(asset.id));
+            const collectionQueue = state.collectionQueue.filter(asset => !selectedIds.has(asset.id));
             return {
                 photos: [],
                 currentIndex: 0,
-                deleteQueue: state.deleteQueue.filter(asset => !selectedIds.has(asset.id)),
-                collectionQueue: state.collectionQueue.filter(asset => !selectedIds.has(asset.id)),
-                hiddenQueuedAssetIds: state.hiddenQueuedAssetIds?.filter(id => !selectedIds.has(id)) ?? null,
+                deleteQueue,
+                collectionQueue,
+                hiddenQueuedAssetIds: state.permissionScope === 'full'
+                    ? null
+                    : retainHiddenQueuedAssetIds(
+                        state.hiddenQueuedAssetIds,
+                        [
+                            ...deleteQueue.map(asset => asset.id),
+                            ...collectionQueue.map(asset => asset.id),
+                            ...state.videoTrashBin.map(video => video.id),
+                        ],
+                    ),
             };
         });
     },
@@ -768,7 +797,12 @@ export const useMediaStore = create<MediaState>()(
                 photos: [],
                 deleteQueue: [],
                 collectionQueue: [],
-                hiddenQueuedAssetIds: state.permissionScope === 'full' ? null : [],
+                hiddenQueuedAssetIds: state.permissionScope === 'full'
+                    ? null
+                    : retainHiddenQueuedAssetIds(
+                        state.hiddenQueuedAssetIds,
+                        state.videoTrashBin.map(video => video.id),
+                    ),
             });
     },
 
@@ -781,7 +815,15 @@ export const useMediaStore = create<MediaState>()(
                 videoProcessedIds: [],
                 videos: [],
                 videoTrashBin: [],
-                hiddenQueuedAssetIds: state.permissionScope === 'full' ? null : [],
+                hiddenQueuedAssetIds: state.permissionScope === 'full'
+                    ? null
+                    : retainHiddenQueuedAssetIds(
+                        state.hiddenQueuedAssetIds,
+                        [
+                            ...state.deleteQueue.map(asset => asset.id),
+                            ...state.collectionQueue.map(asset => asset.id),
+                        ],
+                    ),
             });
     },
 
