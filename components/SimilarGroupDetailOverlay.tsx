@@ -26,7 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AssetRepository } from '../database';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
-import { useMediaStore } from '../stores/useMediaStore';
+import { getCurrentlyVisibleAssetIds, useMediaStore } from '../stores/useMediaStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const COLUMN_COUNT = 3;
@@ -186,6 +186,10 @@ export function SimilarGroupDetailOverlay({
                         isDeletingRef.current = true;
                         setIsDeleting(true);
                         try {
+                            const visibleIds = await getCurrentlyVisibleAssetIds(assetIds, 'photo');
+                            if (visibleIds.size !== selectedAssetIds.size) {
+                                throw new Error('One or more selected photos are no longer available');
+                            }
                             const deleted = await MediaLibrary.deleteAssetsAsync(assetIds);
                             if (!deleted) {
                                 throw new Error('Media library did not confirm deletion');
@@ -233,6 +237,10 @@ export function SimilarGroupDetailOverlay({
         setIsDeleting(true);
 
         try {
+            const visibleIds = await getCurrentlyVisibleAssetIds([photoToDelete.assetId], 'photo');
+            if (!visibleIds.has(photoToDelete.assetId)) {
+                throw new Error('Photo is no longer available');
+            }
             const deleted = await MediaLibrary.deleteAssetsAsync([photoToDelete.assetId]);
             if (!deleted) {
                 throw new Error('Media library did not confirm deletion');

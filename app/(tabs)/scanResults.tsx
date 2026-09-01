@@ -17,7 +17,7 @@ import { AssetRepository, DupGroupRepository } from '../../database';
 import { CategoryGroup, useAICategories } from '../../hooks/useAICategories';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
-import { useMediaStore } from '../../stores/useMediaStore';
+import { getCurrentlyVisibleAssetIds, useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
 interface BlurryPhoto {
@@ -212,6 +212,10 @@ export default function ScanResultsScreen() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
+                            const visibleIds = await getCurrentlyVisibleAssetIds([assetId], 'photo');
+                            if (!visibleIds.has(assetId)) {
+                                throw new Error('Photo is no longer available');
+                            }
                             const deleted = await MediaLibrary.deleteAssetsAsync([assetId]);
                             if (!deleted) {
                                 throw new Error('Media library did not confirm deletion');

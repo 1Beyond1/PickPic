@@ -10,40 +10,49 @@ export interface PhotoAsset extends MediaLibrary.Asset {
 }
 
 export type MediaPermissionScope = 'none' | 'limited' | 'full';
+export type MediaType = 'photo' | 'video';
+
+export async function getCurrentlyVisibleAssetIds(
+    assetIds: readonly string[],
+    mediaType: MediaType,
+): Promise<ReadonlySet<string>> {
+    const requestedIds = Array.from(new Set(assetIds));
+    if (requestedIds.length === 0) return new Set();
+
+    let permission: MediaLibrary.PermissionResponse;
+    try {
+        permission = await MediaLibrary.getPermissionsAsync(false, [mediaType]);
+    } catch (error) {
+        console.warn(`[MediaStore] Failed to verify ${mediaType} asset visibility:`, error);
+        return new Set();
+    }
+
+    if (!permission.granted) return new Set();
+
+    const visible = await Promise.all(requestedIds.map(async assetId => {
+        try {
+            const info = await MediaLibrary.getAssetInfoAsync(assetId, {
+                shouldDownloadFromNetwork: false,
+            });
+            return info?.id === assetId ? assetId : null;
+        } catch {
+            return null;
+        }
+    }));
+
+    return new Set(visible.filter((assetId): assetId is string => assetId !== null));
+}
 
 async function getCurrentlyVisibleQueuedAssets<T extends { id: string }>(
     assets: readonly T[],
     mediaType: MediaType,
 ): Promise<T[]> {
     if (assets.length === 0) return [];
-
-    let permission: MediaLibrary.PermissionResponse;
-    try {
-        permission = await MediaLibrary.getPermissionsAsync(false, [mediaType]);
-    } catch (error) {
-        // A failed permission read must not turn a stale persisted queue into
-        // an actionable delete request. The user can retry after the native
-        // permission service becomes available again.
-        console.warn(`[MediaStore] Failed to verify ${mediaType} queue visibility:`, error);
-        return [];
-    }
-
-    if (!permission.granted) return [];
-
-    const visible = await Promise.all(assets.map(async asset => {
-        try {
-            const info = await MediaLibrary.getAssetInfoAsync(asset.id, {
-                shouldDownloadFromNetwork: false,
-            });
-            return info?.id === asset.id;
-        } catch {
-            // Fail closed at the destructive-action boundary. A later retry
-            // can recover from a transient native lookup failure.
-            return false;
-        }
-    }));
-
-    return assets.filter((_, index) => visible[index]);
+    const visibleIds = await getCurrentlyVisibleAssetIds(
+        assets.map(asset => asset.id),
+        mediaType,
+    );
+    return assets.filter(asset => visibleIds.has(asset.id));
 }
 
 function retainHiddenQueuedAssetIds(
@@ -125,8 +134,6 @@ interface MediaState {
     getVisibleProcessedCounts: () => Promise<{ photos: number; videos: number }>;
     setHasHydrated: (status: boolean) => void;
 }
-
-type MediaType = 'photo' | 'video';
 
 interface OrderedAlbumPage {
     albumId: string;
