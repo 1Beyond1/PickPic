@@ -81,6 +81,7 @@ export default function RootLayout() {
     mediaStore.setPermissionScope(currentScope);
     if (mediaHasHydrated && (!queueVisibilityInitializedRef.current || scopeChanged)) {
       mediaStore.refreshQueuedAssetVisibility(currentScope);
+      mediaStore.pruneUnavailableQueuedAssets(currentScope);
       queueVisibilityInitializedRef.current = true;
     }
     if (scopeChanged) {
@@ -152,6 +153,7 @@ export default function RootLayout() {
         mediaStore.notifyPermissionRefresh();
       } else {
         mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none');
+        mediaStore.pruneUnavailableQueuedAssets(mediaPermissionScopeRef.current ?? 'none');
         mediaStore.notifyMediaLibraryRefresh();
       }
       if (isScanning()) {
@@ -183,6 +185,7 @@ export default function RootLayout() {
             const refreshedStore = useMediaStore.getState();
             refreshedStore.setPermissionScope(refreshedScope);
             refreshedStore.refreshQueuedAssetVisibility(refreshedScope);
+            refreshedStore.pruneUnavailableQueuedAssets(refreshedScope);
           })
           .catch(error => {
             console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);

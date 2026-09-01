@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AssetRepository } from '../database';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
+import { useMediaStore } from '../stores/useMediaStore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const COLUMN_COUNT = 3;
@@ -189,6 +190,7 @@ export function SimilarGroupDetailOverlay({
                             if (!deleted) {
                                 throw new Error('Media library did not confirm deletion');
                             }
+                            useMediaStore.getState().removeDeletedAssets(assetIds);
                             for (const assetId of assetIds) {
                                 try {
                                     await AssetRepository.removeAssetAndDerivedData(assetId);
@@ -235,6 +237,7 @@ export function SimilarGroupDetailOverlay({
             if (!deleted) {
                 throw new Error('Media library did not confirm deletion');
             }
+            useMediaStore.getState().removeDeletedAssets([photoToDelete.assetId]);
             try {
                 await AssetRepository.removeAssetAndDerivedData(photoToDelete.assetId);
             } catch (cleanupError) {

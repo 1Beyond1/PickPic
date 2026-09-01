@@ -75,6 +75,8 @@ interface MediaState {
     markVideoForTrash: (asset: PhotoAsset) => void;
     markVideoAsProcessed: (asset: PhotoAsset) => void;
     restoreFromTrash: (assetId: string) => void;
+    removeDeletedAssets: (assetIds: readonly string[]) => void;
+    pruneUnavailableQueuedAssets: (scope: MediaPermissionScope) => void;
 
     confirmDeletion: (assetIds?: readonly string[]) => Promise<void>;
     confirmVideoTrash: (assetIds?: readonly string[]) => Promise<void>;
@@ -338,6 +340,7 @@ let photoLoadRequestId = 0;
 let totalCountsRequestId = 0;
 let videoLoadRequestId = 0;
 let queueVisibilityRequestId = 0;
+let queuePruneRequestId = 0;
 
 export const useMediaStore = create<MediaState>()(
     persist(
@@ -620,8 +623,53 @@ export const useMediaStore = create<MediaState>()(
                     videoTrashBin: state.videoTrashBin.filter(v => v.id !== assetId),
                     videos: [asset, ...state.videos],
                     videoProcessedIds: state.videoProcessedIds.filter(id => id !== assetId)
-                });
+            });
         }
+    },
+
+    removeDeletedAssets: (assetIds) => {
+        const deletedIds = new Set(assetIds);
+        if (deletedIds.size === 0) return;
+
+        set((state) => ({
+            deleteQueue: state.deleteQueue.filter(asset => !deletedIds.has(asset.id)),
+            collectionQueue: state.collectionQueue.filter(asset => !deletedIds.has(asset.id)),
+            videoTrashBin: state.videoTrashBin.filter(asset => !deletedIds.has(asset.id)),
+            photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
+            videoProcessedIds: state.videoProcessedIds.filter(id => !deletedIds.has(id)),
+            hiddenQueuedAssetIds: state.hiddenQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
+        }));
+    },
+
+    pruneUnavailableQueuedAssets: (scope) => {
+        const requestId = ++queuePruneRequestId;
+        if (scope !== 'full') return;
+
+        const queuedAssetIds = Array.from(new Set([
+            ...get().deleteQueue,
+            ...get().collectionQueue,
+            ...get().videoTrashBin,
+        ].map(asset => asset.id)));
+        if (queuedAssetIds.length === 0) return;
+
+        void Promise.all(queuedAssetIds.map(async assetId => {
+            try {
+                const info = await MediaLibrary.getAssetInfoAsync(assetId, {
+                    shouldDownloadFromNetwork: false,
+                });
+                return info?.id === assetId ? null : assetId;
+            } catch {
+                // A transient native lookup failure must not discard a queue
+                // item that may still be recoverable.
+                return null;
+            }
+        })).then(unavailableAssetIds => {
+            if (requestId !== queuePruneRequestId) return;
+            const idsToRemove = unavailableAssetIds.filter((assetId): assetId is string => assetId !== null);
+            if (idsToRemove.length > 0) {
+                get().removeDeletedAssets(idsToRemove);
+            }
+        });
     },
 
     resetBatch: (assetIds) => {
@@ -701,7 +749,6 @@ export const useMediaStore = create<MediaState>()(
             if (!deleted) {
                 throw new Error('Media library did not confirm photo deletion');
             }
-            const deletedIds = new Set(ids);
             for (const id of ids) {
                 try {
                     await AssetRepository.removeAssetAndDerivedData(id);
@@ -716,11 +763,7 @@ export const useMediaStore = create<MediaState>()(
             // Deleted media no longer needs review progress. Removing its IDs
             // keeps the progress count meaningful and prevents the persisted
             // list from growing forever as the user cleans up their library.
-            set((state) => ({
-                deleteQueue: state.deleteQueue.filter(asset => !deletedIds.has(asset.id)),
-                photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
-                hiddenQueuedAssetIds: state.hiddenQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
-            }));
+            get().removeDeletedAssets(ids);
         } catch (e) {
             // Keep the queue so the user can retry after fixing permissions or
             // another temporary media-library failure.
@@ -753,11 +796,7 @@ export const useMediaStore = create<MediaState>()(
             if (!deleted) {
                 throw new Error('Media library did not confirm video deletion');
             }
-            set((state) => ({
-                videoTrashBin: state.videoTrashBin.filter(video => !deletedIds.has(video.id)),
-                videoProcessedIds: state.videoProcessedIds.filter(id => !deletedIds.has(id)),
-                hiddenQueuedAssetIds: state.hiddenQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
-            }));
+            get().removeDeletedAssets(Array.from(deletedIds));
         } catch (e) {
             console.error("Video deletion failed", e);
             throw e;
