@@ -171,6 +171,13 @@ export default function RootLayout() {
         mediaStore.refreshQueuedAssetVisibility('none');
         mediaStore.notifyPermissionRefresh();
       } else {
+        const deletedAssetIds = event.deletedAssets?.map(asset => asset.id) ?? [];
+        if (deletedAssetIds.length > 0) {
+          // Incremental deletion events identify media that is genuinely gone.
+          // Permission-scope changes use hasIncrementalChanges=false and must
+          // not remove progress that may become visible again later.
+          mediaStore.removeDeletedAssets(deletedAssetIds);
+        }
         mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none');
         mediaStore.pruneUnavailableQueuedAssets(mediaPermissionScopeRef.current ?? 'none');
         mediaStore.notifyMediaLibraryRefresh();
