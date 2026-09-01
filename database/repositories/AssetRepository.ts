@@ -28,6 +28,12 @@ export interface PendingAsset {
     taken_at: number | null;
 }
 
+export interface BlurryAsset {
+    asset_id: string;
+    blur_score: number;
+    mean_luma: number;
+}
+
 const BATCH_SIZE = 20;
 
 interface AssetScope {
@@ -587,6 +593,42 @@ export const AssetRepository = {
         });
 
         return recentAssets.slice(0, limit);
+    },
+
+    /**
+     * Get the lowest-scoring completed assets, optionally restricted to a
+     * permission-visible set. Apply the scope before LIMIT so hidden local
+     * index rows cannot crowd visible results out of the result window.
+     */
+    async getBlurryAssets(
+        assetIds?: readonly string[],
+        limit: number = 50
+    ): Promise<BlurryAsset[]> {
+        if (limit <= 0) return [];
+
+        const db = await getDatabase();
+        const blurryAssets: BlurryAsset[] = [];
+
+        for (const assetIdBatch of splitAssetIds(assetIds)) {
+            if (assetIdBatch !== undefined && assetIdBatch.length === 0) continue;
+
+            const scope = createAssetScope(assetIdBatch);
+            blurryAssets.push(...await db.getAllAsync<BlurryAsset>(
+                `SELECT asset_id, blur_score, mean_luma FROM assets
+                 WHERE status = ? AND blur_score < ?${scope.clause}
+                 ORDER BY blur_score ASC, asset_id ASC
+                 LIMIT ?`,
+                [AssetStatus.DONE, 100, ...scope.params, limit]
+            ));
+        }
+
+        if (assetIds === undefined) return blurryAssets;
+
+        blurryAssets.sort((a, b) => {
+            if (a.blur_score !== b.blur_score) return a.blur_score - b.blur_score;
+            return a.asset_id.localeCompare(b.asset_id);
+        });
+        return blurryAssets.slice(0, limit);
     },
 
     /**

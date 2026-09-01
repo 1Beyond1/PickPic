@@ -35,6 +35,41 @@ interface SimilarGroup {
     representativeUri?: string;
 }
 
+const RESULTS_MEDIA_PAGE_SIZE = 100;
+
+/**
+ * Resolve photo IDs visible to the current permission scope. A missing set
+ * means full access; an empty set means no photo access.
+ */
+async function getVisiblePhotoIdsForResults(): Promise<ReadonlySet<string> | undefined> {
+    const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+    if (!permission.granted) return new Set();
+    if (permission.accessPrivileges !== 'limited') return undefined;
+
+    const visibleIds = new Set<string>();
+    let after: string | undefined;
+
+    while (true) {
+        const result = await MediaLibrary.getAssetsAsync({
+            mediaType: 'photo',
+            first: RESULTS_MEDIA_PAGE_SIZE,
+            ...(after ? { after } : {}),
+        });
+
+        for (const asset of result.assets) {
+            visibleIds.add(asset.id);
+        }
+
+        if (!result.hasNextPage) break;
+        if (!result.endCursor || result.endCursor === after) {
+            throw new Error('Media library returned an invalid pagination cursor while reading visible scan results');
+        }
+        after = result.endCursor;
+    }
+
+    return visibleIds;
+}
+
 export default function ScanResultsScreen() {
     const insets = useSafeAreaInsets();
     const { colors } = useThemeColor();
@@ -77,11 +112,10 @@ export default function ScanResultsScreen() {
         setLoading(true);
         try {
             // Load blurry photos (blur_score < 100)
-            const db = await import('../../database').then(m => m.getDatabase());
-            const blurryAssets = await db.getAllAsync<{ asset_id: string; blur_score: number; mean_luma: number }>(
-                `SELECT asset_id, blur_score, mean_luma FROM assets 
-         WHERE status = 1 AND blur_score < 100 
-         ORDER BY blur_score ASC LIMIT 50`
+            const visiblePhotoIds = await getVisiblePhotoIdsForResults();
+            const blurryAssets = await AssetRepository.getBlurryAssets(
+                visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds),
+                50,
             );
 
             const blurryWithUris: (BlurryPhoto | null)[] = await Promise.all(
