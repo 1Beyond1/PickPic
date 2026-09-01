@@ -91,33 +91,57 @@ function MLBridgeInner() {
     // Image Labeling
     const labeler = useImageLabeling('efficientnet');
 
-    // The queue becomes available only after the labeling hook has a usable
-    // model. This prevents requests from being accepted during model startup.
+    // The queue becomes available only after both native ML components are
+    // ready. The face detector initializes independently from the labeler;
+    // accepting a request as soon as the labeler is loaded can otherwise send
+    // detectFaces to iOS while its native detector is still being created.
     useEffect(() => {
         const labelerState = labeler as unknown as {
             isLoaded?: boolean | (() => boolean);
         } | undefined;
-        let modelReady = false;
+        let readyCheck: ReturnType<typeof setInterval> | null = null;
+        let didBecomeReady = false;
 
-        try {
-            const loadedState = labelerState?.isLoaded;
-            modelReady = typeof loadedState === 'function'
-                ? loadedState.call(labeler)
-                : loadedState === true;
-        } catch (error) {
-            console.warn('[MLBridge] Failed to check model readiness:', error);
+        const checkReadiness = () => {
+            let modelReady = false;
+
+            try {
+                const loadedState = labelerState?.isLoaded;
+                modelReady = typeof loadedState === 'function'
+                    ? loadedState.call(labeler)
+                    : loadedState === true;
+            } catch (error) {
+                console.warn('[MLBridge] Failed to check model readiness:', error);
+            }
+
+            const faceDetectorStatus = faceDetector.status;
+            const faceDetectorReady = faceDetectorStatus === 'ready'
+                || faceDetectorStatus === 'detecting'
+                || faceDetectorStatus === 'done';
+
+            if (!modelReady || !faceDetectorReady) {
+                mlBridgeQueue.markUnavailable();
+                return;
+            }
+
+            mlBridgeQueue.markReady();
+            if (!didBecomeReady) {
+                didBecomeReady = true;
+                if (readyCheck) clearInterval(readyCheck);
+                console.log('[MLBridge] Ready state set');
+            }
+        };
+
+        checkReadiness();
+        if (!didBecomeReady) {
+            readyCheck = setInterval(checkReadiness, 100);
         }
 
-        if (!modelReady) {
+        return () => {
+            if (readyCheck) clearInterval(readyCheck);
             mlBridgeQueue.markUnavailable();
-            return;
-        }
-
-        mlBridgeQueue.markReady();
-        console.log('[MLBridge] Ready state set');
-
-        return () => mlBridgeQueue.markUnavailable();
-    }, [labeler]);
+        };
+    }, [labeler, faceDetector]);
 
     // Poll for new requests
     useEffect(() => {

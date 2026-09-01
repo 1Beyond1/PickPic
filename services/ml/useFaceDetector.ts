@@ -9,6 +9,8 @@ export interface FaceDetectorResult {
 
 export interface FaceDetectorLike {
     detectFaces(imageUri: string): Promise<FaceDetectorResult | undefined>;
+    /** Native detector status; absent means the platform has no ML support. */
+    status?: string;
 }
 
 // The app's supported native platforms provide the real implementation in
