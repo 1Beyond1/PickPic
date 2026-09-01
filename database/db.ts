@@ -46,16 +46,29 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
 async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
     console.log('[DB] Opening database...');
 
-    const db = await SQLite.openDatabaseAsync(DB_NAME);
+    let db: SQLite.SQLiteDatabase | null = null;
+    try {
+        db = await SQLite.openDatabaseAsync(DB_NAME);
 
-    // Enable WAL mode for better performance
-    await db.execAsync('PRAGMA journal_mode = WAL;');
+        // Enable WAL mode for better performance
+        await db.execAsync('PRAGMA journal_mode = WAL;');
 
-    // Run migrations
-    await runMigrations(db);
+        // Run migrations
+        await runMigrations(db);
 
-    console.log('[DB] Database ready.');
-    return db;
+        console.log('[DB] Database ready.');
+        return db;
+    } catch (error) {
+        // Opening succeeds before PRAGMA/migrations run. If either step fails,
+        // close that handle before allowing a retry so a transient failure
+        // cannot accumulate open connections or leave a lock behind.
+        if (db) {
+            await db.closeAsync().catch(closeError => {
+                console.warn('[DB] Failed to close an aborted initialization:', closeError);
+            });
+        }
+        throw error;
+    }
 }
 
 /**

@@ -413,13 +413,13 @@ async function resetOutdatedAssets(assetIds?: readonly string[]): Promise<void> 
     const resetAssetIds = await AssetRepository.resetOutdatedAssets(globalVersion, assetIds);
 
     if (resetAssetIds.length > 0) {
-        if (assetIds === undefined) {
-            // A full scan invalidates the complete duplicate index.
-            await DupGroupRepository.deleteAll();
-        } else {
-            // A limited/album scan must not discard groups outside its scope.
-            await DupGroupRepository.removeAssetsFromGroups(resetAssetIds);
-        }
+        // Only outdated assets need to be rescanned. Remove their stale
+        // memberships, but do not discard unaffected or out-of-scope group
+        // members while preparing this scan.
+        await DupGroupRepository.removeAssetsFromGroups(
+            resetAssetIds,
+            assetIds !== undefined
+        );
         await MetaRepository.resetScanCursor();
         console.log(`[AIScanner] Reset ${resetAssetIds.length} outdated assets.`);
     }
@@ -448,7 +448,8 @@ async function rewindCursorForPendingAssets(): Promise<void> {
  */
 async function processAsset(
     assetId: string,
-    similarityCandidateAssetIds?: readonly string[]
+    similarityCandidateAssetIds: readonly string[] | undefined,
+    preserveSingletonGroups: boolean
 ): Promise<boolean> {
     const imageOps = getImageOps();
     let gray: GrayImageRef | null = null;
@@ -573,59 +574,44 @@ async function processAsset(
             }
         }
 
-        // Mark as done (with face count)
-        await AssetRepository.markDone(
+        // Compute candidates before publishing the new result. The database
+        // method below then commits the base result and the group mutation in
+        // one transaction, closing the DONE-without-membership crash window.
+        const asset = await AssetRepository.getById(assetId);
+        const matches = asset && asset.taken_at !== null
+            ? await findSimilarPhotos(
+                phash,
+                asset.taken_at,
+                assetId,
+                undefined,
+                similarityCandidateAssetIds
+            )
+            : [];
+
+        const targetGroupId = await AssetRepository.markDoneWithDuplicateGroups(
             assetId,
             blurScore,
             meanLuma,
             phash,
             GLOBAL_ALGO_VERSION,
             faceCount,
-            labelsJson
+            labelsJson,
+            matches,
+            generateGroupId(),
+            preserveSingletonGroups
         );
 
-        // Duplicate grouping is supplemental to the base analysis above. A
-        // malformed legacy hash or a transient group-database failure should
-        // not erase a successfully committed blur/ML result by falling into
-        // the per-asset ERROR handler.
-        try {
-            const asset = await AssetRepository.getById(assetId);
-            if (asset && asset.taken_at) {
-                const matches = await findSimilarPhotos(
-                    phash,
-                    asset.taken_at,
-                    assetId,
-                    undefined,
-                    similarityCandidateAssetIds
+        if (targetGroupId) {
+            // Best-shot metadata is recoverable and must not turn an
+            // otherwise complete scan/group transaction into ERROR.
+            try {
+                await selectBestShot(targetGroupId);
+            } catch (bestShotError) {
+                console.warn(
+                    `[AIScanner] Failed to update best shot for ${targetGroupId}:`,
+                    bestShotError
                 );
-
-                if (matches.length > 0) {
-                    const targetGroupId = await DupGroupRepository.addAssetToMatchingGroups(
-                        assetId,
-                        matches,
-                        generateGroupId()
-                    );
-
-                    if (targetGroupId) {
-                        // Best-shot metadata is recoverable and must not turn
-                        // an otherwise complete scan/group transaction into
-                        // ERROR.
-                        try {
-                            await selectBestShot(targetGroupId);
-                        } catch (bestShotError) {
-                            console.warn(
-                                `[AIScanner] Failed to update best shot for ${targetGroupId}:`,
-                                bestShotError
-                            );
-                        }
-                    }
-                }
             }
-        } catch (groupingError) {
-            console.warn(
-                `[AIScanner] Failed to update duplicate groups for ${assetId}; base result kept:`,
-                groupingError
-            );
         }
 
         return true;
@@ -637,7 +623,7 @@ async function processAsset(
 
         // Mark as error
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        await AssetRepository.markError(assetId, errorMessage);
+        await AssetRepository.markError(assetId, errorMessage, preserveSingletonGroups);
 
         console.warn(`[AIScanner] Failed to process asset ${assetId}:`, errorMessage);
         return false;
@@ -650,7 +636,8 @@ async function processAsset(
 async function processBatch(
     batchSize: number = BATCH_SIZE,
     assetIds?: readonly string[],
-    similarityCandidateAssetIds?: readonly string[]
+    similarityCandidateAssetIds?: readonly string[],
+    preserveSingletonGroups = false
 ): Promise<boolean> {
     const batch = assetIds
         ? await AssetRepository.getPendingBatchForAssetIds(assetIds, batchSize)
@@ -680,7 +667,11 @@ async function processBatch(
         }
 
         // Process asset
-        const success = await processAsset(asset.asset_id, similarityCandidateAssetIds);
+        const success = await processAsset(
+            asset.asset_id,
+            similarityCandidateAssetIds,
+            preserveSingletonGroups
+        );
 
         // Yield after each asset
         await yieldToMainThread();
@@ -797,7 +788,12 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
 
         // Process batches until done or stopped
         while (!shouldStop) {
-            const hasMore = await processBatch(BATCH_SIZE, scanAssetIds, scanAssetIds);
+            const hasMore = await processBatch(
+                BATCH_SIZE,
+                scanAssetIds,
+                scanAssetIds,
+                scanAssetIds !== undefined
+            );
             await reportProgress(scanAssetIds);
 
             if (!hasMore) {
@@ -908,7 +904,7 @@ export async function resumeOnce(
         if (shouldStop) return;
 
         // Process one batch
-        await processBatch(batchSize, assetIds, visiblePhotoIds);
+        await processBatch(batchSize, assetIds, visiblePhotoIds, true);
         await reportProgress(visiblePhotoIds);
 
         if (shouldStop) {

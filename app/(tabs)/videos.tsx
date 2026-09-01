@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
@@ -52,6 +52,16 @@ export default function VideosScreen() {
         : permissionScope === 'limited' && hasHydrated && hiddenQueuedAssetIds !== null
             ? videoTrashBin.filter(video => !hiddenQueueIds.has(video.id))
             : [];
+
+    // A refresh can replace the FlatList while this tab remains focused.
+    // The next viewability callback belongs to the new list, so carrying the
+    // previous list's active ID forward would incorrectly mark that old item
+    // as processed even though the user never swiped past it.
+    useLayoutEffect(() => {
+        if (!isLoading) return;
+        lastActiveIdRef.current = null;
+        setActiveId(null);
+    }, [isLoading]);
 
     const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
     useEffect(() => {

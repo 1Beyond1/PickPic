@@ -3,7 +3,11 @@
  */
 
 import { getDatabase, withTransaction } from '../db';
-import { repairDuplicateGroupsInDatabase } from './DupGroupRepository';
+import {
+    addAssetToMatchingGroupsInDatabase,
+    repairDuplicateGroupsInDatabase,
+} from './DupGroupRepository';
+import type { SimilarityCandidate } from './DupGroupRepository';
 import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
 
 export interface AssetRecord {
@@ -95,6 +99,50 @@ async function removeAssetsAndDerivedDataInDatabase(
     await db.runAsync(
         'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
     );
+}
+
+async function markDoneInDatabase(
+    db: Awaited<ReturnType<typeof getDatabase>>,
+    assetId: string,
+    blurScore: number,
+    meanLuma: number,
+    phash: string,
+    algoVersion: number,
+    faceCount: number,
+    labelsJson: string | null,
+    preserveSingletonGroups: boolean
+): Promise<void> {
+    await db.runAsync(
+        `UPDATE assets SET
+ status = ?, blur_score = ?, mean_luma = ?, phash = ?,
+ algo_version = ?, face_count = ?, labels_json = ?,
+ error_message = NULL, updated_at = ?
+WHERE asset_id = ?`,
+        [
+            AssetStatus.DONE,
+            blurScore,
+            meanLuma,
+            phash,
+            algoVersion,
+            faceCount,
+            labelsJson,
+            Date.now(),
+            assetId,
+        ]
+    );
+
+    // Remove the old membership while committing the new result so stale
+    // groups cannot survive a rescan. Scoped scans keep one-member groups as
+    // recovery seeds for members outside the current scope.
+    const removedDuplicateMembers = await db.runAsync(
+        'DELETE FROM dup_members WHERE asset_id = ?',
+        [assetId]
+    );
+    if (removedDuplicateMembers.changes > 0) {
+        await repairDuplicateGroupsInDatabase(db, {
+            removeSingletonGroups: !preserveSingletonGroups,
+        });
+    }
 }
 
 export const AssetRepository = {
@@ -405,45 +453,69 @@ export const AssetRepository = {
         labelsJson: string | null = null
     ): Promise<void> {
         await withTransaction(async db => {
-            await db.runAsync(
-                `UPDATE assets SET
-        status = ?, blur_score = ?, mean_luma = ?, phash = ?,
-        algo_version = ?, face_count = ?, labels_json = ?,
-        error_message = NULL, updated_at = ?
-       WHERE asset_id = ?`,
-                [
-                    AssetStatus.DONE,
-                    blurScore,
-                    meanLuma,
-                    phash,
-                    algoVersion,
-                    faceCount,
-                    labelsJson,
-                    Date.now(),
-                    assetId,
-                ]
+            await markDoneInDatabase(
+                db,
+                assetId,
+                blurScore,
+                meanLuma,
+                phash,
+                algoVersion,
+                faceCount,
+                labelsJson,
+                false
+            );
+        });
+    },
+
+    /**
+     * Commit a scan result and its duplicate membership atomically. The
+     * similarity query happens before this call, but all database writes that
+     * publish the result are part of one transaction, so a restart cannot see
+     * a current DONE asset without the group update that was computed for it.
+     */
+    async markDoneWithDuplicateGroups(
+        assetId: string,
+        blurScore: number,
+        meanLuma: number,
+        phash: string,
+        algoVersion: number,
+        faceCount: number,
+        labelsJson: string | null,
+        matches: readonly SimilarityCandidate[],
+        newGroupId: string,
+        preserveSingletonGroups = false
+    ): Promise<string | null> {
+        return withTransaction(async db => {
+            await markDoneInDatabase(
+                db,
+                assetId,
+                blurScore,
+                meanLuma,
+                phash,
+                algoVersion,
+                faceCount,
+                labelsJson,
+                preserveSingletonGroups
             );
 
-            // A content change invalidates the asset before its duplicate
-            // membership is removed in a follow-up transaction. If the app
-            // is killed in that gap, the next scan can mark the asset DONE
-            // again before the repair sees its temporary PENDING status.
-            // Remove the old membership while committing the new result so
-            // stale groups cannot survive that recovery path.
-            const removedDuplicateMembers = await db.runAsync(
-                'DELETE FROM dup_members WHERE asset_id = ?',
-                [assetId]
+            return addAssetToMatchingGroupsInDatabase(
+                db,
+                assetId,
+                matches,
+                newGroupId,
+                preserveSingletonGroups
             );
-            if (removedDuplicateMembers.changes > 0) {
-                await repairDuplicateGroupsInDatabase(db);
-            }
         });
     },
 
     /**
      * Mark asset as error
      */
-    async markError(assetId: string, errorMessage: string): Promise<void> {
+    async markError(
+        assetId: string,
+        errorMessage: string,
+        preserveSingletonGroups = false
+    ): Promise<void> {
         await withTransaction(async db => {
             await db.runAsync(
                 `UPDATE assets SET
@@ -452,6 +524,18 @@ export const AssetRepository = {
              labels_json = NULL, error_message = ?, updated_at = ?
              WHERE asset_id = ?`,
                 [AssetStatus.ERROR, errorMessage, Date.now(), assetId]
+            );
+
+            // An error must not leave an incomplete asset attached to a
+            // duplicate group. Keep one-member groups during scoped scans so
+            // inaccessible/out-of-scope members remain recoverable.
+            await db.runAsync('DELETE FROM dup_members WHERE asset_id = ?', [assetId]);
+            await db.runAsync('DELETE FROM face_instances WHERE asset_id = ?', [assetId]);
+            await repairDuplicateGroupsInDatabase(db, {
+                removeSingletonGroups: !preserveSingletonGroups,
+            });
+            await db.runAsync(
+                'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
             );
         });
     },
