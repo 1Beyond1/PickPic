@@ -11,23 +11,39 @@ export interface PhotoAsset extends MediaLibrary.Asset {
 
 export type MediaPermissionScope = 'none' | 'limited' | 'full';
 
-function getVisibleQueuedAssets<T extends { id: string }>(
+async function getCurrentlyVisibleQueuedAssets<T extends { id: string }>(
     assets: readonly T[],
-    permissionScope: MediaPermissionScope | null,
-    hiddenQueuedAssetIds: readonly string[] | null,
-): T[] {
-    // A null scope or an unresolved limited scope must fail closed. The root
-    // layout fills in the scope after permission hydration, and the async
-    // visibility check fills in hiddenQueuedAssetIds for limited access.
-    if (permissionScope === 'full' && hiddenQueuedAssetIds === null) {
-        return [...assets];
-    }
-    if (permissionScope !== 'limited' || hiddenQueuedAssetIds === null) {
+    mediaType: MediaType,
+): Promise<T[]> {
+    if (assets.length === 0) return [];
+
+    let permission: MediaLibrary.PermissionResponse;
+    try {
+        permission = await MediaLibrary.getPermissionsAsync(false, [mediaType]);
+    } catch (error) {
+        // A failed permission read must not turn a stale persisted queue into
+        // an actionable delete request. The user can retry after the native
+        // permission service becomes available again.
+        console.warn(`[MediaStore] Failed to verify ${mediaType} queue visibility:`, error);
         return [];
     }
 
-    const hiddenIds = new Set(hiddenQueuedAssetIds);
-    return assets.filter(asset => !hiddenIds.has(asset.id));
+    if (!permission.granted) return [];
+
+    const visible = await Promise.all(assets.map(async asset => {
+        try {
+            const info = await MediaLibrary.getAssetInfoAsync(asset.id, {
+                shouldDownloadFromNetwork: false,
+            });
+            return info?.id === asset.id;
+        } catch {
+            // Fail closed at the destructive-action boundary. A later retry
+            // can recover from a transient native lookup failure.
+            return false;
+        }
+    }));
+
+    return assets.filter((_, index) => visible[index]);
 }
 
 interface MediaState {
@@ -771,21 +787,28 @@ export const useMediaStore = create<MediaState>()(
 
     confirmDeletion: async (assetIds) => {
         if (get().isConfirmingDeletion) return;
-        const state = get();
-        const visibleDeleteQueue = getVisibleQueuedAssets(
-            state.deleteQueue,
-            state.permissionScope,
-            state.hiddenQueuedAssetIds,
-        );
         const requestedIds = assetIds === undefined ? null : new Set(assetIds);
-        const selectedDeleteQueue = visibleDeleteQueue.filter(asset => (
-            requestedIds === null || requestedIds.has(asset.id)
-        ));
-        const ids = Array.from(new Set(selectedDeleteQueue.map(asset => asset.id)));
-        if (ids.length === 0) return;
-
+        if (requestedIds?.size === 0) return;
         set({ isConfirmingDeletion: true });
         try {
+            const state = get();
+            const queueToVerify = requestedIds === null
+                ? state.deleteQueue
+                : state.deleteQueue.filter(asset => requestedIds.has(asset.id));
+            const visibleDeleteQueue = await getCurrentlyVisibleQueuedAssets(queueToVerify, 'photo');
+            const verifiedIds = new Set(visibleDeleteQueue.map(asset => asset.id));
+            // The queue can change while native visibility checks are in
+            // flight. Re-read it before selecting so an undo/removal wins
+            // over this confirmation, while newly-added entries are not
+            // deleted without having gone through the preflight.
+            const currentDeleteQueue = get().deleteQueue;
+            const selectedDeleteQueue = currentDeleteQueue.filter(asset => (
+                verifiedIds.has(asset.id)
+                && (requestedIds === null || requestedIds.has(asset.id))
+            ));
+            const ids = Array.from(new Set(selectedDeleteQueue.map(asset => asset.id)));
+            if (ids.length === 0) return;
+
             // Batch delete all at once - system will show ONE permission dialog
             const deleted = await MediaLibrary.deleteAssetsAsync(ids);
             if (!deleted) {
@@ -819,21 +842,24 @@ export const useMediaStore = create<MediaState>()(
 
     confirmVideoTrash: async (assetIds) => {
         if (get().isConfirmingVideoTrash) return;
-        const state = get();
-        const visibleVideoTrashBin = getVisibleQueuedAssets(
-            state.videoTrashBin,
-            state.permissionScope,
-            state.hiddenQueuedAssetIds,
-        );
         const requestedIds = assetIds === undefined ? null : new Set(assetIds);
-        const selectedVideoTrashBin = visibleVideoTrashBin.filter(video => (
-            requestedIds === null || requestedIds.has(video.id)
-        ));
-        const deletedIds = new Set(selectedVideoTrashBin.map(video => video.id));
-        if (deletedIds.size === 0) return;
-
+        if (requestedIds?.size === 0) return;
         set({ isConfirmingVideoTrash: true });
         try {
+            const state = get();
+            const queueToVerify = requestedIds === null
+                ? state.videoTrashBin
+                : state.videoTrashBin.filter(video => requestedIds.has(video.id));
+            const visibleVideoTrashBin = await getCurrentlyVisibleQueuedAssets(queueToVerify, 'video');
+            const verifiedIds = new Set(visibleVideoTrashBin.map(video => video.id));
+            const currentVideoTrashBin = get().videoTrashBin;
+            const selectedVideoTrashBin = currentVideoTrashBin.filter(video => (
+                verifiedIds.has(video.id)
+                && (requestedIds === null || requestedIds.has(video.id))
+            ));
+            const deletedIds = new Set(selectedVideoTrashBin.map(video => video.id));
+            if (deletedIds.size === 0) return;
+
             const deleted = await MediaLibrary.deleteAssetsAsync(selectedVideoTrashBin);
             if (!deleted) {
                 throw new Error('Media library did not confirm video deletion');
