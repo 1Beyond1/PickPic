@@ -296,6 +296,22 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
         throw new Error('Photo library access changed during scanning; please retry');
     }
 
+    if (startedWithLimitedPhotoAccess) {
+        // A limited-to-limited permission edit keeps the same coarse
+        // privilege value. Re-read the actual visible set before treating
+        // this sync as a stable snapshot; otherwise a pagination pass that
+        // straddled the edit could process assets from both selections.
+        const finalVisiblePhotoIds = await getVisiblePhotoIdsForStatus();
+        if (shouldStop) return null;
+        if (
+            finalVisiblePhotoIds === null
+            || finalVisiblePhotoIds.size !== seenAssetIds.size
+            || Array.from(finalVisiblePhotoIds).some(assetId => !seenAssetIds.has(assetId))
+        ) {
+            throw new Error('Photo selection changed during scanning; please retry');
+        }
+    }
+
     const hasFullPhotoAccess = !startedWithLimitedPhotoAccess;
 
     if (hasFullPhotoAccess) {
