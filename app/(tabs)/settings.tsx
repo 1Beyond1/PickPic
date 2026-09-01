@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -62,6 +62,7 @@ export default function SettingsScreen() {
     const { t } = useI18n();
     const { colors, isDark } = useThemeColor();
     const fonts = undefined; // Custom fonts feature removed
+    const aiClassificationAvailable = Platform.OS !== 'web';
 
     const {
         groupSize, setGroupSize,
@@ -216,6 +217,7 @@ export default function SettingsScreen() {
     };
 
     const handleToggleAIClassification = (value: boolean) => {
+        if (!aiClassificationAvailable) return;
         if (value) {
             setShowAIWarningModal(true);
         } else {
@@ -498,7 +500,7 @@ export default function SettingsScreen() {
                                 <Switch
                                     value={enableAIClassification}
                                     onValueChange={handleToggleAIClassification}
-                                    disabled={isRunning}
+                                    disabled={isRunning || !aiClassificationAvailable}
                                     trackColor={{ false: isDark ? '#333' : '#E0E0E0', true: colors.primary }}
                                     thumbColor={isDark ? '#FFF' : '#FFF'}
                                 />

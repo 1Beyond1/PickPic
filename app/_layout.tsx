@@ -32,6 +32,7 @@ export default function RootLayout() {
     aiGuideShownVersion,
     dismissAIGuide,
     enableAIClassification,
+    setEnableAIClassification,
     hasHydrated: settingsHydrated,
   } = useSettingsStore();
   const [showAnnouncement, setShowAnnouncement] = useState(false);
@@ -44,6 +45,15 @@ export default function RootLayout() {
   const pathnameRef = useRef(pathname);
   const queueVisibilityInitializedRef = useRef(false);
   const initialCheckDone = useRef(false);
+
+  // The ML Kit packages used by the scanner are native-only. Their web
+  // model hook throws during render, so a persisted native setting must not
+  // be allowed to mount the bridge on web.
+  useEffect(() => {
+    if (Platform.OS === 'web' && enableAIClassification) {
+      setEnableAIClassification(false);
+    }
+  }, [enableAIClassification, setEnableAIClassification]);
 
   useEffect(() => {
     pathnameRef.current = pathname;
@@ -339,7 +349,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.container}>
-      {enableAIClassification && <MLBridge />}
+      {enableAIClassification && Platform.OS !== 'web' && <MLBridge />}
       <StatusBar style="auto" />
       <Stack
         screenOptions={{
