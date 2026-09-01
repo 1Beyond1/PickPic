@@ -167,6 +167,16 @@ async function normalizeAlbumIds(albumIds: readonly string[]): Promise<string[]>
     return validAlbumIds;
 }
 
+async function assertAlbumsStillAvailable(albumIds: readonly string[]): Promise<void> {
+    if (albumIds.length === 0) return;
+
+    const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+    const availableAlbumIds = new Set(albums.map(album => album.id));
+    if (albumIds.some(albumId => !availableAlbumIds.has(albumId))) {
+        throw new Error('One or more selected albums are no longer available');
+    }
+}
+
 async function loadAlbumPage(
     state: OrderedAlbumPage,
     mediaType: MediaType,
@@ -286,15 +296,19 @@ async function loadAssetsForReview(
     }
 
     if (normalizedAlbumIds.length > 0 && displayOrder !== 'random') {
+        const assets = await loadOrderedAlbumAssets(
+            mediaType,
+            sortBy,
+            count,
+            displayOrder,
+            processed,
+            normalizedAlbumIds
+        );
+        // iOS falls back to an unscoped query if an album disappears while a
+        // page is being fetched. Do not publish that page to the feed.
+        await assertAlbumsStillAvailable(normalizedAlbumIds);
         return {
-            assets: await loadOrderedAlbumAssets(
-                mediaType,
-                sortBy,
-                count,
-                displayOrder,
-                processed,
-                normalizedAlbumIds
-            ),
+            assets,
             totalCount: null,
         };
     }
@@ -368,6 +382,7 @@ async function loadAssetsForReview(
         }
     }
 
+    await assertAlbumsStillAvailable(normalizedAlbumIds);
     return { assets: selected.slice(0, count), totalCount };
 }
 

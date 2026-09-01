@@ -375,6 +375,17 @@ async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<s
         }
     }
 
+    if (shouldStop) return Array.from(assetIds);
+
+    // iOS falls back to an unscoped query if an album disappears while a
+    // page is being fetched. Discard the accumulated IDs instead of scanning
+    // a result that may have come from the whole library.
+    const currentAlbums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
+    const currentAlbumIds = new Set(currentAlbums.map(album => album.id));
+    if (validAlbumIds.some(albumId => !currentAlbumIds.has(albumId))) {
+        throw new Error('One or more selected albums are no longer available');
+    }
+
     return Array.from(assetIds);
 }
 
