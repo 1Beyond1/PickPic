@@ -4,7 +4,7 @@
     "slug": "PickPic",
     "version": "0.3.1",
     "orientation": "portrait",
-    "icon": "./assets/images/icon_new.jpg",
+    "icon": "./assets/images/icon_new.png",
     "scheme": "pickpic",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -18,7 +18,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
-        "foregroundImage": "./assets/images/icon_new.jpg"
+        "foregroundImage": "./assets/images/icon_new.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -40,7 +40,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/icon_new.jpg",
+          "image": "./assets/images/icon_new.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
