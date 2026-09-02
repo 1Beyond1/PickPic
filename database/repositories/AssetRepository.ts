@@ -902,7 +902,12 @@ export const AssetRepository = {
                     [AssetStatus.ERROR, ...scope.params]
                 );
             }
-            await repairDuplicateGroupsInDatabase(db);
+            await repairDuplicateGroupsInDatabase(db, {
+                // A bounded retry can only see the selected/visible assets;
+                // preserve singleton members that may represent media outside
+                // that scope until a wider scan can reconnect them.
+                removeSingletonGroups: assetIds === undefined,
+            });
             await db.runAsync(
                 'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
             );

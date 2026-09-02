@@ -245,7 +245,10 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
                     // the old membership whenever the scan-order metadata
                     // changes, then reprocess the asset so it can join groups
                     // in its new time window.
-                    await DupGroupRepository.removeAssetFromGroups(asset.id);
+                    await DupGroupRepository.removeAssetFromGroups(
+                        asset.id,
+                        startedWithLimitedPhotoAccess
+                    );
                 }
             } else {
                 // Insert new asset
