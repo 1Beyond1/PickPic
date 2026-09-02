@@ -4,10 +4,12 @@ import { ScanProgress } from '../services/scanner/AIScanner';
 interface ScannerState {
     progress: ScanProgress;
     isRunning: boolean;
+    isFinalizing: boolean;
     lastError: Error | null;
 
     setProgress: (progress: ScanProgress) => void;
     setIsRunning: (isRunning: boolean) => void;
+    setIsFinalizing: (isFinalizing: boolean) => void;
     setLastError: (error: Error | null) => void;
     incrementProgress: (success: boolean) => void;
 }
@@ -21,6 +23,7 @@ export const useScannerStore = create<ScannerState>((set) => ({
         isRunning: false,
     },
     isRunning: false,
+    isFinalizing: false,
     lastError: null,
 
     setProgress: (progress) => set({ progress, isRunning: progress.isRunning }),
@@ -32,6 +35,7 @@ export const useScannerStore = create<ScannerState>((set) => ({
             ...(isRunning ? { currentBatch: 0 } : {}),
         },
     })),
+    setIsFinalizing: (isFinalizing) => set({ isFinalizing }),
     setLastError: (lastError) => set({ lastError }),
     incrementProgress: (success: boolean) => set((state) => ({
         progress: {

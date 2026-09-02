@@ -86,7 +86,8 @@ export default function SettingsScreen() {
     const [showScanBatchModal, setShowScanBatchModal] = useState(false);
 
     // AI Scanner hook
-    const { progress, isRunning, lastError, start, stop, resumeOnce, resetScan } = useAIScanner();
+    const { progress, isRunning, isFinalizing, lastError, start, stop, resumeOnce, resetScan } = useAIScanner();
+    const scannerBusy = isRunning || isFinalizing;
 
     const handleResetPhotoProgress = () => {
         setShowResetPhotosConfirm(true);
@@ -211,7 +212,7 @@ export default function SettingsScreen() {
     };
 
     const handleScanBatch = async (options: { mode: 'album' | 'count'; albumIds?: string[]; count?: number }) => {
-        if (isResettingScanner) return;
+        if (isResettingScanner || isFinalizing) return;
         console.log('[Settings] Scan batch with options:', options);
         await resumeOnce(options);
     };
@@ -360,11 +361,13 @@ export default function SettingsScreen() {
                     </View>
 
                     {/* Status */}
-                    {isRunning && (
+                    {scannerBusy && (
                         <View style={styles.statusRow}>
                             <Ionicons name="sync" size={16} color={colors.primary} />
                             <Text style={[styles.statusText, { color: colors.primary }]}>
-                                {t('ai_scanner_scanning_batch', { batch: progress.currentBatch })}
+                                {isFinalizing
+                                    ? (language === 'zh' ? '正在完成扫描…' : 'Finishing scan…')
+                                    : t('ai_scanner_scanning_batch', { batch: progress.currentBatch })}
                             </Text>
                         </View>
                     )}
@@ -384,10 +387,10 @@ export default function SettingsScreen() {
                             style={({ pressed }) => [
                                 styles.scanButton,
                                 { backgroundColor: isRunning ? colors.danger : colors.primary },
-                                (pressed || isResettingScanner) && { opacity: 0.5 }
+                                (pressed || isResettingScanner || isFinalizing) && { opacity: 0.5 }
                             ]}
                             onPress={isRunning ? stop : start}
-                            disabled={isResettingScanner}
+                            disabled={isResettingScanner || isFinalizing}
                         >
                             <Ionicons
                                 name={isRunning ? "stop" : "play"}
@@ -404,10 +407,10 @@ export default function SettingsScreen() {
                             style={({ pressed }) => [
                                 styles.scanButton,
                                 { backgroundColor: colors.surface, flex: 0.4 },
-                                (pressed || isResettingScanner) && { opacity: 0.5 }
+                                (pressed || isResettingScanner || isFinalizing) && { opacity: 0.5 }
                             ]}
                             onPress={() => setShowScanBatchModal(true)}
-                            disabled={isRunning || isResettingScanner}
+                            disabled={scannerBusy || isResettingScanner}
                         >
                             <Text style={[styles.scanButtonText, { color: colors.text }]}>{t('scan_batch' as any)}</Text>
                         </Pressable>
@@ -500,7 +503,7 @@ export default function SettingsScreen() {
                                 <Switch
                                     value={enableAIClassification}
                                     onValueChange={handleToggleAIClassification}
-                                    disabled={isRunning || !aiClassificationAvailable}
+                                    disabled={scannerBusy || !aiClassificationAvailable}
                                     trackColor={{ false: isDark ? '#333' : '#E0E0E0', true: colors.primary }}
                                     thumbColor={isDark ? '#FFF' : '#FFF'}
                                 />

@@ -4,7 +4,7 @@
  * Now uses global useScannerStore to sync state across components.
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { getDatabase } from '../database';
 import {
     getStatus,
@@ -22,6 +22,7 @@ export interface UseAIScannerResult {
     // State
     progress: ScanProgress;
     isRunning: boolean;
+    isFinalizing: boolean;
     lastError: Error | null;
 
     // Actions
@@ -39,16 +40,19 @@ export function useAIScanner(): UseAIScannerResult {
     // Select from global store
     const progress = useScannerStore(state => state.progress);
     const isRunning = useScannerStore(state => state.isRunning);
+    const isFinalizing = useScannerStore(state => state.isFinalizing);
     const lastError = useScannerStore(state => state.lastError);
     const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion);
 
     // Actions from store
     const setProgress = useScannerStore(state => state.setProgress);
     const setLastError = useScannerStore(state => state.setLastError);
+    const statusRequestId = useRef(0);
 
     // Initialize database and fetch initial status
     useEffect(() => {
         let active = true;
+        const requestId = ++statusRequestId.current;
 
         const init = async () => {
             try {
@@ -58,7 +62,7 @@ export function useAIScanner(): UseAIScannerResult {
                 // scan overwrite progress published by the scanner itself.
                 if (!active || isScannerRunning()) return;
                 const status = await getStatus();
-                if (active && !isScannerRunning()) {
+                if (active && requestId === statusRequestId.current && !isScannerRunning()) {
                     setProgress(status);
                 }
             } catch (error) {
@@ -69,6 +73,7 @@ export function useAIScanner(): UseAIScannerResult {
 
         return () => {
             active = false;
+            statusRequestId.current++;
         };
     }, [mediaLibraryRefreshVersion, setProgress]);
 
@@ -79,6 +84,7 @@ export function useAIScanner(): UseAIScannerResult {
             return;
         }
 
+        statusRequestId.current++;
         setLastError(null);
         // setIsRunning(true) is handled in scanner.start()
 
@@ -98,18 +104,25 @@ export function useAIScanner(): UseAIScannerResult {
             return;
         }
 
+        statusRequestId.current++;
         setLastError(null);
         await resumeOnceScanner(options);
     }, [setLastError]);
 
     // Refresh status
     const refreshStatus = useCallback(async () => {
+        const requestId = ++statusRequestId.current;
         const status = await getStatus();
+        if (requestId !== statusRequestId.current) return;
         setProgress(status);
     }, [setProgress]);
 
     // Reset scan cursor
     const resetScan = useCallback(async () => {
+        // Invalidate an initialization/status request that may still be using
+        // the pre-reset database snapshot. Its result must not overwrite the
+        // zeroed status published after the reset completes.
+        statusRequestId.current++;
         // Need to import resetAllProgress from services/scanner if not exported yet
         const scanner = await import('../services/scanner');
         if (scanner.resetAllProgress) {
@@ -128,6 +141,7 @@ export function useAIScanner(): UseAIScannerResult {
     return {
         progress,
         isRunning,
+        isFinalizing,
         lastError,
         start,
         stop,

@@ -792,12 +792,14 @@ async function finalizeScannerRun(
     runCallbacks: ScannerCallbacks
 ): Promise<void> {
     isFinalizing = true;
+    useScannerStore.getState().setIsFinalizing(true);
     isRunning = false;
     useScannerStore.getState().setIsRunning(false);
     try {
         await reportCurrentStatus(false, runGeneration, runCallbacks);
     } finally {
         isFinalizing = false;
+        useScannerStore.getState().setIsFinalizing(false);
     }
 }
 
@@ -824,6 +826,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
     resetMLFailureState();
     let completed = false;
 
+    useScannerStore.getState().setIsFinalizing(false);
     useScannerStore.getState().setIsRunning(true);
 
     try {
@@ -937,6 +940,7 @@ export async function resumeOnce(
     resetMLFailureState();
     let completed = false;
 
+    useScannerStore.getState().setIsFinalizing(false);
     useScannerStore.getState().setIsRunning(true);
 
     try {
