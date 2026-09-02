@@ -152,25 +152,39 @@ export const AssetRepository = {
     async upsert(asset: Partial<AssetRecord> & { asset_id: string }): Promise<void> {
         await withTransaction(async db => {
             const now = Date.now();
+            const updateClauses = [
+                'taken_at = COALESCE(excluded.taken_at, taken_at)',
+                'width = COALESCE(excluded.width, width)',
+                'height = COALESCE(excluded.height, height)',
+                'file_signature = COALESCE(excluded.file_signature, file_signature)',
+                'algo_version = COALESCE(excluded.algo_version, algo_version)',
+                'blur_score = COALESCE(excluded.blur_score, blur_score)',
+                'mean_luma = COALESCE(excluded.mean_luma, mean_luma)',
+                'phash = COALESCE(excluded.phash, phash)',
+            ];
+
+            // Omitted optional fields must not overwrite existing scan
+            // results. They still receive defaults for a new row.
+            if (asset.face_count !== undefined && asset.face_count !== null) {
+                updateClauses.push('face_count = excluded.face_count');
+            }
+            updateClauses.push('labels_json = COALESCE(excluded.labels_json, labels_json)');
+            if (asset.status !== undefined && asset.status !== null) {
+                updateClauses.push('status = excluded.status');
+            }
+            updateClauses.push(
+                'error_message = COALESCE(excluded.error_message, error_message)',
+                'updated_at = ?'
+            );
+
             await db.runAsync(
                 `INSERT INTO assets (
         asset_id, taken_at, width, height, file_signature,
-        algo_version, blur_score, mean_luma, phash, labels_json,
+        algo_version, blur_score, mean_luma, phash, face_count, labels_json,
         status, error_message, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(asset_id) DO UPDATE SET
-        taken_at = COALESCE(excluded.taken_at, taken_at),
-        width = COALESCE(excluded.width, width),
-        height = COALESCE(excluded.height, height),
-        file_signature = COALESCE(excluded.file_signature, file_signature),
-        algo_version = COALESCE(excluded.algo_version, algo_version),
-        blur_score = COALESCE(excluded.blur_score, blur_score),
-        mean_luma = COALESCE(excluded.mean_luma, mean_luma),
-        phash = COALESCE(excluded.phash, phash),
-        labels_json = COALESCE(excluded.labels_json, labels_json),
-        status = COALESCE(excluded.status, status),
-        error_message = COALESCE(excluded.error_message, error_message),
-        updated_at = ?`,
+        ${updateClauses.map(clause => `        ${clause}`).join(',\n')}`,
                 [
                     asset.asset_id,
                     asset.taken_at ?? null,
@@ -181,6 +195,7 @@ export const AssetRepository = {
                     asset.blur_score ?? null,
                     asset.mean_luma ?? null,
                     asset.phash ?? null,
+                    asset.face_count ?? 0,
                     asset.labels_json ?? null,
                     asset.status ?? AssetStatus.PENDING,
                     asset.error_message ?? null,
