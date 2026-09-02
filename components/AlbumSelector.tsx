@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, FlatList, Linking, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
-import { useMediaStore } from '../stores/useMediaStore';
+import { hasFullPhotoLibraryAccess, useMediaStore } from '../stores/useMediaStore';
 
 const EMPTY_SELECTION: string[] = [];
 
@@ -29,15 +29,53 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
 }) => {
     const { albums, loadAlbums } = useMediaStore();
     const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
+    const [albumAccess, setAlbumAccess] = useState<'checking' | 'available' | 'unavailable'>('checking');
     const { t } = useI18n();
     const { colors } = useThemeColor();
 
     useEffect(() => {
-        if (visible) {
-            loadAlbums();
-            setSelectedIds(initialSelection);
-        }
+        if (!visible) return;
+
+        let active = true;
+        setSelectedIds(initialSelection);
+
+        const checkAlbumAccess = async () => {
+            setAlbumAccess('checking');
+            const canUseAlbums = await hasFullPhotoLibraryAccess();
+            if (!active) return;
+
+            if (!canUseAlbums) {
+                setAlbumAccess('unavailable');
+                return;
+            }
+
+            setAlbumAccess('available');
+            await loadAlbums();
+        };
+
+        void checkAlbumAccess();
+
+        const subscription = Platform.OS === 'ios'
+            ? AppState.addEventListener('change', nextState => {
+                if (active && nextState === 'active') {
+                    void checkAlbumAccess();
+                }
+            })
+            : null;
+
+        return () => {
+            active = false;
+            subscription?.remove();
+        };
     }, [visible, initialSelection, loadAlbums]);
+
+    const handleOpenSettings = async () => {
+        try {
+            await Linking.openSettings();
+        } catch (error) {
+            console.error('[AlbumSelector] Failed to open system settings:', error);
+        }
+    };
 
     const toggleSelection = (id: string) => {
         setSelectedIds((currentIds) => {
@@ -84,35 +122,56 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
                         </Pressable>
                     )}
 
-                    <FlatList
-                        data={visibleAlbums}
-                        keyExtractor={(item) => item.id}
-                        contentContainerStyle={styles.listContent}
-                        renderItem={({ item }) => {
-                            const isSelected = selectedIds.includes(item.id);
-                            const isDisabled = !!(maxSelection && selectedIds.length >= maxSelection && !isSelected);
-                            return (
-                                <Pressable
-                                    style={[
-                                        styles.item,
-                                        { backgroundColor: colors.surface },
-                                        isSelected && { borderColor: colors.primary, borderWidth: 1, backgroundColor: 'rgba(151, 115, 78, 0.15)' },
-                                        isDisabled && styles.itemDisabled
-                                    ]}
-                                    onPress={() => toggleSelection(item.id)}
-                                    disabled={isDisabled ? true : false}
-                                >
-                                    <Text style={[styles.itemText, { color: colors.textSecondary }, isSelected && { color: colors.text, fontWeight: '500' }]}>
-                                        {item.title}
-                                    </Text>
-                                    <Text style={[styles.itemCount, { color: colors.textSecondary }]}>{item.assetCount}</Text>
-                                    {isSelected && (
-                                        <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                                    )}
-                                </Pressable>
-                            );
-                        }}
-                    />
+                    {albumAccess === 'checking' ? (
+                        <View style={styles.accessState}>
+                            <ActivityIndicator color={colors.primary} />
+                        </View>
+                    ) : albumAccess === 'unavailable' ? (
+                        <View style={styles.accessState}>
+                            <Ionicons name="lock-closed-outline" size={28} color={colors.textSecondary} />
+                            <Text style={[styles.accessMessage, { color: colors.textSecondary }]}>
+                                {t('album_full_access_required' as any)}
+                            </Text>
+                            <Pressable
+                                style={[styles.settingsButton, { borderColor: colors.primary }]}
+                                onPress={handleOpenSettings}
+                            >
+                                <Text style={[styles.settingsButtonText, { color: colors.primary }]}>
+                                    {t('album_open_settings' as any)}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    ) : (
+                        <FlatList
+                            data={visibleAlbums}
+                            keyExtractor={(item) => item.id}
+                            contentContainerStyle={styles.listContent}
+                            renderItem={({ item }) => {
+                                const isSelected = selectedIds.includes(item.id);
+                                const isDisabled = !!(maxSelection && selectedIds.length >= maxSelection && !isSelected);
+                                return (
+                                    <Pressable
+                                        style={[
+                                            styles.item,
+                                            { backgroundColor: colors.surface },
+                                            isSelected && { borderColor: colors.primary, borderWidth: 1, backgroundColor: 'rgba(151, 115, 78, 0.15)' },
+                                            isDisabled && styles.itemDisabled
+                                        ]}
+                                        onPress={() => toggleSelection(item.id)}
+                                        disabled={isDisabled ? true : false}
+                                    >
+                                        <Text style={[styles.itemText, { color: colors.textSecondary }, isSelected && { color: colors.text, fontWeight: '500' }]}>
+                                            {item.title}
+                                        </Text>
+                                        <Text style={[styles.itemCount, { color: colors.textSecondary }]}>{item.assetCount}</Text>
+                                        {isSelected && (
+                                            <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                                        )}
+                                    </Pressable>
+                                );
+                            }}
+                        />
+                    )}
 
                     <Pressable
                         style={[styles.confirmButton, { backgroundColor: colors.primary }]}
@@ -159,6 +218,28 @@ const styles = StyleSheet.create({
     },
     listContent: {
         paddingBottom: SPACING.xl,
+    },
+    accessState: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: SPACING.l,
+        gap: SPACING.m,
+    },
+    accessMessage: {
+        fontSize: 15,
+        lineHeight: 22,
+        textAlign: 'center',
+    },
+    settingsButton: {
+        borderWidth: 1,
+        borderRadius: BORDER_RADIUS.full,
+        paddingHorizontal: SPACING.l,
+        paddingVertical: SPACING.s,
+    },
+    settingsButtonText: {
+        fontSize: 14,
+        fontWeight: '600',
     },
     item: {
         flexDirection: 'row',

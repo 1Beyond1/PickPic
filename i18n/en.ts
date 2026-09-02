@@ -92,6 +92,8 @@ export default {
     album_filter_all: 'All Albums',
     album_filter_selected: '{count} Albums Selected',
     album_selector_title: 'Select Albums to Organize',
+    album_full_access_required: 'Browsing and filtering albums on iOS requires full photo-library access. You can change this in system settings.',
+    album_open_settings: 'Open System Settings',
     thumbnail_tap_undo: 'Tap to undo, Long press to preview',
     no_delete_this_batch: 'No photos marked for deletion in this batch',
     continue_next_batch: 'Continue to Next Batch',

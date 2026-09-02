@@ -2,7 +2,13 @@
  * BestShotSelector - Selects the best photo from a duplicate group
  */
 
-import { AssetRecord, AssetRepository, DupGroupRepository } from '../../database';
+import { AssetRepository, DupGroupRepository } from '../../database';
+import type { AssetRecord } from '../../database';
+import {
+    calculateBestShotBreakdown,
+    calculateBestShotScore,
+    chooseBestShotAssetId,
+} from '../../database/bestShotScoring';
 
 export interface ScoredAsset {
     asset: AssetRecord;
@@ -19,31 +25,13 @@ export interface ScoredAsset {
  * Higher score = better photo
  */
 export function calculateScore(asset: AssetRecord): ScoredAsset {
-    // Resolution score: log10(width * height) * 10
-    // e.g., 4000x3000 = 7 * 10 = 70
-    const pixels = (asset.width ?? 0) * (asset.height ?? 0);
-    const resolutionScore = pixels > 0 ? Math.log10(pixels) * 10 : 0;
-
-    // Sharpness score: blur_score capped at 500, normalized to 0-100
-    const blurScore = asset.blur_score ?? 0;
-    const sharpnessScore = Math.min(blurScore, 500) / 5;
-
-    // Lighting score: prefer mean_luma around 140 (sweet spot)
-    // Max 40 points, decreases as luma deviates from 140
-    const luma = asset.mean_luma ?? 128;
-    const lumaDiff = Math.abs(luma - 140);
-    const lightingScore = Math.max(0, 40 - lumaDiff);
-
-    const totalScore = resolutionScore + sharpnessScore + lightingScore;
+    const scoreBreakdown = calculateBestShotBreakdown(asset);
+    const totalScore = calculateBestShotScore(asset);
 
     return {
         asset,
         score: totalScore,
-        scoreBreakdown: {
-            resolution: resolutionScore,
-            sharpness: sharpnessScore,
-            lighting: lightingScore,
-        },
+        scoreBreakdown,
     };
 }
 
@@ -71,12 +59,9 @@ export async function selectBestShot(groupId: string): Promise<string | null> {
         return null;
     }
 
-    // Score all assets
-    const scored = assets.map(calculateScore);
-
-    // Find highest score
-    scored.sort((a, b) => b.score - a.score);
-    const bestAssetId = scored[0].asset.asset_id;
+    // Select with the same deterministic score/order used by database repair.
+    const bestAssetId = chooseBestShotAssetId(assets);
+    if (bestAssetId === null) return null;
 
     // Update group's best_asset_id
     await DupGroupRepository.updateBestAsset(groupId, bestAssetId);

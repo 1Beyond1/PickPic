@@ -2,6 +2,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
 import { AssetRepository } from '../database';
 import { DisplayOrder, useSettingsStore } from './useSettingsStore';
 
@@ -11,6 +12,23 @@ export interface PhotoAsset extends MediaLibrary.Asset {
 
 export type MediaPermissionScope = 'none' | 'limited' | 'full';
 export type MediaType = 'photo' | 'video';
+
+/**
+ * iOS exposes selected-photo access for the media feed, but its album APIs
+ * require full photo-library access. Android and web do not have this
+ * additional album-access restriction in the current supported runtimes.
+ */
+export async function hasFullPhotoLibraryAccess(): Promise<boolean> {
+    if (Platform.OS !== 'ios') return true;
+
+    try {
+        const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+        return permission.granted && permission.accessPrivileges === 'all';
+    } catch (error) {
+        console.warn('[MediaStore] Failed to verify album access:', error);
+        return false;
+    }
+}
 
 export async function getCurrentlyVisibleAssetIds(
     assetIds: readonly string[],
@@ -149,6 +167,10 @@ async function normalizeAlbumIds(albumIds: readonly string[]): Promise<string[]>
     const requestedAlbumIds = Array.from(new Set(albumIds));
     if (requestedAlbumIds.length === 0) return [];
 
+    if (!(await hasFullPhotoLibraryAccess())) {
+        throw new Error('Full photo-library access is required for album filters on iOS');
+    }
+
     // Album IDs are owned by the device media library and can disappear
     // outside the app. Validate them before querying assets because iOS
     // treats an unknown album as an unscoped query, while Android returns no
@@ -170,6 +192,10 @@ async function normalizeAlbumIds(albumIds: readonly string[]): Promise<string[]>
 
 async function assertAlbumsStillAvailable(albumIds: readonly string[]): Promise<void> {
     if (albumIds.length === 0) return;
+
+    if (!(await hasFullPhotoLibraryAccess())) {
+        throw new Error('Full photo-library access is required for album filters on iOS');
+    }
 
     const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
     const availableAlbumIds = new Set(albums.map(album => album.id));
@@ -529,6 +555,11 @@ export const useMediaStore = create<MediaState>()(
     loadAlbums: async () => {
         const requestId = ++albumLoadRequestId;
         try {
+            if (!(await hasFullPhotoLibraryAccess())) {
+                if (requestId === albumLoadRequestId) set({ albums: [] });
+                return;
+            }
+
             const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
             if (requestId !== albumLoadRequestId) return;
 
@@ -545,12 +576,17 @@ export const useMediaStore = create<MediaState>()(
                 useSettingsStore.getState().setSelectedAlbums(validSelectedAlbumIds);
             }
         } catch (e) {
+            if (requestId === albumLoadRequestId) set({ albums: [] });
             console.error("Failed to load albums", e);
         }
     },
 
     createAlbum: async (name, asset) => {
         try {
+            if (!(await hasFullPhotoLibraryAccess())) {
+                throw new Error('Full photo-library access is required to manage albums on iOS');
+            }
+
             // Collection actions should keep the asset in its original
             // albums. On Android, `false` moves it instead of copying it.
             await MediaLibrary.createAlbumAsync(name, asset, true);
@@ -563,6 +599,10 @@ export const useMediaStore = create<MediaState>()(
 
     addAssetToAlbum: async (albumId, asset) => {
         try {
+            if (!(await hasFullPhotoLibraryAccess())) {
+                throw new Error('Full photo-library access is required to manage albums on iOS');
+            }
+
             const added = await MediaLibrary.addAssetsToAlbumAsync([asset], albumId);
             if (!added) {
                 throw new Error('Media library did not confirm adding the asset to the album');

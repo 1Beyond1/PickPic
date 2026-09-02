@@ -5,6 +5,8 @@
 import * as SQLite from 'expo-sqlite';
 import { getDatabase, withTransaction } from '../db';
 import { AssetStatus } from '../schema';
+import { chooseBestShotAssetId } from '../bestShotScoring';
+import type { BestShotAsset } from '../bestShotScoring';
 
 export interface DupGroup {
     group_id: string;
@@ -27,6 +29,23 @@ export interface SimilarityCandidate {
 interface DuplicateGroupRepairOptions {
     /** Keep one-member groups as recovery seeds for a scoped scan. */
     removeSingletonGroups?: boolean;
+}
+
+async function getBestShotAssetIdInDatabase(
+    db: SQLite.SQLiteDatabase,
+    groupId: string,
+): Promise<string | null> {
+    const candidates = await db.getAllAsync<BestShotAsset>(
+        `SELECT member.asset_id, asset.width, asset.height,
+                asset.blur_score, asset.mean_luma
+         FROM dup_members AS member
+         JOIN assets AS asset ON asset.asset_id = member.asset_id
+         WHERE member.group_id = ?
+           AND asset.status = ?
+         ORDER BY member.distance ASC, member.asset_id ASC`,
+        [groupId, AssetStatus.DONE]
+    );
+    return chooseBestShotAssetId(candidates);
 }
 
 /**
@@ -84,19 +103,30 @@ export async function repairDuplicateGroupsInDatabase(
                  WHERE dup_members.group_id = dup_groups.group_id
                  ORDER BY distance ASC, asset_id ASC
                  LIMIT 1
-             ) ELSE representative_asset_id END,
-             best_asset_id = CASE
-             WHEN best_asset_id IS NULL OR NOT EXISTS (
-                 SELECT 1 FROM dup_members
-                 WHERE dup_members.group_id = dup_groups.group_id
-                   AND dup_members.asset_id = dup_groups.best_asset_id
-             ) THEN (
-                 SELECT asset_id FROM dup_members
-                 WHERE dup_members.group_id = dup_groups.group_id
-                 ORDER BY distance ASC, asset_id ASC
-                 LIMIT 1
-             ) ELSE best_asset_id END`
+             ) ELSE representative_asset_id END`
     );
+
+    // A missing/invalid best-shot pointer must be rebuilt with the same image
+    // quality score used after a normal scan. Distance describes similarity
+    // to the group representative, not which photo is the best to keep.
+    const groupsNeedingBestShot = await db.getAllAsync<{ group_id: string }>(
+        `SELECT group_row.group_id
+         FROM dup_groups AS group_row
+         WHERE group_row.best_asset_id IS NULL
+            OR NOT EXISTS (
+                SELECT 1 FROM dup_members AS member
+                WHERE member.group_id = group_row.group_id
+                  AND member.asset_id = group_row.best_asset_id
+            )`
+    );
+    for (const group of groupsNeedingBestShot) {
+        const bestAssetId = await getBestShotAssetIdInDatabase(db, group.group_id);
+        if (bestAssetId === null) continue;
+        await db.runAsync(
+            'UPDATE dup_groups SET best_asset_id = ? WHERE group_id = ?',
+            [bestAssetId, group.group_id]
+        );
+    }
 }
 
 async function removeAssetsFromGroupsInDatabase(
@@ -195,13 +225,13 @@ async function removeAssetsFromGroupsInDatabase(
             : members[0].asset_id;
         const bestAssetId = memberIds.has(group.best_asset_id ?? '')
             ? group.best_asset_id
-            : members[0].asset_id;
+            : await getBestShotAssetIdInDatabase(db, groupId);
 
         await db.runAsync(
             `UPDATE dup_groups
              SET representative_asset_id = ?, best_asset_id = ?
              WHERE group_id = ?`,
-            [representativeAssetId, bestAssetId, groupId]
+            [representativeAssetId, bestAssetId ?? members[0].asset_id, groupId]
         );
     }
 }
@@ -433,7 +463,7 @@ export const DupGroupRepository = {
     async getGroupMembers(groupId: string): Promise<DupMember[]> {
         const db = await getDatabase();
         return db.getAllAsync<DupMember>(
-            'SELECT * FROM dup_members WHERE group_id = ? ORDER BY distance ASC',
+            'SELECT * FROM dup_members WHERE group_id = ? ORDER BY distance ASC, asset_id ASC',
             [groupId]
         );
     },

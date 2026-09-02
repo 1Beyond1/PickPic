@@ -21,6 +21,7 @@ import {
     MetaRepository,
 } from '../../database';
 import { getImageOps, GrayImageRef } from '../imageOps';
+import { hasFullPhotoLibraryAccess } from '../../stores/useMediaStore';
 import { selectBestShot } from './BestShotSelector';
 import { findSimilarPhotos } from './SimilarityMatcher';
 
@@ -356,6 +357,10 @@ async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<s
         throw new Error('At least one album must be selected for an album scan');
     }
 
+    if (!(await hasFullPhotoLibraryAccess())) {
+        throw new Error('Full photo-library access is required for album scans on iOS');
+    }
+
     // Album IDs can become stale when the user deletes or renames an album
     // outside the app. iOS treats an unknown album as an unscoped query, so
     // validate the scope before requesting any assets.
@@ -402,6 +407,9 @@ async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<s
     // iOS falls back to an unscoped query if an album disappears while a
     // page is being fetched. Discard the accumulated IDs instead of scanning
     // a result that may have come from the whole library.
+    if (!(await hasFullPhotoLibraryAccess())) {
+        throw new Error('Full photo-library access is required for album scans on iOS');
+    }
     const currentAlbums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
     const currentAlbumIds = new Set(currentAlbums.map(album => album.id));
     if (validAlbumIds.some(albumId => !currentAlbumIds.has(albumId))) {
