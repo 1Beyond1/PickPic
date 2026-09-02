@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 // import { BlurView } from 'expo-blur';
+import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -38,6 +39,7 @@ export default function PhotosScreen() {
     const [newAlbumName, setNewAlbumName] = useState('');
     const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
     const [previewPhoto, setPreviewPhoto] = useState<any>(null);
+    const [managingPhotoAccess, setManagingPhotoAccess] = useState(false);
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
@@ -52,6 +54,42 @@ export default function PhotosScreen() {
         loadPhotos,
         loadAlbums,
     ]));
+
+    const handleManagePhotoAccess = useCallback(async () => {
+        if (managingPhotoAccess) return;
+
+        setManagingPhotoAccess(true);
+        try {
+            // Android 14 can report a global limited grant even when the
+            // requested media type has no selected assets. The picker lets
+            // the user add photos without repeatedly showing a permission
+            // prompt for users who already selected some media.
+            await MediaLibrary.presentPermissionsPickerAsync(['photo']);
+            const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+            const scope = !permission.granted
+                ? 'none'
+                : permission.accessPrivileges === 'limited'
+                    ? 'limited'
+                    : 'full';
+            const mediaStore = useMediaStore.getState();
+            mediaStore.setPermissionScope(scope);
+            mediaStore.refreshQueuedAssetVisibility(scope, 'photo');
+            mediaStore.pruneUnavailableQueuedAssets(scope, 'photo');
+            mediaStore.notifyPermissionRefresh();
+            if (!permission.granted) {
+                router.replace('/');
+                return;
+            }
+            await Promise.all([
+                loadPhotos(groupSize, displayOrder, selectedAlbumIds),
+                loadAlbums(),
+            ]);
+        } catch (error) {
+            console.error('[Photos] Failed to manage photo access:', error);
+        } finally {
+            setManagingPhotoAccess(false);
+        }
+    }, [displayOrder, groupSize, loadAlbums, loadPhotos, managingPhotoAccess, router, selectedAlbumIds]);
 
     const processedIds = new Set(photoProcessedIds);
     const visiblePhotos = photos.filter(p => !processedIds.has(p.id));
@@ -276,10 +314,28 @@ export default function PhotosScreen() {
     }
 
     if (photos.length === 0 && !isLoading) {
+        const hasLimitedPhotoAccess = permissionScope === 'limited';
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                <Text style={[styles.emptyText, { color: colors.text }]}>{t('photos_empty')}</Text>
-                <Pressable onPress={() => loadPhotos(groupSize, displayOrder, selectedAlbumIds)} style={[styles.actionButton, { backgroundColor: colors.primary }]}>
+                <Text style={[styles.emptyText, { color: colors.text }]}>
+                    {hasLimitedPhotoAccess ? t('photos_limited_access_desc') : t('photos_empty')}
+                </Text>
+                {hasLimitedPhotoAccess && (
+                    <Pressable
+                        onPress={handleManagePhotoAccess}
+                        disabled={managingPhotoAccess}
+                        style={[styles.actionButton, { backgroundColor: colors.primary, opacity: managingPhotoAccess ? 0.6 : 1 }]}
+                    >
+                        <Text style={styles.actionButtonText}>
+                            {managingPhotoAccess ? t('permission_requesting') : t('photos_manage_access')}
+                        </Text>
+                    </Pressable>
+                )}
+                <Pressable
+                    onPress={() => loadPhotos(groupSize, displayOrder, selectedAlbumIds)}
+                    disabled={managingPhotoAccess}
+                    style={[styles.actionButton, { backgroundColor: colors.primary, opacity: managingPhotoAccess ? 0.6 : 1, marginTop: hasLimitedPhotoAccess ? 10 : 0 }]}
+                >
                     <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
                 </Pressable>
             </View>

@@ -60,6 +60,7 @@ export default function VideosScreen() {
         : videoPermission.accessPrivileges === 'limited'
             ? 'limited'
             : 'full';
+    const hasLimitedVideoAccess = videoPermission?.accessPrivileges === 'limited';
     const visibleVideoTrashBin = videoPermissionScope === 'full' && hiddenVideoQueuedAssetIds === null
         ? videoTrashBin
         : videoPermissionScope === 'limited' && hasHydrated && hiddenVideoQueuedAssetIds !== null
@@ -335,6 +336,25 @@ export default function VideosScreen() {
         }
     };
 
+    const handleManageVideoAccess = async () => {
+        if (requestingVideoPermission) return;
+        setRequestingVideoPermission(true);
+        try {
+            // Android 14 may expose a global limited grant while no videos
+            // were selected. Open the type-scoped picker instead of treating
+            // that response as proof that the video feed is accessible.
+            await MediaLibrary.presentPermissionsPickerAsync(['video']);
+            const permission = await refreshVideoPermission();
+            if (permission?.granted && isFocusedRef.current) {
+                await loadVideos(50, displayOrder, selectedAlbumIds);
+            }
+        } catch (error) {
+            console.error('[Videos] Failed to manage video access:', error);
+        } finally {
+            setRequestingVideoPermission(false);
+        }
+    };
+
     if (!videoPermissionChecked) {
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
@@ -433,8 +453,25 @@ export default function VideosScreen() {
                 />
             ) : (
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                    <Text style={[styles.emptyText, { color: colors.text }]}>{t('video_empty')}</Text>
-                    <Pressable onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)} style={[styles.actionButton, { backgroundColor: colors.primary }]}>
+                    <Text style={[styles.emptyText, { color: colors.text }]}>
+                        {hasLimitedVideoAccess ? t('video_permission_desc') : t('video_empty')}
+                    </Text>
+                    {hasLimitedVideoAccess && (
+                        <Pressable
+                            onPress={handleManageVideoAccess}
+                            disabled={requestingVideoPermission}
+                            style={[styles.actionButton, { backgroundColor: colors.primary, opacity: requestingVideoPermission ? 0.6 : 1 }]}
+                        >
+                            <Text style={styles.actionButtonText}>
+                                {requestingVideoPermission ? t('permission_requesting') : t('video_permission_btn')}
+                            </Text>
+                        </Pressable>
+                    )}
+                    <Pressable
+                        onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)}
+                        disabled={requestingVideoPermission}
+                        style={[styles.actionButton, { backgroundColor: colors.primary, opacity: requestingVideoPermission ? 0.6 : 1, marginTop: hasLimitedVideoAccess ? 10 : 0 }]}
+                    >
                         <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
                     </Pressable>
                 </View>

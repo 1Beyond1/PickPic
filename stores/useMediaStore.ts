@@ -30,6 +30,12 @@ export async function hasFullPhotoLibraryAccess(): Promise<boolean> {
     }
 }
 
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+    const leftSet = new Set(left);
+    const rightSet = new Set(right);
+    return leftSet.size === rightSet.size && Array.from(leftSet).every(value => rightSet.has(value));
+}
+
 export async function getCurrentlyVisibleAssetIds(
     assetIds: readonly string[],
     mediaType: MediaType,
@@ -183,7 +189,14 @@ async function normalizeAlbumIds(albumIds: readonly string[]): Promise<string[]>
     // album disappeared, keep the stale IDs so this filter remains an empty
     // scope until the user explicitly clears it. Collapsing it to [] here
     // would silently widen the query to the whole library.
-    if (validAlbumIds.length > 0 && validAlbumIds.length !== requestedAlbumIds.length) {
+    // This helper is asynchronous. Do not let an older album validation
+    // overwrite a newer selection made while the native query was pending.
+    const currentSelectedAlbumIds = useSettingsStore.getState().selectedAlbumIds;
+    if (
+        validAlbumIds.length > 0
+        && validAlbumIds.length !== requestedAlbumIds.length
+        && sameStringSet(currentSelectedAlbumIds, requestedAlbumIds)
+    ) {
         useSettingsStore.getState().setSelectedAlbums(validAlbumIds);
     }
 
@@ -554,6 +567,7 @@ export const useMediaStore = create<MediaState>()(
 
     loadAlbums: async () => {
         const requestId = ++albumLoadRequestId;
+        const selectedAlbumIdsAtStart = useSettingsStore.getState().selectedAlbumIds;
         try {
             if (!(await hasFullPhotoLibraryAccess())) {
                 if (requestId === albumLoadRequestId) set({ albums: [] });
@@ -572,7 +586,11 @@ export const useMediaStore = create<MediaState>()(
             // "all albums" everywhere else in the app and would widen the
             // user's scope after an external album deletion. Keep the stale
             // IDs until the user clears or replaces the filter.
-            if (validSelectedAlbumIds.length > 0 && validSelectedAlbumIds.length !== selectedAlbumIds.length) {
+            if (
+                sameStringSet(selectedAlbumIds, selectedAlbumIdsAtStart)
+                && validSelectedAlbumIds.length > 0
+                && !sameStringSet(validSelectedAlbumIds, selectedAlbumIds)
+            ) {
                 useSettingsStore.getState().setSelectedAlbums(validSelectedAlbumIds);
             }
         } catch (e) {
