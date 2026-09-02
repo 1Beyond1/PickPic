@@ -187,27 +187,50 @@ export const AssetRepository = {
         await withTransaction(async db => {
             const now = Date.now();
             const updateClauses = [
-                'taken_at = COALESCE(excluded.taken_at, taken_at)',
-                'width = COALESCE(excluded.width, width)',
-                'height = COALESCE(excluded.height, height)',
-                'file_signature = COALESCE(excluded.file_signature, file_signature)',
-                'algo_version = COALESCE(excluded.algo_version, algo_version)',
-                'blur_score = COALESCE(excluded.blur_score, blur_score)',
-                'mean_luma = COALESCE(excluded.mean_luma, mean_luma)',
-                'phash = COALESCE(excluded.phash, phash)',
+                // `undefined` means the caller omitted a field and the
+                // existing value must survive. An explicit `null` clears a
+                // nullable field, which is different from a partial update.
+                asset.taken_at === undefined
+                    ? 'taken_at = taken_at'
+                    : 'taken_at = excluded.taken_at',
+                asset.width === undefined
+                    ? 'width = width'
+                    : 'width = excluded.width',
+                asset.height === undefined
+                    ? 'height = height'
+                    : 'height = excluded.height',
+                asset.file_signature === undefined
+                    ? 'file_signature = file_signature'
+                    : 'file_signature = excluded.file_signature',
+                asset.algo_version === undefined
+                    ? 'algo_version = algo_version'
+                    : 'algo_version = excluded.algo_version',
+                asset.blur_score === undefined
+                    ? 'blur_score = blur_score'
+                    : 'blur_score = excluded.blur_score',
+                asset.mean_luma === undefined
+                    ? 'mean_luma = mean_luma'
+                    : 'mean_luma = excluded.mean_luma',
+                asset.phash === undefined
+                    ? 'phash = phash'
+                    : 'phash = excluded.phash',
             ];
 
-            // Omitted optional fields must not overwrite existing scan
-            // results. They still receive defaults for a new row.
-            if (asset.face_count !== undefined && asset.face_count !== null) {
-                updateClauses.push('face_count = excluded.face_count');
-            }
-            updateClauses.push('labels_json = COALESCE(excluded.labels_json, labels_json)');
+            updateClauses.push(
+                asset.face_count === undefined
+                    ? 'face_count = face_count'
+                    : 'face_count = excluded.face_count',
+                asset.labels_json === undefined
+                    ? 'labels_json = labels_json'
+                    : 'labels_json = excluded.labels_json',
+            );
             if (asset.status !== undefined && asset.status !== null) {
                 updateClauses.push('status = excluded.status');
             }
             updateClauses.push(
-                'error_message = COALESCE(excluded.error_message, error_message)',
+                asset.error_message === undefined
+                    ? 'error_message = error_message'
+                    : 'error_message = excluded.error_message',
                 'updated_at = ?'
             );
 
@@ -229,7 +252,7 @@ export const AssetRepository = {
                     asset.blur_score ?? null,
                     asset.mean_luma ?? null,
                     asset.phash ?? null,
-                    asset.face_count ?? 0,
+                    asset.face_count === undefined ? 0 : asset.face_count,
                     asset.labels_json ?? null,
                     asset.status ?? AssetStatus.PENDING,
                     asset.error_message ?? null,

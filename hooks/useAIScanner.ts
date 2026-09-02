@@ -12,6 +12,7 @@ import {
     resumeOnce as resumeOnceScanner,
     ScanBatchOptions,
     ScanProgress,
+    resetAllProgress,
     start as startScanner,
     stop as stopScanner
 } from '../services/scanner';
@@ -123,13 +124,7 @@ export function useAIScanner(): UseAIScannerResult {
         // the pre-reset database snapshot. Its result must not overwrite the
         // zeroed status published after the reset completes.
         statusRequestId.current++;
-        // Need to import resetAllProgress from services/scanner if not exported yet
-        const scanner = await import('../services/scanner');
-        if (scanner.resetAllProgress) {
-            await scanner.resetAllProgress();
-        } else {
-            await scanner.resetCursor();
-        }
+        await resetAllProgress();
 
         // A successful reset makes the previous run error no longer
         // actionable. Keep it visible when reset itself fails, but clear it

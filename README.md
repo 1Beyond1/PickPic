@@ -61,7 +61,7 @@
 ## 🚀 快速开始
 
 ### 环境要求
-- Node.js 18+
+- Node.js 20.19.4+（运行当前真实 SQLite 自动化测试推荐 Node.js 24.11.1）
 - Expo CLI
 
 ### 安装运行
@@ -70,12 +70,22 @@
 git clone https://github.com/1Beyond1/PickPic.git
 cd PickPic
 
-# 安装依赖
-npm install
+# 按锁文件安装依赖
+npm ci
 
 # 启动开发服务器
 npx expo start
 ```
+
+### 自动化检查
+
+```bash
+npm run typecheck
+npm run lint
+npm run test:ci
+```
+
+真机发布前请按 [REAL_DEVICE_CHECKLIST.md](REAL_DEVICE_CHECKLIST.md) 验证系统相册权限、媒体库边界和原生视频全屏行为。
 
 ### 构建 APK
 ```bash
@@ -105,7 +115,7 @@ eas build --platform android --profile preview --local
 | 状态管理 | Zustand |
 | 动画 | React Native Reanimated |
 | 手势 | React Native Gesture Handler |
-| 媒体 | expo-media-library, expo-av |
+| 媒体 | expo-media-library, expo-video |
 
 ---
 

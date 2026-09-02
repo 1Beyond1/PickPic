@@ -1,16 +1,84 @@
 import { Ionicons } from '@expo/vector-icons';
-import { ResizeMode, Video, VideoFullscreenUpdate } from 'expo-av';
-import type { VideoFullscreenUpdateEvent } from 'expo-av';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Dimensions, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+    ActivityIndicator,
+    Dimensions,
+    Modal,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
 import { PhotoAsset } from '../stores/useMediaStore';
 import { ScalablePressable } from './ScalablePressable'; // Import ScalablePressable
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+interface AndroidFullscreenVideoProps {
+    uri: string;
+    isMuted: boolean;
+    t: (key: string) => string;
+    onRequestClose: () => void;
+}
+
+/**
+ * expo-video's Android exitFullscreen method is not implemented in SDK 54.
+ * Keep Android fullscreen in a separate React Native modal, as the previous
+ * implementation did, while still using expo-video for playback.
+ */
+const AndroidFullscreenVideo: React.FC<AndroidFullscreenVideoProps> = ({
+    uri,
+    isMuted,
+    t,
+    onRequestClose,
+}) => {
+    const insets = useSafeAreaInsets();
+    const player = useVideoPlayer(uri, (videoPlayer) => {
+        videoPlayer.loop = true;
+        videoPlayer.muted = isMuted;
+        videoPlayer.play();
+    });
+
+    useEffect(() => {
+        player.muted = isMuted;
+    }, [isMuted, player]);
+
+    return (
+        <Modal
+            visible
+            animationType="fade"
+            presentationStyle="fullScreen"
+            statusBarTranslucent
+            navigationBarTranslucent
+            onRequestClose={onRequestClose}
+        >
+            <View style={styles.fullscreenContainer}>
+                <VideoView
+                    style={styles.fullscreenVideo}
+                    player={player}
+                    contentFit="contain"
+                    nativeControls={false}
+                    surfaceType="textureView"
+                    fullscreenOptions={{ enable: false }}
+                />
+                <Pressable
+                    style={[styles.fullscreenCloseButton, { top: insets.top + 12 }]}
+                    onPress={onRequestClose}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('cancel')}
+                >
+                    <Ionicons name="close" size={28} color={COLORS.white} />
+                </Pressable>
+            </View>
+        </Modal>
+    );
+};
 
 interface VideoFeedItemProps {
     video: PhotoAsset;
@@ -39,18 +107,17 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     colors,
     itemHeight
 }) => {
-    const videoRef = useRef<Video>(null);
+    const videoRef = useRef<VideoView>(null);
     const insets = useSafeAreaInsets(); // Add safe area insets
     const needsLocalUri = /^(ph|assets-library):\/\//.test(video.uri);
     const [playbackSource, setPlaybackSource] = useState<{ assetId: string; uri: string } | null>(() => (
         needsLocalUri ? null : { assetId: video.id, uri: video.uri }
     ));
     const [isFullscreen, setIsFullscreen] = useState(false);
-    const [nativeFullscreenUpdate, setNativeFullscreenUpdate] = useState<VideoFullscreenUpdate | null>(null);
-    const fullscreenVideoRef = useRef<Video>(null);
-
-    const isNativeFullscreen = nativeFullscreenUpdate === VideoFullscreenUpdate.PLAYER_WILL_PRESENT
-        || nativeFullscreenUpdate === VideoFullscreenUpdate.PLAYER_DID_PRESENT;
+    const player = useVideoPlayer(playbackSource?.uri ?? null, (videoPlayer) => {
+        videoPlayer.loop = true;
+        videoPlayer.muted = isMuted;
+    });
 
     const resolvePlaybackUri = useCallback(async () => {
         if (!needsLocalUri) return video.uri;
@@ -77,7 +144,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
             })
             .catch((error) => {
                 // Keep the original URI as a last-resort fallback. If the
-                // asset is unavailable, expo-av will report the native error
+                // asset is unavailable, expo-video will report the native error
                 // instead of allowing the async lookup to become unhandled.
                 if (mounted) {
                     console.warn('[VideoFeedItem] Failed to resolve local video URI:', error);
@@ -91,69 +158,46 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     }, [needsLocalUri, resolvePlaybackUri, video.id, video.uri]);
 
     const playbackUri = playbackSource?.assetId === video.id ? playbackSource.uri : null;
-    const baseShouldPlay = shouldPlay && !isFullscreen;
+    // Android uses a second player inside the custom fullscreen modal, so the
+    // feed player must pause there. iOS and Web fullscreen reuse this player;
+    // keep it playing while the native/browser fullscreen surface is visible.
+    const baseShouldPlay = shouldPlay && !(Platform.OS === 'android' && isFullscreen);
 
-    // Android fullscreen is implemented with a React Native Modal. Tab
-    // screens stay mounted when blurred, so close that separate window when
-    // the videos tab loses focus instead of leaving it above another tab.
     useEffect(() => {
-        if (!isScreenFocused && isFullscreen) {
+        player.muted = isMuted;
+    }, [isMuted, player]);
+
+    // Tab screens stay mounted when blurred. Android's modal is closed by
+    // changing state; iOS/Web expose an exitFullscreen method on the native
+    // view. Android SDK 54 does not implement that method.
+    useEffect(() => {
+        if (isScreenFocused || !isFullscreen) return;
+
+        if (Platform.OS === 'android') {
             setIsFullscreen(false);
+            return;
+        }
+
+        if (videoRef.current) {
+            void videoRef.current?.exitFullscreen().catch((error) => {
+                console.warn('[VideoFeedItem] Failed to exit fullscreen video:', error);
+            });
         }
     }, [isFullscreen, isScreenFocused]);
 
-    // iOS fullscreen is presented by AVPlayerViewController rather than by
-    // React Native's Modal. Pausing the feed video on tab blur does not close
-    // that controller, so dismiss it explicitly when the tab loses focus.
     useEffect(() => {
-        if (Platform.OS !== 'ios' || isScreenFocused || !isNativeFullscreen) return;
-
-        const player = videoRef.current;
-        if (!player) return;
-
-        void player.dismissFullscreenPlayer().catch((error) => {
-            // A blur can happen while the native controller is transitioning;
-            // the fullscreen callback will retry once it reports DID_PRESENT.
-            console.warn('[VideoFeedItem] Failed to dismiss fullscreen video:', error);
-        });
-    }, [isNativeFullscreen, isScreenFocused, nativeFullscreenUpdate]);
-
-    const handleFullscreenUpdate = useCallback((event: VideoFullscreenUpdateEvent) => {
-        if (Platform.OS !== 'ios') return;
-
-        // Keep the concrete event, not only a boolean, so a dismiss request
-        // rejected during presentation is retried when DID_PRESENT arrives.
-        setNativeFullscreenUpdate(event.fullscreenUpdate);
-    }, []);
-
-    useEffect(() => {
-        let mounted = true;
-
-        const syncPlayback = async () => {
-            const player = videoRef.current;
-            if (!player) return;
-
-            try {
-                if (baseShouldPlay) {
-                    await player.playAsync();
-                } else {
-                    await player.pauseAsync();
-                }
-            } catch (error) {
-                // The native player can reject while a feed item is being
-                // recycled or unloaded. Keep that transient failure from
-                // becoming an unhandled promise rejection.
-                if (mounted) {
-                    console.warn('[VideoFeedItem] Failed to sync playback state:', error);
-                }
+        try {
+            if (baseShouldPlay) {
+                player.play();
+            } else {
+                player.pause();
             }
-        };
-
-        void syncPlayback();
-        return () => {
-            mounted = false;
-        };
-    }, [baseShouldPlay, playbackUri]);
+        } catch (error) {
+            // The player can reject while a feed item is being recycled or
+            // unloaded. Keep that transient failure from escaping the effect.
+            console.warn('[VideoFeedItem] Failed to sync playback state:', error);
+        }
+    }, [baseShouldPlay, player, playbackUri]);
 
     const handleShare = async () => {
         try {
@@ -169,21 +213,28 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
         if (!playbackUri) return;
 
         try {
-            // expo-av's native fullscreen API is not supported on Android.
-            // Use a local full-screen player there so the documented long
-            // press action works on both mobile platforms.
             if (Platform.OS === 'android') {
                 setIsFullscreen(true);
                 return;
             }
 
-            if (videoRef.current) {
-                await videoRef.current.presentFullscreenPlayer();
-            }
+            // On iOS and Web, expo-video presents the same player in the
+            // platform fullscreen surface. The callbacks update state only
+            // after the platform confirms the transition.
+            await videoRef.current?.enterFullscreen();
         } catch (error) {
+            setIsFullscreen(false);
             console.error('[VideoFeedItem] Failed to open fullscreen video:', error);
         }
     };
+
+    const handleFullscreenEnter = useCallback(() => {
+        setIsFullscreen(true);
+    }, []);
+
+    const handleFullscreenExit = useCallback(() => {
+        setIsFullscreen(false);
+    }, []);
 
     const date = new Date(video.creationTime);
     const dateString = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -196,15 +247,22 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                 style={styles.videoWrapper}
             >
                 {playbackUri ? (
-                    <Video
+                    <VideoView
                         ref={videoRef}
                         style={styles.video}
-                        source={{ uri: playbackUri }}
-                        resizeMode={ResizeMode.CONTAIN}
-                        isLooping
-                        isMuted={isMuted}
-                        shouldPlay={baseShouldPlay}
-                        onFullscreenUpdate={handleFullscreenUpdate}
+                        player={player}
+                        contentFit="contain"
+                        nativeControls={false}
+                        playsInline
+                        surfaceType={Platform.OS === 'android' ? 'textureView' : undefined}
+                        // expo-video 3.0.16's Web implementation checks the
+                        // deprecated prop inside enterFullscreen even when
+                        // fullscreenOptions.enable is true. Keep the bridge
+                        // prop on Web only until that implementation is fixed.
+                        allowsFullscreen={Platform.OS === 'web' ? true : undefined}
+                        fullscreenOptions={{ enable: true }}
+                        onFullscreenEnter={handleFullscreenEnter}
+                        onFullscreenExit={handleFullscreenExit}
                     />
                 ) : (
                     <View style={styles.videoPlaceholder}>
@@ -259,35 +317,14 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
             </View>
 
             {Platform.OS === 'android' && isFullscreen && playbackUri && (
-                <Modal
-                    visible={isFullscreen}
-                    animationType="fade"
-                    presentationStyle="fullScreen"
-                    statusBarTranslucent
-                    navigationBarTranslucent
+                <AndroidFullscreenVideo
+                    uri={playbackUri}
+                    isMuted={isMuted}
+                    t={t}
                     onRequestClose={() => setIsFullscreen(false)}
-                >
-                    <View style={styles.fullscreenContainer}>
-                        <Video
-                            ref={fullscreenVideoRef}
-                            style={styles.fullscreenVideo}
-                            source={{ uri: playbackUri }}
-                            resizeMode={ResizeMode.CONTAIN}
-                            isLooping
-                            isMuted={isMuted}
-                            shouldPlay
-                        />
-                        <Pressable
-                            style={[styles.fullscreenCloseButton, { top: insets.top + 12 }]}
-                            onPress={() => setIsFullscreen(false)}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('cancel')}
-                        >
-                            <Ionicons name="close" size={28} color={COLORS.white} />
-                        </Pressable>
-                    </View>
-                </Modal>
+                />
             )}
+
         </View>
     );
 };
