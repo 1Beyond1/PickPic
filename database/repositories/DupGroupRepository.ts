@@ -102,26 +102,45 @@ export async function repairDuplicateGroupsInDatabase(
 async function removeAssetsFromGroupsInDatabase(
     db: SQLite.SQLiteDatabase,
     assetIds: readonly string[],
-    preserveSingletonGroups: boolean
+    preserveSingletonGroups: boolean,
+    markForWiderDuplicateScan: boolean
 ): Promise<void> {
     const affectedGroupIds = new Set<string>();
+    const affectedAssetIds = new Set<string>();
 
     // Keep batches below SQLite's bind-parameter limit and remember only the
-    // groups touched by this scoped invalidation.
+    // groups/assets touched by this scoped invalidation.
     for (let i = 0; i < assetIds.length; i += 500) {
         const batch = assetIds.slice(i, i + 500);
         const placeholders = batch.map(() => '?').join(', ');
-        const groups = await db.getAllAsync<{ group_id: string }>(
-            `SELECT DISTINCT group_id FROM dup_members
+        const groups = await db.getAllAsync<{ group_id: string; asset_id: string }>(
+            `SELECT DISTINCT group_id, asset_id FROM dup_members
              WHERE asset_id IN (${placeholders})`,
             batch
         );
-        groups.forEach(group => affectedGroupIds.add(group.group_id));
+        groups.forEach(group => {
+            affectedGroupIds.add(group.group_id);
+            affectedAssetIds.add(group.asset_id);
+        });
 
         await db.runAsync(
             `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
             batch
         );
+    }
+
+    if (markForWiderDuplicateScan && affectedAssetIds.size > 0) {
+        const affectedIds = Array.from(affectedAssetIds);
+        for (let i = 0; i < affectedIds.length; i += 500) {
+            const batch = affectedIds.slice(i, i + 500);
+            const placeholders = batch.map(() => '?').join(', ');
+            await db.runAsync(
+                `UPDATE assets
+                 SET needs_duplicate_recovery = 1
+                 WHERE asset_id IN (${placeholders})`,
+                batch
+            );
+        }
     }
 
     for (const groupId of affectedGroupIds) {
@@ -519,24 +538,38 @@ export const DupGroupRepository = {
      * Remove an asset whose file contents changed from existing groups and
      * repair the affected representatives/best-shot references.
      */
-    async removeAssetFromGroups(assetId: string, preserveSingletonGroups = false): Promise<void> {
-        await this.removeAssetsFromGroups([assetId], preserveSingletonGroups);
+    async removeAssetFromGroups(
+        assetId: string,
+        preserveSingletonGroups = false,
+        markForWiderDuplicateScan = preserveSingletonGroups
+    ): Promise<void> {
+        await this.removeAssetsFromGroups(
+            [assetId],
+            preserveSingletonGroups,
+            markForWiderDuplicateScan
+        );
     },
 
     /**
      * Remove several assets from duplicate groups without clearing unrelated
-     * groups. This is used when a scoped scan invalidates only part of the
-     * local index.
+     * groups. A scoped invalidation can also mark the affected assets for a
+     * later wider comparison when the caller enables that recovery flag.
      */
     async removeAssetsFromGroups(
         assetIds: readonly string[],
-        preserveSingletonGroups = false
+        preserveSingletonGroups = false,
+        markForWiderDuplicateScan = preserveSingletonGroups
     ): Promise<void> {
         const uniqueAssetIds = Array.from(new Set(assetIds));
         if (uniqueAssetIds.length === 0) return;
 
         await withTransaction(async db => {
-            await removeAssetsFromGroupsInDatabase(db, uniqueAssetIds, preserveSingletonGroups);
+            await removeAssetsFromGroupsInDatabase(
+                db,
+                uniqueAssetIds,
+                preserveSingletonGroups,
+                markForWiderDuplicateScan
+            );
         });
     },
 };

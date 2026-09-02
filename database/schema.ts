@@ -45,6 +45,7 @@ export const SQL_CREATE_ASSETS = `
     labels_json TEXT,
     status INTEGER DEFAULT 0,
     error_message TEXT,
+    needs_duplicate_recovery INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER
   );
 `;

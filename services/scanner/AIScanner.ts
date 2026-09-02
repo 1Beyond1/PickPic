@@ -247,6 +247,7 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
                     // in its new time window.
                     await DupGroupRepository.removeAssetFromGroups(
                         asset.id,
+                        startedWithLimitedPhotoAccess,
                         startedWithLimitedPhotoAccess
                     );
                 }
@@ -411,7 +412,10 @@ async function getPhotoAssetIdsForAlbums(albumIds: readonly string[]): Promise<s
 /**
  * Reset outdated assets (algo_version mismatch)
  */
-async function resetOutdatedAssets(assetIds?: readonly string[]): Promise<void> {
+async function resetOutdatedAssets(
+    assetIds?: readonly string[],
+    markForWiderDuplicateScan = false
+): Promise<void> {
     const globalVersion = await MetaRepository.getGlobalAlgoVersion();
     const resetAssetIds = await AssetRepository.resetOutdatedAssets(globalVersion, assetIds);
 
@@ -421,7 +425,8 @@ async function resetOutdatedAssets(assetIds?: readonly string[]): Promise<void> 
         // members while preparing this scan.
         await DupGroupRepository.removeAssetsFromGroups(
             resetAssetIds,
-            assetIds !== undefined
+            assetIds !== undefined,
+            markForWiderDuplicateScan
         );
         await MetaRepository.resetScanCursor();
         console.log(`[AIScanner] Reset ${resetAssetIds.length} outdated assets.`);
@@ -452,7 +457,8 @@ async function rewindCursorForPendingAssets(): Promise<void> {
 async function processAsset(
     assetId: string,
     similarityCandidateAssetIds: readonly string[] | undefined,
-    preserveSingletonGroups: boolean
+    preserveSingletonGroups: boolean,
+    markForWiderDuplicateScan: boolean
 ): Promise<boolean> {
     const imageOps = getImageOps();
     let gray: GrayImageRef | null = null;
@@ -601,7 +607,8 @@ async function processAsset(
             labelsJson,
             matches,
             generateGroupId(),
-            preserveSingletonGroups
+            preserveSingletonGroups,
+            markForWiderDuplicateScan
         );
 
         if (targetGroupId) {
@@ -626,7 +633,12 @@ async function processAsset(
 
         // Mark as error
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        await AssetRepository.markError(assetId, errorMessage, preserveSingletonGroups);
+        await AssetRepository.markError(
+            assetId,
+            errorMessage,
+            preserveSingletonGroups,
+            markForWiderDuplicateScan
+        );
 
         console.warn(`[AIScanner] Failed to process asset ${assetId}:`, errorMessage);
         return false;
@@ -640,7 +652,8 @@ async function processBatch(
     batchSize: number = BATCH_SIZE,
     assetIds?: readonly string[],
     similarityCandidateAssetIds?: readonly string[],
-    preserveSingletonGroups = false
+    preserveSingletonGroups = false,
+    markForWiderDuplicateScan = preserveSingletonGroups
 ): Promise<boolean> {
     const batch = assetIds
         ? await AssetRepository.getPendingBatchForAssetIds(assetIds, batchSize)
@@ -673,7 +686,8 @@ async function processBatch(
         const success = await processAsset(
             asset.asset_id,
             similarityCandidateAssetIds,
-            preserveSingletonGroups
+            preserveSingletonGroups,
+            markForWiderDuplicateScan
         );
 
         // Yield after each asset
@@ -771,10 +785,21 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
         const accessibleAssetIds = await syncAssetsToDatabase();
         if (shouldStop) return;
 
+        if (accessibleAssetIds === null) {
+            // A previous limited scan may have left duplicate recovery assets
+            // and singleton seeds whose comparisons were outside its
+            // permission scope. A complete sync is the first point at which
+            // those rows are safe to revisit and reconnect.
+            const recoveryAssets = await AssetRepository.resetDuplicateRecoveryAssets();
+            if (recoveryAssets.length > 0) {
+                console.log(`[AIScanner] Requeued ${recoveryAssets.length} duplicate recovery assets.`);
+            }
+        }
+
         const scanAssetIds = accessibleAssetIds ? Array.from(accessibleAssetIds) : undefined;
 
         // Reset outdated assets
-        await resetOutdatedAssets(scanAssetIds);
+        await resetOutdatedAssets(scanAssetIds, accessibleAssetIds !== null);
         if (shouldStop) return;
 
         // A previous run can be interrupted after marking an asset PENDING
@@ -795,7 +820,8 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
                 BATCH_SIZE,
                 scanAssetIds,
                 scanAssetIds,
-                scanAssetIds !== undefined
+                scanAssetIds !== undefined,
+                accessibleAssetIds !== null
             );
             await reportProgress(scanAssetIds);
 
@@ -890,7 +916,8 @@ export async function resumeOnce(
         const candidates = await AssetRepository.getScanCandidateBatch(
             currentAlgoVersion,
             batchSize,
-            assetIds
+            assetIds,
+            accessibleAssetIds === null
         );
         assetIds = candidates.map(asset => asset.asset_id);
 
@@ -903,11 +930,27 @@ export async function resumeOnce(
         }
 
         // Reset outdated assets
-        await resetOutdatedAssets(assetIds);
+        await resetOutdatedAssets(assetIds, accessibleAssetIds !== null);
         if (shouldStop) return;
 
+        if (accessibleAssetIds === null) {
+            // Only a full-permission retry may widen the media scope. The
+            // candidate query includes current DONE recovery rows so this
+            // reset stays bounded to the exact one-batch work set.
+            const recoveryAssets = await AssetRepository.resetDuplicateRecoveryAssets(assetIds);
+            if (recoveryAssets.length > 0) {
+                console.log(`[AIScanner] Requeued ${recoveryAssets.length} duplicate recovery assets.`);
+            }
+        }
+
         // Process one batch
-        await processBatch(batchSize, assetIds, visiblePhotoIds, true);
+        await processBatch(
+            batchSize,
+            assetIds,
+            visiblePhotoIds,
+            true,
+            accessibleAssetIds !== null
+        );
         await reportProgress(visiblePhotoIds);
 
         if (shouldStop) {

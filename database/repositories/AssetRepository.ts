@@ -24,6 +24,7 @@ export interface AssetRecord {
     labels_json: string | null;
     status: AssetStatusType;
     error_message: string | null;
+    needs_duplicate_recovery: number;
     updated_at: number | null;
 }
 
@@ -72,6 +73,27 @@ function splitAssetIds(assetIds?: readonly string[]): Array<readonly string[] | 
     return batches;
 }
 
+// A singleton duplicate member is a recovery seed left by a scoped scan when
+// its other group members were outside the scan scope. It is not actionable by
+// itself, but a wider scan must revisit it so the group can be rebuilt.
+const RECOVERY_SEED_CLAUSE = `asset_id IN (
+    SELECT singleton_member.asset_id
+    FROM dup_members AS singleton_member
+    WHERE (
+        SELECT COUNT(*)
+        FROM dup_members AS group_member
+        WHERE group_member.group_id = singleton_member.group_id
+    ) = 1
+      AND NOT EXISTS (
+          SELECT 1
+          FROM dup_members AS other_member
+          WHERE other_member.asset_id = singleton_member.asset_id
+            AND other_member.group_id <> singleton_member.group_id
+      )
+    GROUP BY singleton_member.asset_id
+    HAVING COUNT(*) = 1
+)`;
+
 async function removeAssetsAndDerivedDataInDatabase(
     db: Awaited<ReturnType<typeof getDatabase>>,
     assetIds: readonly string[]
@@ -110,13 +132,16 @@ async function markDoneInDatabase(
     algoVersion: number,
     faceCount: number,
     labelsJson: string | null,
-    preserveSingletonGroups: boolean
+    preserveSingletonGroups: boolean,
+    markForWiderDuplicateScan: boolean
 ): Promise<void> {
     await db.runAsync(
         `UPDATE assets SET
  status = ?, blur_score = ?, mean_luma = ?, phash = ?,
  algo_version = ?, face_count = ?, labels_json = ?,
- error_message = NULL, updated_at = ?
+ error_message = NULL,
+ needs_duplicate_recovery = ?,
+ updated_at = ?
 WHERE asset_id = ?`,
         [
             AssetStatus.DONE,
@@ -126,6 +151,7 @@ WHERE asset_id = ?`,
             algoVersion,
             faceCount,
             labelsJson,
+            markForWiderDuplicateScan ? 1 : 0,
             Date.now(),
             assetId,
         ]
@@ -133,7 +159,8 @@ WHERE asset_id = ?`,
 
     // Remove the old membership while committing the new result so stale
     // groups cannot survive a rescan. Scoped scans keep one-member groups as
-    // recovery seeds for members outside the current scope.
+    // recovery seeds and mark every completed result for a later wider
+    // comparison because hidden local assets were not candidates.
     const removedDuplicateMembers = await db.runAsync(
         'DELETE FROM dup_members WHERE asset_id = ?',
         [assetId]
@@ -322,21 +349,27 @@ export const AssetRepository = {
     },
 
     /**
-     * Get the next assets that need scanner work, including failed assets and
-     * completed assets produced by an older algorithm version. This lets a
-     * bounded scan choose its exact work set before resetting any records.
+     * Get the next assets that need scanner work, including failed assets,
+     * completed assets produced by an older algorithm version, and assets
+     * whose duplicate membership must be checked after a scoped scan. This
+     * lets a bounded scan choose its exact work set before resetting records.
      */
     async getScanCandidateBatch(
         currentAlgoVersion: number,
         limit: number = BATCH_SIZE,
-        assetIds?: readonly string[]
+        assetIds?: readonly string[],
+        includeDuplicateRecovery = false
     ): Promise<PendingAsset[]> {
         if (limit <= 0) return [];
 
+        const recoveryClause = includeDuplicateRecovery ? `
+            OR (status = ? AND needs_duplicate_recovery = 1)
+            OR (status = ? AND algo_version = ? AND ${RECOVERY_SEED_CLAUSE})` : '';
         const candidateClause = `(
             status = ?
             OR status = ?
             OR (status = ? AND (algo_version IS NULL OR algo_version != ?))
+            ${recoveryClause}
         )`;
         const candidateParams: (string | number)[] = [
             AssetStatus.PENDING,
@@ -344,6 +377,13 @@ export const AssetRepository = {
             AssetStatus.DONE,
             currentAlgoVersion,
         ];
+        if (includeDuplicateRecovery) {
+            candidateParams.push(
+                AssetStatus.DONE,
+                AssetStatus.DONE,
+                currentAlgoVersion
+            );
+        }
 
         if (assetIds === undefined) {
             const db = await getDatabase();
@@ -382,6 +422,77 @@ export const AssetRepository = {
         });
 
         return candidates.slice(0, limit);
+    },
+
+    /**
+     * Reset duplicate recovery assets for a wider scan. A scoped scan may
+     * remove a visible member from an existing group while preserving
+     * inaccessible members, or leave an inaccessible member as a singleton.
+     * Once the caller has a wider scope, the affected rows must be processed
+     * again; otherwise current DONE records can remain permanently unpaired.
+     */
+    async resetDuplicateRecoveryAssets(assetIds?: readonly string[]): Promise<string[]> {
+        const assetIdBatches = splitAssetIds(assetIds);
+        if (assetIdBatches.length === 0) return [];
+
+        return withTransaction(async db => {
+            const resetAssetIds: string[] = [];
+
+            for (const assetIdBatch of assetIdBatches) {
+                const scope = createAssetScope(assetIdBatch);
+                const seeds = await db.getAllAsync<{ asset_id: string }>(
+                    `SELECT asset_id FROM assets
+                     WHERE status = ?
+                       AND (
+                           needs_duplicate_recovery = 1
+                           OR ${RECOVERY_SEED_CLAUSE}
+                       )${scope.clause}`,
+                    [AssetStatus.DONE, ...scope.params]
+                );
+
+                if (seeds.length === 0) continue;
+
+                await db.runAsync(
+                    `UPDATE assets SET
+                     status = ?, algo_version = NULL, blur_score = NULL,
+                     mean_luma = NULL, phash = NULL, face_count = NULL,
+                     labels_json = NULL, error_message = NULL,
+                     needs_duplicate_recovery = 1, updated_at = ?
+                     WHERE status = ?
+                       AND (
+                           needs_duplicate_recovery = 1
+                           OR ${RECOVERY_SEED_CLAUSE}
+                       )${scope.clause}`,
+                    [
+                        AssetStatus.PENDING,
+                        Date.now(),
+                        AssetStatus.DONE,
+                        ...scope.params,
+                    ]
+                );
+                resetAssetIds.push(...seeds.map(seed => seed.asset_id));
+            }
+
+            if (resetAssetIds.length === 0) return [];
+
+            for (let i = 0; i < resetAssetIds.length; i += 500) {
+                const batch = resetAssetIds.slice(i, i + 500);
+                const placeholders = batch.map(() => '?').join(', ');
+                await db.runAsync(
+                    `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
+                    batch
+                );
+            }
+
+            // Keep unrelated scoped recovery seeds intact. A full scan can
+            // clean all singleton rows because the media sync established a
+            // complete permission-visible snapshot first.
+            await repairDuplicateGroupsInDatabase(db, {
+                removeSingletonGroups: assetIds === undefined,
+            });
+
+            return resetAssetIds;
+        });
     },
 
     /**
@@ -477,6 +588,7 @@ export const AssetRepository = {
                 algoVersion,
                 faceCount,
                 labelsJson,
+                false,
                 false
             );
         });
@@ -498,7 +610,8 @@ export const AssetRepository = {
         labelsJson: string | null,
         matches: readonly SimilarityCandidate[],
         newGroupId: string,
-        preserveSingletonGroups = false
+        preserveSingletonGroups = false,
+        markForWiderDuplicateScan = preserveSingletonGroups
     ): Promise<string | null> {
         return withTransaction(async db => {
             await markDoneInDatabase(
@@ -510,7 +623,8 @@ export const AssetRepository = {
                 algoVersion,
                 faceCount,
                 labelsJson,
-                preserveSingletonGroups
+                preserveSingletonGroups,
+                markForWiderDuplicateScan
             );
 
             return addAssetToMatchingGroupsInDatabase(
@@ -529,16 +643,28 @@ export const AssetRepository = {
     async markError(
         assetId: string,
         errorMessage: string,
-        preserveSingletonGroups = false
+        preserveSingletonGroups = false,
+        markForWiderDuplicateScan = preserveSingletonGroups
     ): Promise<void> {
         await withTransaction(async db => {
             await db.runAsync(
                 `UPDATE assets SET
              status = ?, algo_version = NULL, blur_score = NULL,
              mean_luma = NULL, phash = NULL, face_count = NULL,
-             labels_json = NULL, error_message = ?, updated_at = ?
+             labels_json = NULL, error_message = ?,
+             needs_duplicate_recovery = CASE
+                 WHEN needs_duplicate_recovery = 1 OR ? = 1 THEN 1
+                 ELSE 0
+             END,
+             updated_at = ?
              WHERE asset_id = ?`,
-                [AssetStatus.ERROR, errorMessage, Date.now(), assetId]
+                [
+                    AssetStatus.ERROR,
+                    errorMessage,
+                    markForWiderDuplicateScan ? 1 : 0,
+                    Date.now(),
+                    assetId,
+                ]
             );
 
             // An error must not leave an incomplete asset attached to a
@@ -868,6 +994,7 @@ export const AssetRepository = {
                  face_count = NULL,
                  labels_json = NULL,
                  error_message = NULL,
+                 needs_duplicate_recovery = 0,
                  updated_at = ?`,
                 [AssetStatus.PENDING, Date.now()]
             );
