@@ -8,6 +8,10 @@ import {
     repairDuplicateGroupsInDatabase,
 } from './DupGroupRepository';
 import type { SimilarityCandidate } from './DupGroupRepository';
+import {
+    removeFaceInstancesInDatabase,
+    repairFaceDataInDatabase,
+} from './FaceRepository';
 import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
 
 export interface AssetRecord {
@@ -107,10 +111,7 @@ async function removeAssetsAndDerivedDataInDatabase(
             `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
             batch
         );
-        await db.runAsync(
-            `DELETE FROM face_instances WHERE asset_id IN (${placeholders})`,
-            batch
-        );
+        await removeFaceInstancesInDatabase(db, batch);
         await db.runAsync(
             `DELETE FROM assets WHERE asset_id IN (${placeholders})`,
             batch
@@ -118,9 +119,7 @@ async function removeAssetsAndDerivedDataInDatabase(
     }
 
     await repairDuplicateGroupsInDatabase(db);
-    await db.runAsync(
-        'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
-    );
+    await repairFaceDataInDatabase(db);
 }
 
 async function markDoneInDatabase(
@@ -135,6 +134,11 @@ async function markDoneInDatabase(
     preserveSingletonGroups: boolean,
     markForWiderDuplicateScan: boolean
 ): Promise<void> {
+    // A successful re-scan replaces all derived face data for this asset.
+    // Remove the old instances before publishing the new DONE result so a
+    // later face-group read cannot observe stale detections.
+    const removedFaceInstances = await removeFaceInstancesInDatabase(db, [assetId]);
+
     await db.runAsync(
         `UPDATE assets SET
  status = ?, blur_score = ?, mean_luma = ?, phash = ?,
@@ -169,6 +173,9 @@ WHERE asset_id = ?`,
         await repairDuplicateGroupsInDatabase(db, {
             removeSingletonGroups: !preserveSingletonGroups,
         });
+    }
+    if (removedFaceInstances > 0) {
+        await repairFaceDataInDatabase(db);
     }
 }
 
@@ -272,10 +279,7 @@ export const AssetRepository = {
                     `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
                     batch
                 );
-                await transactionDb.runAsync(
-                    `DELETE FROM face_instances WHERE asset_id IN (${placeholders})`,
-                    batch
-                );
+                await removeFaceInstancesInDatabase(transactionDb, batch);
                 await transactionDb.runAsync(
                     `DELETE FROM assets WHERE asset_id IN (${placeholders})`,
                     batch
@@ -283,9 +287,7 @@ export const AssetRepository = {
             }
 
             await repairDuplicateGroupsInDatabase(transactionDb);
-            await transactionDb.runAsync(
-                'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
-            );
+            await repairFaceDataInDatabase(transactionDb);
         });
 
         return missing;
@@ -474,6 +476,9 @@ export const AssetRepository = {
             }
 
             if (resetAssetIds.length === 0) return [];
+
+            await removeFaceInstancesInDatabase(db, resetAssetIds);
+            await repairFaceDataInDatabase(db);
 
             for (let i = 0; i < resetAssetIds.length; i += 500) {
                 const batch = resetAssetIds.slice(i, i + 500);
@@ -671,13 +676,11 @@ export const AssetRepository = {
             // duplicate group. Keep one-member groups during scoped scans so
             // inaccessible/out-of-scope members remain recoverable.
             await db.runAsync('DELETE FROM dup_members WHERE asset_id = ?', [assetId]);
-            await db.runAsync('DELETE FROM face_instances WHERE asset_id = ?', [assetId]);
+            await removeFaceInstancesInDatabase(db, [assetId]);
             await repairDuplicateGroupsInDatabase(db, {
                 removeSingletonGroups: !preserveSingletonGroups,
             });
-            await db.runAsync(
-                'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
-            );
+            await repairFaceDataInDatabase(db);
         });
     },
 
@@ -721,6 +724,11 @@ export const AssetRepository = {
                 );
 
                 resetAssetIds.push(...outdated.map(asset => asset.asset_id));
+            }
+
+            if (resetAssetIds.length > 0) {
+                await removeFaceInstancesInDatabase(db, resetAssetIds);
+                await repairFaceDataInDatabase(db);
             }
 
             return resetAssetIds;
@@ -783,6 +791,8 @@ export const AssetRepository = {
                         assetId,
                     ]
                 );
+                await removeFaceInstancesInDatabase(db, [assetId]);
+                await repairFaceDataInDatabase(db);
                 return true;
             }
 
@@ -1035,9 +1045,7 @@ export const AssetRepository = {
                 // that scope until a wider scan can reconnect them.
                 removeSingletonGroups: assetIds === undefined,
             });
-            await db.runAsync(
-                'DELETE FROM face_groups WHERE face_id NOT IN (SELECT DISTINCT face_id FROM face_instances)'
-            );
+            await repairFaceDataInDatabase(db);
 
             let resetCount = 0;
             for (const assetIdBatch of assetIdBatches) {

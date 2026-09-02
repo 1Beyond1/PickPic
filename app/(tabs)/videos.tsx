@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useIsFocused } from '@react-navigation/native';
 import { useFocusEffect } from 'expo-router';
+import * as MediaLibrary from 'expo-media-library';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Dimensions, FlatList, Image, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, Dimensions, FlatList, Image, Linking, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -18,6 +20,7 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function VideosScreen() {
     const insets = useSafeAreaInsets();
+    const isFocused = useIsFocused();
     const { t, language } = useI18n();
     const { colors, isDark } = useThemeColor();
 
@@ -26,8 +29,7 @@ export default function VideosScreen() {
         videoProcessedIds,
         markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
         isConfirmingVideoTrash,
-        addAssetToAlbum,
-        permissionScope, hiddenQueuedAssetIds, mediaLibraryRefreshVersion,
+        addAssetToAlbum, hiddenVideoQueuedAssetIds, mediaLibraryRefreshVersion,
     } = useMediaStore();
     const {
         displayOrder,
@@ -41,17 +43,59 @@ export default function VideosScreen() {
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [selectedVideoForCollection, setSelectedVideoForCollection] = useState<any>(null);
     const [isScreenFocused, setIsScreenFocused] = useState(true);
+    const [videoPermission, setVideoPermission] = useState<MediaLibrary.PermissionResponse | null>(null);
+    const [videoPermissionChecked, setVideoPermissionChecked] = useState(false);
+    const [requestingVideoPermission, setRequestingVideoPermission] = useState(false);
+    const videoPermissionRequestIdRef = useRef(0);
+    const isFocusedRef = useRef(isFocused);
+    isFocusedRef.current = isFocused;
     const lastActiveIdRef = useRef<string | null>(null);
     const videosRef = useRef(videos);
     videosRef.current = videos;
     const processedVideoIds = new Set(videoProcessedIds);
     const visibleVideos = videos.filter(video => !processedVideoIds.has(video.id));
-    const hiddenQueueIds = new Set(hiddenQueuedAssetIds ?? []);
-    const visibleVideoTrashBin = permissionScope === 'full' && hiddenQueuedAssetIds === null
+    const hiddenQueueIds = new Set(hiddenVideoQueuedAssetIds ?? []);
+    const videoPermissionScope = !videoPermission?.granted
+        ? 'none'
+        : videoPermission.accessPrivileges === 'limited'
+            ? 'limited'
+            : 'full';
+    const visibleVideoTrashBin = videoPermissionScope === 'full' && hiddenVideoQueuedAssetIds === null
         ? videoTrashBin
-        : permissionScope === 'limited' && hasHydrated && hiddenQueuedAssetIds !== null
+        : videoPermissionScope === 'limited' && hasHydrated && hiddenVideoQueuedAssetIds !== null
             ? videoTrashBin.filter(video => !hiddenQueueIds.has(video.id))
             : [];
+
+    const refreshVideoPermission = useCallback(async (): Promise<MediaLibrary.PermissionResponse | null> => {
+        const requestId = ++videoPermissionRequestIdRef.current;
+        // Do not leave a previously loaded video batch visible while the OS
+        // permission state is being revalidated (for example after returning
+        // from system settings).
+        setVideoPermission(null);
+        setVideoPermissionChecked(false);
+        try {
+            const permission = await MediaLibrary.getPermissionsAsync(false, ['video']);
+            if (requestId !== videoPermissionRequestIdRef.current) return null;
+            setVideoPermission(permission);
+            setVideoPermissionChecked(true);
+            const scope = !permission.granted
+                ? 'none'
+                : permission.accessPrivileges === 'limited'
+                    ? 'limited'
+                    : 'full';
+            const mediaStore = useMediaStore.getState();
+            mediaStore.refreshQueuedAssetVisibility(scope, 'video');
+            mediaStore.pruneUnavailableQueuedAssets(scope, 'video');
+            return permission;
+        } catch (error) {
+            if (requestId !== videoPermissionRequestIdRef.current) return null;
+            console.error('[Videos] Failed to refresh video permission:', error);
+            setVideoPermission(null);
+            setVideoPermissionChecked(true);
+            useMediaStore.getState().refreshQueuedAssetVisibility('none', 'video');
+            return null;
+        }
+    }, []);
 
     // A refresh can replace the FlatList while this tab remains focused.
     // The next viewability callback belongs to the new list, so carrying the
@@ -67,6 +111,7 @@ export default function VideosScreen() {
     useEffect(() => {
         if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current) return;
         previousMediaLibraryRefreshVersionRef.current = mediaLibraryRefreshVersion;
+        let active = true;
 
         // Close local previews/selectors when the underlying media snapshot
         // changes. Persisted trash is retained for recovery and projected
@@ -74,21 +119,79 @@ export default function VideosScreen() {
         setShowTrash(false);
         setShowAlbumSelector(false);
         setSelectedVideoForCollection(null);
-    }, [mediaLibraryRefreshVersion]);
+        // Recheck a video permission change reported while this tab remains
+        // mounted, including a grant made from system settings.
+        if (hasHydrated && settingsHydrated && isFocused) {
+            void refreshVideoPermission().then(permission => {
+                if (active && permission?.granted && isFocusedRef.current) {
+                    void loadVideos(50, displayOrder, selectedAlbumIds);
+                }
+            });
+        }
+
+        return () => {
+            active = false;
+        };
+    }, [
+        displayOrder,
+        selectedAlbumIds,
+        hasHydrated,
+        settingsHydrated,
+        isFocused,
+        loadVideos,
+        mediaLibraryRefreshVersion,
+        refreshVideoPermission,
+    ]);
 
     // Dynamic height state
     const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
-        void loadVideos(50, displayOrder, selectedAlbumIds);
+        let active = true;
+        const refreshAndLoad = async () => {
+            const permission = await refreshVideoPermission();
+            if (active && permission?.granted) {
+                await loadVideos(50, displayOrder, selectedAlbumIds);
+            }
+        };
+        void refreshAndLoad();
+        return () => {
+            active = false;
+        };
     }, [
         displayOrder,
         selectedAlbumIds,
         hasHydrated,
         settingsHydrated,
         loadVideos,
+        refreshVideoPermission,
     ]));
+
+    useEffect(() => {
+        let active = true;
+        const subscription = AppState.addEventListener('change', nextState => {
+            if (!active || nextState !== 'active' || !hasHydrated || !settingsHydrated || !isFocusedRef.current) return;
+            void refreshVideoPermission().then(permission => {
+                if (active && permission?.granted && isFocusedRef.current) {
+                    void loadVideos(50, displayOrder, selectedAlbumIds);
+                }
+            });
+        });
+
+        return () => {
+            active = false;
+            subscription.remove();
+        };
+    }, [
+        displayOrder,
+        selectedAlbumIds,
+        hasHydrated,
+        settingsHydrated,
+        isFocused,
+        loadVideos,
+        refreshVideoPermission,
+    ]);
 
     useFocusEffect(useCallback(() => {
         if (!showTrash) return;
@@ -183,6 +286,105 @@ export default function VideosScreen() {
             setFeedHeight(height);
         }
     };
+
+    const handleRequestVideoPermission = async () => {
+        const requestId = ++videoPermissionRequestIdRef.current;
+        if (videoPermission?.canAskAgain === false) {
+            try {
+                await Linking.openSettings();
+            } catch (error) {
+                console.error('[Videos] Failed to open system settings:', error);
+            }
+            return;
+        }
+
+        setRequestingVideoPermission(true);
+        try {
+            const permission = await MediaLibrary.requestPermissionsAsync(false, ['video']);
+            if (requestId !== videoPermissionRequestIdRef.current) return;
+            setVideoPermission(permission);
+            setVideoPermissionChecked(true);
+            const scope = !permission.granted
+                ? 'none'
+                : permission.accessPrivileges === 'limited'
+                    ? 'limited'
+                    : 'full';
+            const mediaStore = useMediaStore.getState();
+            mediaStore.refreshQueuedAssetVisibility(scope, 'video');
+            mediaStore.pruneUnavailableQueuedAssets(scope, 'video');
+            if (permission.granted && isFocusedRef.current) {
+                await loadVideos(50, displayOrder, selectedAlbumIds);
+            }
+        } catch (error) {
+            console.error('[Videos] Failed to request video permission:', error);
+        } finally {
+            setRequestingVideoPermission(false);
+        }
+    };
+
+    const handleRetryVideoPermission = async () => {
+        if (requestingVideoPermission) return;
+        setRequestingVideoPermission(true);
+        try {
+            const permission = await refreshVideoPermission();
+            if (permission?.granted && isFocusedRef.current) {
+                await loadVideos(50, displayOrder, selectedAlbumIds);
+            }
+        } finally {
+            setRequestingVideoPermission(false);
+        }
+    };
+
+    if (!videoPermissionChecked) {
+        return (
+            <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+                <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+        );
+    }
+
+    if (!videoPermission) {
+        return (
+            <View style={[styles.centerContainer, { backgroundColor: colors.background, paddingHorizontal: 24 }]}>
+                <Text style={[styles.emptyText, { color: colors.text, textAlign: 'center' }]}>
+                    {t('video_permission_unavailable_desc')}
+                </Text>
+                <Pressable
+                    onPress={handleRetryVideoPermission}
+                    disabled={requestingVideoPermission}
+                    style={[styles.actionButton, { backgroundColor: colors.primary, opacity: requestingVideoPermission ? 0.6 : 1 }]}
+                >
+                    <Text style={styles.actionButtonText}>
+                        {requestingVideoPermission ? t('permission_requesting') : t('video_permission_retry_btn')}
+                    </Text>
+                </Pressable>
+            </View>
+        );
+    }
+
+    if (!videoPermission.granted) {
+        const canAskAgain = videoPermission.canAskAgain !== false;
+        return (
+            <View style={[styles.centerContainer, { backgroundColor: colors.background, paddingHorizontal: 24 }]}>
+                <Text style={[styles.emptyText, { color: colors.text, textAlign: 'center' }]}>
+                    {canAskAgain ? t('video_permission_desc') : t('video_permission_denied_desc')}
+                </Text>
+                <Pressable
+                    onPress={handleRequestVideoPermission}
+                    disabled={requestingVideoPermission}
+                    style={[styles.actionButton, { backgroundColor: colors.primary, opacity: requestingVideoPermission ? 0.6 : 1 }]}
+                >
+                    <Text style={styles.actionButtonText}>
+                        {requestingVideoPermission
+                            ? t('permission_requesting')
+                            : canAskAgain
+                                ? t('video_permission_btn')
+                                : t('permission_open_settings')}
+                    </Text>
+                </Pressable>
+            </View>
+        );
+    }
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]} onLayout={onLayout}>

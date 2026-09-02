@@ -5,7 +5,7 @@ export default {
     tab_settings: '设置',
 
     permission_title: '需访问权限',
-    permission_desc: 'PickPic 需要访问您的照片库以帮助您整理照片和视频。',
+    permission_desc: 'PickPic 需要访问照片库来整理照片。视频访问状态会在视频页检查。',
     permission_btn: '授予权限',
     permission_denied_desc: '照片权限已被系统拒绝，请在系统设置中重新开启。',
     permission_requesting: '请求中…',
@@ -36,6 +36,11 @@ export default {
     video_restore: '撤回',
     video_confirm_delete: '确认彻底删除',
     video_empty: '没有视频',
+    video_permission_desc: '视频整理需要访问照片库中的视频，你可以在此开启或管理视频访问。',
+    video_permission_denied_desc: '视频访问权限已被系统拒绝，请在系统设置中重新开启。',
+    video_permission_btn: '开启视频访问',
+    video_permission_unavailable_desc: '暂时无法检查视频访问状态，请重试。',
+    video_permission_retry_btn: '重试',
     video_location_unknown: '未知位置',
 
     settings_title: '设置',

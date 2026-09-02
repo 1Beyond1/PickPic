@@ -24,7 +24,10 @@ export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
   const [mediaPermission, , getMediaPermission] = MediaLibrary.usePermissions({
-    granularPermissions: ['photo', 'video'],
+    // Keep the global gate scoped to the required photo workflow. Android
+    // reports a combined request as denied when video is refused, even though
+    // the photo feed and scanner can operate with photo access alone.
+    granularPermissions: ['photo'],
   });
   const {
     dismissedAnnouncementVersion,
@@ -100,15 +103,14 @@ export default function RootLayout() {
         void mediaStore.loadAlbums();
         void mediaStore.refreshTotalCounts();
         void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-        void mediaStore.loadVideos(50, displayOrder, selectedAlbumIds);
       }
     }
 
     const mediaStore = useMediaStore.getState();
     mediaStore.setPermissionScope(currentScope);
     if (mediaHasHydrated && (!queueVisibilityInitializedRef.current || mediaSnapshotChanged)) {
-      mediaStore.refreshQueuedAssetVisibility(currentScope);
-      mediaStore.pruneUnavailableQueuedAssets(currentScope);
+      mediaStore.refreshQueuedAssetVisibility(currentScope, 'photo');
+      mediaStore.pruneUnavailableQueuedAssets(currentScope, 'photo');
       queueVisibilityInitializedRef.current = true;
     }
     if (scopeChanged) {
@@ -180,7 +182,7 @@ export default function RootLayout() {
       if (isPermissionScopeChange) {
         // The permission hook has not necessarily published the new scope
         // yet. Hide all persisted queue items until it does so.
-        mediaStore.refreshQueuedAssetVisibility('none');
+        mediaStore.refreshQueuedAssetVisibility('none', 'photo');
         mediaStore.notifyPermissionRefresh();
       } else {
         const deletedAssetIds = event.deletedAssets?.map(asset => asset.id) ?? [];
@@ -196,8 +198,8 @@ export default function RootLayout() {
               console.error('[RootLayout] Failed to clean externally deleted assets from scan index:', error);
             });
         }
-        mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none');
-        mediaStore.pruneUnavailableQueuedAssets(mediaPermissionScopeRef.current ?? 'none');
+        mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none', 'photo');
+        mediaStore.pruneUnavailableQueuedAssets(mediaPermissionScopeRef.current ?? 'none', 'photo');
         if (!indexCleanupPromise) {
           mediaStore.notifyMediaLibraryRefresh();
         }
@@ -211,7 +213,6 @@ export default function RootLayout() {
         void mediaStore.loadAlbums();
         void mediaStore.refreshTotalCounts();
         void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-        void mediaStore.loadVideos(50, displayOrder, selectedAlbumIds);
       }
 
       if (indexCleanupPromise) {
@@ -238,8 +239,8 @@ export default function RootLayout() {
             mediaPermissionScopeRef.current = refreshedScope;
             const refreshedStore = useMediaStore.getState();
             refreshedStore.setPermissionScope(refreshedScope);
-            refreshedStore.refreshQueuedAssetVisibility(refreshedScope);
-            refreshedStore.pruneUnavailableQueuedAssets(refreshedScope);
+            refreshedStore.refreshQueuedAssetVisibility(refreshedScope, 'photo');
+            refreshedStore.pruneUnavailableQueuedAssets(refreshedScope, 'photo');
           })
           .catch(error => {
             console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);

@@ -5,7 +5,7 @@ export default {
     tab_settings: 'Settings',
 
     permission_title: 'Access Required',
-    permission_desc: 'PickPic needs access to your library to help you organize photos and videos.',
+    permission_desc: 'PickPic needs photo-library access to organize your photos. Video access is checked on the Videos tab.',
     permission_btn: 'Grant Permission',
     permission_denied_desc: 'Photo access was denied. Re-enable it in system settings.',
     permission_requesting: 'Requesting…',
@@ -36,6 +36,11 @@ export default {
     video_restore: 'Restore',
     video_confirm_delete: 'Delete Permanently',
     video_empty: 'No Videos',
+    video_permission_desc: 'Video organizing needs access to videos in your library. You can enable or manage it here.',
+    video_permission_denied_desc: 'Video access was denied. Re-enable it in system settings.',
+    video_permission_btn: 'Enable Video Access',
+    video_permission_unavailable_desc: 'Video access status could not be checked. Please try again.',
+    video_permission_retry_btn: 'Try Again',
     video_location_unknown: 'Unknown Location',
 
     settings_title: 'Settings',

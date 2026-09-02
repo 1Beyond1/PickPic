@@ -55,11 +55,13 @@ export interface ScannerCallbacks {
 // ============================================================================
 
 let isRunning = false;
+let isFinalizing = false;
 let shouldStop = false;
 let currentBatch = 0;
 let callbacks: ScannerCallbacks = {};
 let mlFailureCount = 0;
 let mlCircuitBreakerTripped = false;
+let scannerRunGeneration = 0;
 
 const BATCH_SIZE = 20;
 
@@ -735,8 +737,8 @@ async function reportProgress(assetIds?: readonly string[]): Promise<void> {
         currentBatch,
         isRunning,
     };
-    callbacks.onProgress?.(progress);
     useScannerStore.getState().setProgress(progress);
+    callbacks.onProgress?.(progress);
 }
 
 /**
@@ -745,16 +747,49 @@ async function reportProgress(assetIds?: readonly string[]): Promise<void> {
  * shouldStop is observed, and a fatal setup/database error can otherwise
  * leave the settings screen showing the previous progress snapshot.
  */
-async function reportCurrentStatus(): Promise<void> {
+async function reportCurrentStatus(
+    isRunningSnapshot = isRunning,
+    expectedRunGeneration?: number,
+    runCallbacks = callbacks
+): Promise<void> {
     try {
         const progress = await getStatus();
-        callbacks.onProgress?.(progress);
-        useScannerStore.getState().setProgress(progress);
+        // A terminal status read can yield while a re-entrant caller starts a
+        // new scan. Do not let this old run publish its snapshot or callback
+        // into the new run's state.
+        if (expectedRunGeneration !== undefined && scannerRunGeneration !== expectedRunGeneration) {
+            return;
+        }
+        const finalProgress = {
+            ...progress,
+            isRunning: isRunningSnapshot,
+        };
+        useScannerStore.getState().setProgress(finalProgress);
+        runCallbacks.onProgress?.(finalProgress);
     } catch (error) {
         // The original scan error/cancellation should still be surfaced even
         // if this best-effort status refresh is blocked by a simultaneous
         // permission or database change.
         console.warn('[AIScanner] Failed to publish current status:', error);
+    }
+}
+
+/**
+ * Publish the terminal state only after the scanner's running flag has been
+ * cleared. This keeps callbacks and the Zustand snapshot consistent, while
+ * avoiding a stale final status if an onProgress callback starts another run.
+ */
+async function finalizeScannerRun(
+    runGeneration: number,
+    runCallbacks: ScannerCallbacks
+): Promise<void> {
+    isFinalizing = true;
+    isRunning = false;
+    useScannerStore.getState().setIsRunning(false);
+    try {
+        await reportCurrentStatus(false, runGeneration, runCallbacks);
+    } finally {
+        isFinalizing = false;
     }
 }
 
@@ -766,7 +801,7 @@ async function reportCurrentStatus(): Promise<void> {
  * Start the scanner
  */
 export async function start(cbs?: ScannerCallbacks): Promise<void> {
-    if (isRunning) {
+    if (isRunning || isFinalizing) {
         console.log('[AIScanner] Already running.');
         return;
     }
@@ -775,8 +810,11 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
     isRunning = true;
     shouldStop = false;
     currentBatch = 0;
-    callbacks = cbs ?? {};
+    const runCallbacks = cbs ?? {};
+    callbacks = runCallbacks;
+    const runGeneration = ++scannerRunGeneration;
     resetMLFailureState();
+    let completed = false;
 
     useScannerStore.getState().setIsRunning(true);
 
@@ -834,7 +872,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
             console.log('[AIScanner] Scan stopped.');
         } else {
             console.log('[AIScanner] Scan complete.');
-            callbacks.onComplete?.();
+            completed = true;
         }
     } catch (error) {
         console.error('[AIScanner] Scan error:', error);
@@ -844,11 +882,20 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
             await reportCurrentStatus();
         }
     } finally {
-        if (shouldStop) {
-            await reportCurrentStatus();
+        await finalizeScannerRun(runGeneration, runCallbacks);
+    }
+
+    if (completed) {
+        try {
+            runCallbacks.onComplete?.();
+        } catch (error) {
+            const completionError = error instanceof Error ? error : new Error(String(error));
+            console.error('[AIScanner] Completion callback failed:', completionError);
+            runCallbacks.onError?.(completionError);
+            if (scannerRunGeneration === runGeneration) {
+                useScannerStore.getState().setLastError(completionError);
+            }
         }
-        isRunning = false;
-        useScannerStore.getState().setIsRunning(false);
     }
 }
 
@@ -867,7 +914,7 @@ export async function resumeOnce(
     options?: ScanBatchOptions,
     cbs?: ScannerCallbacks
 ): Promise<void> {
-    if (isRunning) {
+    if (isRunning || isFinalizing) {
         console.log('[AIScanner] Already running.');
         return;
     }
@@ -876,8 +923,11 @@ export async function resumeOnce(
     isRunning = true;
     shouldStop = false;
     currentBatch = 0;
-    callbacks = cbs ?? {};
+    const runCallbacks = cbs ?? {};
+    callbacks = runCallbacks;
+    const runGeneration = ++scannerRunGeneration;
     resetMLFailureState();
+    let completed = false;
 
     useScannerStore.getState().setIsRunning(true);
 
@@ -957,7 +1007,7 @@ export async function resumeOnce(
             console.log('[AIScanner] One batch stopped.');
         } else {
             console.log('[AIScanner] One batch complete.');
-            callbacks.onComplete?.();
+            completed = true;
         }
     } catch (error) {
         console.error('[AIScanner] Resume error:', error);
@@ -967,11 +1017,20 @@ export async function resumeOnce(
             await reportCurrentStatus();
         }
     } finally {
-        if (shouldStop) {
-            await reportCurrentStatus();
+        await finalizeScannerRun(runGeneration, runCallbacks);
+    }
+
+    if (completed) {
+        try {
+            runCallbacks.onComplete?.();
+        } catch (error) {
+            const completionError = error instanceof Error ? error : new Error(String(error));
+            console.error('[AIScanner] Completion callback failed:', completionError);
+            runCallbacks.onError?.(completionError);
+            if (scannerRunGeneration === runGeneration) {
+                useScannerStore.getState().setLastError(completionError);
+            }
         }
-        isRunning = false;
-        useScannerStore.getState().setIsRunning(false);
     }
 }
 
@@ -1004,14 +1063,14 @@ export async function resetCursor(): Promise<void> {
  * Reset ALL progress (Cursor + Database Status)
  */
 export async function resetAllProgress(): Promise<void> {
-    if (isRunning) {
+    if (isRunning || isFinalizing) {
         stop();
         const deadline = Date.now() + 30000;
-        while (isRunning && Date.now() < deadline) {
+        while ((isRunning || isFinalizing) && Date.now() < deadline) {
             await yieldToMainThread();
         }
 
-        if (isRunning) {
+        if (isRunning || isFinalizing) {
             throw new Error('Scanner did not stop in time; progress was not reset.');
         }
     }
@@ -1024,5 +1083,5 @@ export async function resetAllProgress(): Promise<void> {
  * Check if scanner is currently running
  */
 export function isScanning(): boolean {
-    return isRunning;
+    return isRunning || isFinalizing;
 }

@@ -59,11 +59,6 @@ export default function PhotoDetailScreen() {
             .catch(error => {
                 if (active) {
                     console.warn('[PhotoDetail] Failed to verify asset after media-library refresh:', error);
-                    // Native implementations commonly reject instead of
-                    // returning a falsy value when the asset was deleted or
-                    // removed from the current permission scope. Do not leave
-                    // a stale detail route visible in that case.
-                    router.replace(permissionScope === 'none' ? '/' : '/(tabs)/photos');
                 }
             });
 

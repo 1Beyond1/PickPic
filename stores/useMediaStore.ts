@@ -94,7 +94,8 @@ interface MediaState {
     permissionScope: MediaPermissionScope | null;
     permissionRefreshVersion: number;
     mediaLibraryRefreshVersion: number;
-    hiddenQueuedAssetIds: string[] | null;
+    hiddenPhotoQueuedAssetIds: string[] | null;
+    hiddenVideoQueuedAssetIds: string[] | null;
     hasHydrated: boolean;
 
     // Actions
@@ -114,7 +115,7 @@ interface MediaState {
     markVideoAsProcessed: (asset: PhotoAsset) => void;
     restoreFromTrash: (assetId: string) => void;
     removeDeletedAssets: (assetIds: readonly string[]) => void;
-    pruneUnavailableQueuedAssets: (scope: MediaPermissionScope) => void;
+    pruneUnavailableQueuedAssets: (scope: MediaPermissionScope, mediaType?: MediaType) => void;
 
     confirmDeletion: (assetIds?: readonly string[]) => Promise<string[]>;
     confirmVideoTrash: (assetIds?: readonly string[]) => Promise<string[]>;
@@ -130,7 +131,7 @@ interface MediaState {
     setPermissionScope: (scope: MediaPermissionScope) => void;
     notifyPermissionRefresh: () => void;
     notifyMediaLibraryRefresh: () => void;
-    refreshQueuedAssetVisibility: (scope: MediaPermissionScope) => void;
+    refreshQueuedAssetVisibility: (scope: MediaPermissionScope, mediaType?: MediaType) => void;
     getVisibleProcessedCounts: () => Promise<{ photos: number; videos: number }>;
     setHasHydrated: (status: boolean) => void;
 }
@@ -414,13 +415,26 @@ async function getVisibleAssetIds(mediaType: MediaType): Promise<Set<string>> {
     return visibleIds;
 }
 
+async function getVisibleTotalCount(mediaType: MediaType): Promise<number> {
+    const permission = await MediaLibrary.getPermissionsAsync(false, [mediaType]);
+    if (!permission.granted) return 0;
+
+    const result = await MediaLibrary.getAssetsAsync({
+        mediaType,
+        first: 1,
+    });
+    return result.totalCount;
+}
+
 let activeMediaLoads = 0;
 let albumLoadRequestId = 0;
 let photoLoadRequestId = 0;
 let totalCountsRequestId = 0;
 let videoLoadRequestId = 0;
-let queueVisibilityRequestId = 0;
-let queuePruneRequestId = 0;
+let photoQueueVisibilityRequestId = 0;
+let videoQueueVisibilityRequestId = 0;
+let photoQueuePruneRequestId = 0;
+let videoQueuePruneRequestId = 0;
 
 export const useMediaStore = create<MediaState>()(
     persist(
@@ -447,7 +461,8 @@ export const useMediaStore = create<MediaState>()(
     permissionScope: null,
     permissionRefreshVersion: 0,
     mediaLibraryRefreshVersion: 0,
-    hiddenQueuedAssetIds: null,
+    hiddenPhotoQueuedAssetIds: null,
+    hiddenVideoQueuedAssetIds: null,
     hasHydrated: false,
 
     setPermission: (status) => set({ hasPermission: status }),
@@ -461,16 +476,21 @@ export const useMediaStore = create<MediaState>()(
     notifyMediaLibraryRefresh: () => set((state) => ({
         mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion + 1,
     })),
-    refreshQueuedAssetVisibility: (scope) => {
-        const requestId = ++queueVisibilityRequestId;
-        const queuedAssetIds = Array.from(new Set([
-            ...get().deleteQueue,
-            ...get().collectionQueue,
-            ...get().videoTrashBin,
-        ].map(asset => asset.id)));
+    refreshQueuedAssetVisibility: (scope, mediaType = 'photo') => {
+        const requestId = mediaType === 'video'
+            ? ++videoQueueVisibilityRequestId
+            : ++photoQueueVisibilityRequestId;
+        const queuedAssetIds = mediaType === 'video'
+            ? Array.from(new Set(get().videoTrashBin.map(asset => asset.id)))
+            : Array.from(new Set([
+                ...get().deleteQueue,
+                ...get().collectionQueue,
+            ].map(asset => asset.id)));
 
         if (scope === 'full') {
-            set({ hiddenQueuedAssetIds: null });
+            set(mediaType === 'video'
+                ? { hiddenVideoQueuedAssetIds: null }
+                : { hiddenPhotoQueuedAssetIds: null });
             return;
         }
 
@@ -478,7 +498,9 @@ export const useMediaStore = create<MediaState>()(
         // been checked under the new permission scope. Assets queued from the
         // current visible feed are not in this snapshot and remain actionable
         // for the current scope.
-        set({ hiddenQueuedAssetIds: queuedAssetIds });
+        set(mediaType === 'video'
+            ? { hiddenVideoQueuedAssetIds: queuedAssetIds }
+            : { hiddenPhotoQueuedAssetIds: queuedAssetIds });
         if (scope === 'none' || queuedAssetIds.length === 0) return;
 
         void Promise.all(queuedAssetIds.map(async assetId => {
@@ -491,9 +513,15 @@ export const useMediaStore = create<MediaState>()(
                 return assetId;
             }
         })).then(hiddenAssetIds => {
-            if (requestId === queueVisibilityRequestId) {
-                set({ hiddenQueuedAssetIds: hiddenAssetIds.filter((assetId): assetId is string => assetId !== null) });
-            }
+            const currentRequestId = mediaType === 'video'
+                ? videoQueueVisibilityRequestId
+                : photoQueueVisibilityRequestId;
+            if (requestId !== currentRequestId) return;
+
+            const hiddenIds = hiddenAssetIds.filter((assetId): assetId is string => assetId !== null);
+            set(mediaType === 'video'
+                ? { hiddenVideoQueuedAssetIds: hiddenIds }
+                : { hiddenPhotoQueuedAssetIds: hiddenIds });
         });
     },
     setHasHydrated: (status) => set({ hasHydrated: status }),
@@ -602,6 +630,14 @@ export const useMediaStore = create<MediaState>()(
         // otherwise make out-of-scope media appear actionable.
         set({ isLoading: true, videos: [] });
         try {
+            const permission = await MediaLibrary.getPermissionsAsync(false, ['video']);
+            if (!permission.granted) {
+                set((state) => requestId === videoLoadRequestId
+                    ? { videos: [], totalVideos: 0 }
+                    : state);
+                return;
+            }
+
             const { videoProcessedIds } = get();
 
             const sortBy: MediaLibrary.SortByValue[] = displayOrder === 'oldest'
@@ -717,19 +753,23 @@ export const useMediaStore = create<MediaState>()(
             videoTrashBin: state.videoTrashBin.filter(asset => !deletedIds.has(asset.id)),
             photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
             videoProcessedIds: state.videoProcessedIds.filter(id => !deletedIds.has(id)),
-            hiddenQueuedAssetIds: state.hiddenQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
+            hiddenPhotoQueuedAssetIds: state.hiddenPhotoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
+            hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
         }));
     },
 
-    pruneUnavailableQueuedAssets: (scope) => {
-        const requestId = ++queuePruneRequestId;
+    pruneUnavailableQueuedAssets: (scope, mediaType = 'photo') => {
+        const requestId = mediaType === 'video'
+            ? ++videoQueuePruneRequestId
+            : ++photoQueuePruneRequestId;
         if (scope !== 'full') return;
 
-        const queuedAssetIds = Array.from(new Set([
-            ...get().deleteQueue,
-            ...get().collectionQueue,
-            ...get().videoTrashBin,
-        ].map(asset => asset.id)));
+        const queuedAssetIds = mediaType === 'video'
+            ? Array.from(new Set(get().videoTrashBin.map(asset => asset.id)))
+            : Array.from(new Set([
+                ...get().deleteQueue,
+                ...get().collectionQueue,
+            ].map(asset => asset.id)));
         if (queuedAssetIds.length === 0) return;
 
         void Promise.all(queuedAssetIds.map(async assetId => {
@@ -744,7 +784,10 @@ export const useMediaStore = create<MediaState>()(
                 return null;
             }
         })).then(unavailableAssetIds => {
-            if (requestId !== queuePruneRequestId) return;
+            const currentRequestId = mediaType === 'video'
+                ? videoQueuePruneRequestId
+                : photoQueuePruneRequestId;
+            if (requestId !== currentRequestId) return;
             const idsToRemove = unavailableAssetIds.filter((assetId): assetId is string => assetId !== null);
             if (idsToRemove.length > 0) {
                 get().removeDeletedAssets(idsToRemove);
@@ -779,11 +822,11 @@ export const useMediaStore = create<MediaState>()(
                     currentIndex: 0,
                     deleteQueue: [],
                     collectionQueue: [],
-                    hiddenQueuedAssetIds: state.permissionScope === 'full'
+                    hiddenPhotoQueuedAssetIds: state.permissionScope === 'full'
                         ? null
                         : retainHiddenQueuedAssetIds(
-                            state.hiddenQueuedAssetIds,
-                            state.videoTrashBin.map(video => video.id),
+                            state.hiddenPhotoQueuedAssetIds,
+                            [],
                         ),
                 };
             }
@@ -795,14 +838,13 @@ export const useMediaStore = create<MediaState>()(
                 currentIndex: 0,
                 deleteQueue,
                 collectionQueue,
-                hiddenQueuedAssetIds: state.permissionScope === 'full'
+                hiddenPhotoQueuedAssetIds: state.permissionScope === 'full'
                     ? null
                     : retainHiddenQueuedAssetIds(
-                        state.hiddenQueuedAssetIds,
+                        state.hiddenPhotoQueuedAssetIds,
                         [
                             ...deleteQueue.map(asset => asset.id),
                             ...collectionQueue.map(asset => asset.id),
-                            ...state.videoTrashBin.map(video => video.id),
                         ],
                     ),
             };
@@ -819,11 +861,11 @@ export const useMediaStore = create<MediaState>()(
                 photos: [],
                 deleteQueue: [],
                 collectionQueue: [],
-                hiddenQueuedAssetIds: state.permissionScope === 'full'
+                hiddenPhotoQueuedAssetIds: state.permissionScope === 'full'
                     ? null
                     : retainHiddenQueuedAssetIds(
-                        state.hiddenQueuedAssetIds,
-                        state.videoTrashBin.map(video => video.id),
+                        state.hiddenPhotoQueuedAssetIds,
+                        [],
                     ),
             });
     },
@@ -837,15 +879,7 @@ export const useMediaStore = create<MediaState>()(
                 videoProcessedIds: [],
                 videos: [],
                 videoTrashBin: [],
-                hiddenQueuedAssetIds: state.permissionScope === 'full'
-                    ? null
-                    : retainHiddenQueuedAssetIds(
-                        state.hiddenQueuedAssetIds,
-                        [
-                            ...state.deleteQueue.map(asset => asset.id),
-                            ...state.collectionQueue.map(asset => asset.id),
-                        ],
-                    ),
+                hiddenVideoQueuedAssetIds: null,
             });
     },
 
@@ -950,21 +984,24 @@ export const useMediaStore = create<MediaState>()(
                 return;
             }
 
-            const photoResult = await MediaLibrary.getAssetsAsync({
-                mediaType: 'photo',
-                first: 1,
-            });
-            const videoResult = await MediaLibrary.getAssetsAsync({
-                mediaType: 'video',
-                first: 1,
-            });
+            const [photoResult, videoResult] = await Promise.allSettled([
+                getVisibleTotalCount('photo'),
+                getVisibleTotalCount('video'),
+            ]);
             if (requestId !== totalCountsRequestId) return;
 
+            const previousState = get();
+            const totalPhotos = photoResult.status === 'fulfilled'
+                ? photoResult.value
+                : previousState.totalPhotos;
+            const totalVideos = videoResult.status === 'fulfilled'
+                ? videoResult.value
+                : previousState.totalVideos;
             set({
-                totalPhotos: photoResult.totalCount,
-                totalVideos: videoResult.totalCount,
+                totalPhotos,
+                totalVideos,
             });
-            console.log(`[MediaStore] Refreshed counts: ${photoResult.totalCount} photos, ${videoResult.totalCount} videos`);
+            console.log(`[MediaStore] Refreshed counts: ${totalPhotos} photos, ${totalVideos} videos`);
         } catch (e) {
             console.error("Failed to refresh total counts", e);
         }

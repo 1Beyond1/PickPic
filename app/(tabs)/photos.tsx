@@ -24,7 +24,7 @@ export default function PhotosScreen() {
         markForDeletion, markAsSkipped,
         confirmDeletion, deleteQueue, resetBatch, isConfirmingDeletion,
         createAlbum, addAssetToAlbum, loadAlbums,
-        permissionScope, hiddenQueuedAssetIds, mediaLibraryRefreshVersion,
+        permissionScope, hiddenPhotoQueuedAssetIds, mediaLibraryRefreshVersion,
     } = useMediaStore();
 
     const {
@@ -55,10 +55,10 @@ export default function PhotosScreen() {
 
     const processedIds = new Set(photoProcessedIds);
     const visiblePhotos = photos.filter(p => !processedIds.has(p.id));
-    const hiddenQueueIds = new Set(hiddenQueuedAssetIds ?? []);
-    const visibleDeleteQueue = permissionScope === 'full' && hiddenQueuedAssetIds === null
+    const hiddenQueueIds = new Set(hiddenPhotoQueuedAssetIds ?? []);
+    const visibleDeleteQueue = permissionScope === 'full' && hiddenPhotoQueuedAssetIds === null
         ? deleteQueue
-        : permissionScope === 'limited' && hasHydrated && hiddenQueuedAssetIds !== null
+        : permissionScope === 'limited' && hasHydrated && hiddenPhotoQueuedAssetIds !== null
             ? deleteQueue.filter(asset => !hiddenQueueIds.has(asset.id))
             : [];
     const visibleDeleteQueueIds = visibleDeleteQueue.map(photo => photo.id);

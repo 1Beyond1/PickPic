@@ -11,7 +11,10 @@ import { useThemeColor } from '../hooks/useThemeColor';
 export default function Index() {
     const router = useRouter();
     const [permissionResponse, requestPermission, getPermission] = MediaLibrary.usePermissions({
-        granularPermissions: ['photo', 'video'],
+        // Photo organizing and AI scanning are the app's required core path.
+        // Video access is requested separately when the video tab is opened;
+        // denying it must not block the photo workflow on Android 13+.
+        granularPermissions: ['photo'],
     });
     const [checking, setChecking] = useState(true);
     const [requesting, setRequesting] = useState(false);
