@@ -153,4 +153,22 @@ describe('VideosScreen processing behavior', () => {
 
     expect(mockMarkVideoAsProcessed).toHaveBeenCalledWith(videoOne);
   });
+
+  it('shows a notice when the user advances to the final video', async () => {
+    const screen = render(React.createElement(VideosScreen));
+
+    await waitFor(() => expect(mockGetPermissionsAsync).toHaveBeenCalled(), { timeout: 5000 });
+    const flatList = await waitFor(() => screen.UNSAFE_getByType(ReactNative.FlatList));
+    act(() => {
+      flatList.props.onViewableItemsChanged({
+        viewableItems: [{ key: videoOne.id }],
+      });
+      flatList.props.onViewableItemsChanged({
+        viewableItems: [{ key: videoTwo.id }],
+      });
+    });
+
+    expect(screen.getByText('video_last_item')).toBeTruthy();
+    screen.unmount();
+  });
 });

@@ -44,6 +44,7 @@ export default {
     video_permission_unavailable_desc: '暂时无法检查视频访问状态，请重试。',
     video_permission_retry_btn: '重试',
     video_location_unknown: '未知位置',
+    video_last_item: '这是最后一个视频',
 
     settings_title: '设置',
     settings_group_size: '每组照片数量',

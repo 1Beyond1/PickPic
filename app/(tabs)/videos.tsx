@@ -43,6 +43,7 @@ export default function VideosScreen() {
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [selectedVideoForCollection, setSelectedVideoForCollection] = useState<any>(null);
     const [isScreenFocused, setIsScreenFocused] = useState(true);
+    const [isAtEnd, setIsAtEnd] = useState(false);
     const [videoPermission, setVideoPermission] = useState<MediaLibrary.PermissionResponse | null>(null);
     const [videoPermissionChecked, setVideoPermissionChecked] = useState(false);
     const [requestingVideoPermission, setRequestingVideoPermission] = useState(false);
@@ -54,6 +55,8 @@ export default function VideosScreen() {
     videosRef.current = videos;
     const processedVideoIds = new Set(videoProcessedIds);
     const visibleVideos = videos.filter(video => !processedVideoIds.has(video.id));
+    const visibleVideosRef = useRef(visibleVideos);
+    visibleVideosRef.current = visibleVideos;
     const hiddenQueueIds = new Set(hiddenVideoQueuedAssetIds ?? []);
     const videoPermissionScope = !videoPermission?.granted
         ? 'none'
@@ -106,6 +109,7 @@ export default function VideosScreen() {
         if (!isLoading) return;
         lastActiveIdRef.current = null;
         setActiveId(null);
+        setIsAtEnd(false);
     }, [isLoading]);
 
     const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
@@ -209,6 +213,7 @@ export default function VideosScreen() {
         useCallback(() => {
             setIsScreenFocused(true);
             setActiveId(null);
+            setIsAtEnd(false);
             lastActiveIdRef.current = null;
             return () => {
                 setIsScreenFocused(false);
@@ -232,6 +237,10 @@ export default function VideosScreen() {
         // onViewableItemsChanged after it has mounted.
         const previousActiveId = lastActiveIdRef.current;
         if (previousActiveId && previousActiveId !== newActiveId) {
+            const currentVisibleVideos = visibleVideosRef.current;
+            const isLastVideo = currentVisibleVideos[currentVisibleVideos.length - 1]?.id === newActiveId;
+            setIsAtEnd(isLastVideo);
+
             const prevVideo = videosRef.current.find(v => v.id === previousActiveId);
             if (prevVideo) {
                 markVideoAsProcessed(prevVideo);
@@ -569,6 +578,15 @@ export default function VideosScreen() {
                 onConfirm={handleConfirmCollection}
                 editableOnly
             />
+
+            {isAtEnd && (
+                <View pointerEvents="none" style={[styles.endNoticeContainer, { bottom: insets.bottom + 80 }]}>
+                    <View style={[styles.endNotice, { backgroundColor: isDark ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)' }]}>
+                        <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
+                        <Text style={[styles.endNoticeText, { color: colors.text }]}>{t('video_last_item')}</Text>
+                    </View>
+                </View>
+            )}
         </View>
     );
 }
@@ -683,5 +701,25 @@ const styles = StyleSheet.create({
     confirmDeleteText: {
         color: COLORS.white,
         fontWeight: 'bold'
+    },
+    endNoticeContainer: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 20,
+    },
+    endNotice: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        maxWidth: '90%',
+        paddingHorizontal: SPACING.m,
+        paddingVertical: SPACING.s,
+        borderRadius: BORDER_RADIUS.full,
+    },
+    endNoticeText: {
+        marginLeft: SPACING.s,
+        fontSize: 14,
+        fontWeight: '600',
     }
 });

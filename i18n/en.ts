@@ -44,6 +44,7 @@ export default {
     video_permission_unavailable_desc: 'Video access status could not be checked. Please try again.',
     video_permission_retry_btn: 'Try Again',
     video_location_unknown: 'Unknown Location',
+    video_last_item: 'This is the last video',
 
     settings_title: 'Settings',
     settings_group_size: 'Batch Size',
