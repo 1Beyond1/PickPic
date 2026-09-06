@@ -154,6 +154,29 @@ describe('VideosScreen processing behavior', () => {
     expect(mockMarkVideoAsProcessed).toHaveBeenCalledWith(videoOne);
   });
 
+  it('keeps the previous video available and does not process again when swiping back', async () => {
+    const screen = render(React.createElement(VideosScreen));
+
+    await waitFor(() => expect(mockGetPermissionsAsync).toHaveBeenCalled(), { timeout: 5000 });
+    const flatList = await waitFor(() => screen.UNSAFE_getByType(ReactNative.FlatList));
+    act(() => {
+      flatList.props.onViewableItemsChanged({
+        viewableItems: [{ key: videoOne.id }],
+      });
+      flatList.props.onViewableItemsChanged({
+        viewableItems: [{ key: videoTwo.id }],
+      });
+      flatList.props.onViewableItemsChanged({
+        viewableItems: [{ key: videoOne.id }],
+      });
+    });
+
+    expect(flatList.props.data).toEqual([videoOne, videoTwo]);
+    expect(mockMarkVideoAsProcessed).toHaveBeenCalledTimes(1);
+    expect(mockMarkVideoAsProcessed).toHaveBeenCalledWith(videoOne);
+    screen.unmount();
+  });
+
   it('shows a notice when the user advances to the final video', async () => {
     const screen = render(React.createElement(VideosScreen));
 

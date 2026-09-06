@@ -26,7 +26,6 @@ export default function VideosScreen() {
 
     const {
         videos, loadVideos, isLoading, hasHydrated,
-        videoProcessedIds,
         markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
         isConfirmingVideoTrash,
         addAssetToAlbum, hiddenVideoQueuedAssetIds, mediaLibraryRefreshVersion,
@@ -53,10 +52,6 @@ export default function VideosScreen() {
     const lastActiveIdRef = useRef<string | null>(null);
     const videosRef = useRef(videos);
     videosRef.current = videos;
-    const processedVideoIds = new Set(videoProcessedIds);
-    const visibleVideos = videos.filter(video => !processedVideoIds.has(video.id));
-    const visibleVideosRef = useRef(visibleVideos);
-    visibleVideosRef.current = visibleVideos;
     const hiddenQueueIds = new Set(hiddenVideoQueuedAssetIds ?? []);
     const videoPermissionScope = !videoPermission?.granted
         ? 'none'
@@ -237,13 +232,21 @@ export default function VideosScreen() {
         // onViewableItemsChanged after it has mounted.
         const previousActiveId = lastActiveIdRef.current;
         if (previousActiveId && previousActiveId !== newActiveId) {
-            const currentVisibleVideos = visibleVideosRef.current;
-            const isLastVideo = currentVisibleVideos[currentVisibleVideos.length - 1]?.id === newActiveId;
-            setIsAtEnd(isLastVideo);
+            const currentVideos = videosRef.current;
+            const previousIndex = currentVideos.findIndex(video => video.id === previousActiveId);
+            const newIndex = currentVideos.findIndex(video => video.id === newActiveId);
+            const isAdvancing = previousIndex >= 0 && newIndex > previousIndex;
 
-            const prevVideo = videosRef.current.find(v => v.id === previousActiveId);
-            if (prevVideo) {
-                markVideoAsProcessed(prevVideo);
+            if (isAdvancing) {
+                setIsAtEnd(newIndex === currentVideos.length - 1);
+                const prevVideo = currentVideos[previousIndex];
+                if (prevVideo) {
+                    markVideoAsProcessed(prevVideo);
+                }
+            } else {
+                // Going back is navigation only. It must not mark the video
+                // that the user is leaving as processed a second time.
+                setIsAtEnd(false);
             }
         }
         lastActiveIdRef.current = newActiveId;
@@ -415,9 +418,9 @@ export default function VideosScreen() {
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                     <ActivityIndicator size="large" color={colors.primary} />
                 </View>
-            ) : visibleVideos.length > 0 ? (
+            ) : videos.length > 0 ? (
                 <FlatList
-                    data={visibleVideos}
+                    data={videos}
                     keyExtractor={item => item.id}
                     renderItem={({ item }) => (
                         <VideoFeedItem
@@ -438,10 +441,6 @@ export default function VideosScreen() {
                     showsVerticalScrollIndicator={false}
                     onViewableItemsChanged={onViewableItemsChanged}
                     viewabilityConfig={viewabilityConfig}
-                    // Processed items are removed from the head as the user
-                    // advances. Keep the currently visible video anchored
-                    // while that data update changes its index.
-                    maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
                     snapToInterval={feedHeight}
                     snapToAlignment="start"
                     decelerationRate="fast"
