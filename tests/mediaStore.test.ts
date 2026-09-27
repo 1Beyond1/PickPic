@@ -144,4 +144,29 @@ describe('media visibility checks', () => {
 
     expect(useMediaStore.getState().photos.map(asset => asset.id)).toEqual(['newest']);
   });
+
+  it('shuffles a random video batch even when all videos fit in it', async () => {
+    getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+    getAssetsAsync.mockResolvedValue({
+      assets: [
+        { id: 'first', mediaType: 'video', creationTime: 3 },
+        { id: 'second', mediaType: 'video', creationTime: 2 },
+        { id: 'third', mediaType: 'video', creationTime: 1 },
+      ],
+      hasNextPage: false,
+      endCursor: '',
+      totalCount: 3,
+    });
+    const random = jest.spyOn(Math, 'random').mockReturnValue(0);
+
+    try {
+      await useMediaStore.getState().loadVideos(50, 'random');
+      expect(useMediaStore.getState().videos.map(asset => asset.id)).toEqual([
+        'second', 'third', 'first',
+      ]);
+      expect(random).toHaveBeenCalled();
+    } finally {
+      random.mockRestore();
+    }
+  });
 });

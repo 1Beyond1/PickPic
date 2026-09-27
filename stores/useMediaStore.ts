@@ -423,6 +423,15 @@ async function loadAssetsForReview(
     }
 
     await assertAlbumsStillAvailable(normalizedAlbumIds);
+    if (displayOrder === 'random') {
+        // Reservoir sampling chooses which assets to show, but keeps library
+        // order when the eligible set fits within one batch. Shuffle the
+        // selected batch so "random" also changes the viewing order.
+        for (let index = selected.length - 1; index > 0; index--) {
+            const swapIndex = Math.floor(Math.random() * (index + 1));
+            [selected[index], selected[swapIndex]] = [selected[swapIndex], selected[index]];
+        }
+    }
     return { assets: selected.slice(0, count), totalCount };
 }
 

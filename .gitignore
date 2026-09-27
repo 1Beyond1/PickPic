@@ -31,7 +31,14 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
+
+# local signing and service configuration
+*.keystore
+google-services.json
+GoogleService-Info.plist
 
 # typescript
 *.tsbuildinfo
