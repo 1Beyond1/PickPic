@@ -3,6 +3,7 @@ import React from 'react';
 import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
+import { useThemeColor } from '../hooks/useThemeColor';
 import { APP_VERSION } from '../stores/useSettingsStore';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -15,6 +16,7 @@ interface AnnouncementModalProps {
 
 export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion }: AnnouncementModalProps) {
     const { t } = useI18n();
+    const { colors } = useThemeColor();
 
     return (
         <Modal
@@ -23,8 +25,8 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
             animationType="fade"
             onRequestClose={onDismissOnce}
         >
-            <View style={styles.overlay}>
-                <View style={styles.modalBackground}>
+            <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
+                <View style={[styles.modalBackground, { backgroundColor: colors.background, borderColor: colors.border }]}>
                     <ScrollView
                         style={styles.scrollView}
                         contentContainerStyle={styles.scrollContent}
@@ -32,66 +34,66 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
                     >
                         {/* Header */}
                         <View style={styles.header}>
-                            <View style={styles.iconContainer}>
-                                <Ionicons name="sparkles" size={28} color={COLORS.primary} />
+                            <View style={[styles.iconContainer, { backgroundColor: colors.selectionBackground }]}>
+                                <Ionicons name="sparkles" size={28} color={colors.primary} />
                             </View>
-                            <Text style={styles.title}>{t('announcement_title')}</Text>
-                            <Text style={styles.version}>{APP_VERSION}</Text>
+                            <Text style={[styles.title, { color: colors.text }]}>{t('announcement_title')}</Text>
+                            <Text style={[styles.version, { color: colors.textSecondary }]}>{APP_VERSION}</Text>
                         </View>
 
                         {/* Content */}
                         <View style={styles.content}>
-                            <Text style={styles.sectionTitle}>📢 {t('announcement_notice_title')}</Text>
+                            <Text style={[styles.sectionTitle, { color: colors.text }]}>📢 {t('announcement_notice_title')}</Text>
 
                             <View style={styles.noticeItem}>
-                                <Ionicons name="alert-circle" size={20} color={COLORS.warning} />
-                                <Text style={styles.noticeText}>{t('announcement_notice_1')}</Text>
+                                <Ionicons name="alert-circle" size={20} color={colors.warning} />
+                                <Text style={[styles.noticeText, { color: colors.textSecondary }]}>{t('announcement_notice_1')}</Text>
                             </View>
 
                             <View style={styles.noticeItem}>
-                                <Ionicons name="cloud-outline" size={20} color={COLORS.primary} />
-                                <Text style={styles.noticeText}>{t('announcement_notice_2')}</Text>
+                                <Ionicons name="cloud-outline" size={20} color={colors.primary} />
+                                <Text style={[styles.noticeText, { color: colors.textSecondary }]}>{t('announcement_notice_2')}</Text>
                             </View>
 
                             <View style={styles.noticeItem}>
-                                <Ionicons name="construct-outline" size={20} color={COLORS.textSecondary} />
-                                <Text style={styles.noticeText}>{t('announcement_notice_3')}</Text>
+                                <Ionicons name="construct-outline" size={20} color={colors.textSecondary} />
+                                <Text style={[styles.noticeText, { color: colors.textSecondary }]}>{t('announcement_notice_3')}</Text>
                             </View>
 
-                            <View style={styles.divider} />
+                            <View style={[styles.divider, { backgroundColor: colors.divider }]} />
 
-                            <Text style={styles.sectionTitle}>🆕 {t('announcement_update_title' as any)}</Text>
+                            <Text style={[styles.sectionTitle, { color: colors.text }]}>🆕 {t('announcement_update_title' as any)}</Text>
                             <View style={styles.updateItem}>
-                                <Text style={styles.updateVersion}>v0.3.1</Text>
-                                <Text style={styles.updateText}>{t('update_v030_1' as any)}</Text>
-                                <Text style={styles.updateText}>{t('update_v030_2' as any)}</Text>
-                                <Text style={styles.updateText}>{t('update_v030_3' as any)}</Text>
+                                <Text style={[styles.updateVersion, { color: colors.text }]}>v0.3.1</Text>
+                                <Text style={[styles.updateText, { color: colors.textSecondary }]}>{t('update_v030_1' as any)}</Text>
+                                <Text style={[styles.updateText, { color: colors.textSecondary }]}>{t('update_v030_2' as any)}</Text>
+                                <Text style={[styles.updateText, { color: colors.textSecondary }]}>{t('update_v030_3' as any)}</Text>
                             </View>
 
-                            <View style={styles.divider} />
+                            <View style={[styles.divider, { backgroundColor: colors.divider }]} />
 
-                            <Text style={styles.sectionTitle}>👨‍💻 {t('announcement_author_title')}</Text>
+                            <Text style={[styles.sectionTitle, { color: colors.text }]}>👨‍💻 {t('announcement_author_title')}</Text>
                             <View style={styles.authorRow}>
-                                <Ionicons name="logo-github" size={24} color={COLORS.text} />
-                                <Text style={styles.authorText}>1Beyond1</Text>
+                                <Ionicons name="logo-github" size={24} color={colors.text} />
+                                <Text style={[styles.authorText, { color: colors.text }]}>1Beyond1</Text>
                             </View>
-                            <Text style={styles.followHint}>{t('github_follow')}</Text>
+                            <Text style={[styles.followHint, { color: colors.textSecondary }]}>{t('github_follow')}</Text>
                         </View>
                     </ScrollView>
 
                     {/* Buttons */}
-                    <View style={styles.buttonContainer}>
+                    <View style={[styles.buttonContainer, { borderTopColor: colors.border }]}>
                         <Pressable
-                            style={[styles.button, styles.secondaryButton]}
+                            style={[styles.button, styles.secondaryButton, { backgroundColor: colors.surface }]}
                             onPress={onDismissOnce}
                         >
-                            <Text style={styles.secondaryButtonText}>{t('announcement_close_once')}</Text>
+                            <Text style={[styles.secondaryButtonText, { color: colors.textSecondary }]}>{t('announcement_close_once')}</Text>
                         </Pressable>
                         <Pressable
-                            style={[styles.button, styles.primaryButton]}
+                            style={[styles.button, styles.primaryButton, { backgroundColor: colors.actionBackground }]}
                             onPress={onDismissForVersion}
                         >
-                            <Text style={styles.primaryButtonText}>{t('announcement_close_version')}</Text>
+                            <Text style={[styles.primaryButtonText, { color: colors.actionForeground }]}>{t('announcement_close_version')}</Text>
                         </Pressable>
                     </View>
                 </View>

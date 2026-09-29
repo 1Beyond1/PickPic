@@ -8,7 +8,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AIScanGuideModal } from '../components/AIScanGuideModal';
 import { AnnouncementModal } from '../components/AnnouncementModal';
 import { MLBridge } from '../components/MLBridge';
-import { COLORS } from '../constants/theme';
+import { useThemeColor } from '../hooks/useThemeColor';
 import { AssetRepository } from '../database';
 import { isScanning, start as startScanner, stop as stopScanner } from '../services/scanner';
 import { useMediaStore } from '../stores/useMediaStore';
@@ -21,6 +21,7 @@ void SplashScreen.preventAutoHideAsync().catch(error => {
 });
 
 export default function RootLayout() {
+  const { colors, isDark } = useThemeColor();
   const router = useRouter();
   const pathname = usePathname();
   const [mediaPermission, , getMediaPermission] = MediaLibrary.usePermissions({
@@ -349,13 +350,13 @@ export default function RootLayout() {
   };
 
   return (
-    <GestureHandlerRootView style={styles.container}>
+    <GestureHandlerRootView style={[styles.container, { backgroundColor: colors.background }]}>
       {enableAIClassification && Platform.OS !== 'web' && <MLBridge />}
-      <StatusBar style="auto" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: COLORS.background },
+          contentStyle: { backgroundColor: colors.background },
           animation: 'fade',
         }}
       >
@@ -381,7 +382,6 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
   },
   loadingContainer: {
     justifyContent: 'center',

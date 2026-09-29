@@ -265,10 +265,10 @@ export default function ScanResultsScreen() {
                 </Text>
             </View>
             <Pressable
-                style={[styles.deleteButton, { backgroundColor: colors.danger }]}
+                style={[styles.deleteButton, { backgroundColor: colors.dangerBackground }]}
                 onPress={() => handleDeleteBlurry(item.assetId)}
             >
-                <Ionicons name="trash" size={20} color="#FFF" />
+                <Ionicons name="trash" size={20} color={colors.dangerForeground} />
             </Pressable>
         </GlassContainer>
     );

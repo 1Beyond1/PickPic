@@ -22,8 +22,8 @@ const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [
                 <Switch
                     value={value}
                     onValueChange={onValueChange}
-                    trackColor={{ false: isDark ? '#333' : '#E0E0E0', true: colors.primary }}
-                    thumbColor={isDark ? '#FFF' : '#FFF'}
+                    trackColor={{ false: colors.surfaceHover, true: colors.actionBackground }}
+                    thumbColor={value && isDark ? colors.actionForeground : '#FFF'}
                 />
             ) : (
                 <View style={styles.optionsContainer}>
@@ -35,14 +35,14 @@ const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [
                                 onPress={() => onValueChange(opt)}
                                 style={[
                                     styles.optionButton,
-                                    isSelected && { backgroundColor: colors.primary },
+                                    isSelected && { backgroundColor: colors.actionBackground },
                                     !isSelected && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
                                 ]}
                             >
                                 <Text
                                     style={[
                                         styles.optionText,
-                                        { color: isSelected ? '#FFF' : colors.textSecondary, fontFamily: fonts?.ui },
+                                        { color: isSelected ? colors.actionForeground : colors.textSecondary, fontFamily: fonts?.ui },
                                         isSelected && { fontWeight: 'bold' }
                                     ]}
                                 >
@@ -291,14 +291,14 @@ export default function SettingsScreen() {
                                     onPress={() => setDisplayOrder(order)}
                                     style={[
                                         styles.optionButton,
-                                        isSelected && { backgroundColor: colors.primary },
+                                        isSelected && { backgroundColor: colors.actionBackground },
                                         !isSelected && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
                                     ]}
                                 >
                                     <Text
                                         style={[
                                             styles.optionText,
-                                            { color: isSelected ? '#FFF' : colors.textSecondary },
+                                            { color: isSelected ? colors.actionForeground : colors.textSecondary },
                                             isSelected && { fontWeight: 'bold' }
                                         ]}
                                     >
@@ -317,7 +317,7 @@ export default function SettingsScreen() {
                         type="select"
                         value={theme}
                         onValueChange={setTheme}
-                        options={['WarmTerra', 'light', 'dark']}
+                        options={['light', 'dark']}
                         formatOption={(option: string) => t(`theme_${option}` as any)}
                         colors={colors}
                         isDark={isDark}
@@ -386,7 +386,7 @@ export default function SettingsScreen() {
                         <Pressable
                             style={({ pressed }) => [
                                 styles.scanButton,
-                                { backgroundColor: isRunning ? colors.danger : colors.primary },
+                                { backgroundColor: isRunning ? colors.dangerBackground : colors.actionBackground },
                                 (pressed || isResettingScanner || isFinalizing) && { opacity: 0.5 }
                             ]}
                             onPress={isRunning ? stop : start}
@@ -395,10 +395,10 @@ export default function SettingsScreen() {
                             <Ionicons
                                 name={isRunning ? "stop" : "play"}
                                 size={18}
-                                color="#FFF"
+                                color={isRunning ? colors.dangerForeground : colors.actionForeground}
                                 style={{ marginRight: 6 }}
                             />
-                            <Text style={styles.scanButtonText}>
+                            <Text style={[styles.scanButtonText, { color: isRunning ? colors.dangerForeground : colors.actionForeground }]}>
                                 {isRunning ? t('ai_scanner_stop') : t('ai_scanner_start')}
                             </Text>
                         </Pressable>
@@ -504,8 +504,8 @@ export default function SettingsScreen() {
                                     value={enableAIClassification}
                                     onValueChange={handleToggleAIClassification}
                                     disabled={scannerBusy || !aiClassificationAvailable}
-                                    trackColor={{ false: isDark ? '#333' : '#E0E0E0', true: colors.primary }}
-                                    thumbColor={isDark ? '#FFF' : '#FFF'}
+                                    trackColor={{ false: colors.surfaceHover, true: colors.actionBackground }}
+                                    thumbColor={enableAIClassification && isDark ? colors.actionForeground : '#FFF'}
                                 />
                             </View>
 
@@ -586,10 +586,10 @@ export default function SettingsScreen() {
                                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('ai_classification_warning_cancel' as any)}</Text>
                             </Pressable>
                             <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center' }}
+                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.actionBackground, alignItems: 'center' }}
                                 onPress={confirmEnableAIClassification}
                             >
-                                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{t('ai_classification_warning_confirm' as any)}</Text>
+                                <Text style={{ color: colors.actionForeground, fontWeight: 'bold' }}>{t('ai_classification_warning_confirm' as any)}</Text>
                             </Pressable>
                         </View>
                     </View>
@@ -614,10 +614,10 @@ export default function SettingsScreen() {
                                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
                             </Pressable>
                             <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.danger, alignItems: 'center' }}
+                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.dangerBackground, alignItems: 'center' }}
                                 onPress={confirmResetScanner}
                             >
-                                <Text style={{ color: 'white', fontWeight: '600' }}>{t('confirm')}</Text>
+                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('confirm')}</Text>
                             </Pressable>
                         </View>
                     </View>
@@ -645,7 +645,7 @@ export default function SettingsScreen() {
                                         <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
                                     </Pressable>
                                     <Pressable
-                                        style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center' }}
+                                        style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.actionBackground, alignItems: 'center' }}
                                         onPress={() => {
                                             useSettingsStore.getState().dismissAnnouncement(null as any);
                                             useSettingsStore.getState().dismissAIGuide(null as any);
@@ -656,7 +656,7 @@ export default function SettingsScreen() {
                                             }, 1500);
                                         }}
                                     >
-                                        <Text style={{ color: 'white', fontWeight: '600' }}>{t('confirm')}</Text>
+                                        <Text style={{ color: colors.actionForeground, fontWeight: '600' }}>{t('confirm')}</Text>
                                     </Pressable>
                                 </View>
                             </>
@@ -691,14 +691,14 @@ export default function SettingsScreen() {
                                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
                             </Pressable>
                             <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.danger, alignItems: 'center', opacity: isConfirmingDeletion ? 0.5 : 1 }}
+                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.dangerBackground, alignItems: 'center', opacity: isConfirmingDeletion ? 0.5 : 1 }}
                                 onPress={() => {
                                     resetPhotoProgress();
                                     setShowResetPhotosConfirm(false);
                                 }}
                                 disabled={isConfirmingDeletion}
                             >
-                                <Text style={{ color: 'white', fontWeight: '600' }}>{t('confirm')}</Text>
+                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('confirm')}</Text>
                             </Pressable>
                         </View>
                     </View>
@@ -723,14 +723,14 @@ export default function SettingsScreen() {
                                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
                             </Pressable>
                             <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.danger, alignItems: 'center', opacity: isConfirmingVideoTrash ? 0.5 : 1 }}
+                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.dangerBackground, alignItems: 'center', opacity: isConfirmingVideoTrash ? 0.5 : 1 }}
                                 onPress={() => {
                                     resetVideoProgress();
                                     setShowResetVideosConfirm(false);
                                 }}
                                 disabled={isConfirmingVideoTrash}
                             >
-                                <Text style={{ color: 'white', fontWeight: '600' }}>{t('confirm')}</Text>
+                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('confirm')}</Text>
                             </Pressable>
                         </View>
                     </View>
@@ -907,7 +907,6 @@ const styles = StyleSheet.create({
         borderRadius: 12,
     },
     scanButtonText: {
-        color: '#FFFFFF',
         fontWeight: '600',
         fontSize: 15,
     },

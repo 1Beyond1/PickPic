@@ -154,7 +154,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
                                         style={[
                                             styles.item,
                                             { backgroundColor: colors.surface },
-                                            isSelected && { borderColor: colors.primary, borderWidth: 1, backgroundColor: 'rgba(151, 115, 78, 0.15)' },
+                                            isSelected && { borderColor: colors.primary, borderWidth: 1, backgroundColor: colors.selectionBackground },
                                             isDisabled && styles.itemDisabled
                                         ]}
                                         onPress={() => toggleSelection(item.id)}
@@ -174,10 +174,10 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
                     )}
 
                     <Pressable
-                        style={[styles.confirmButton, { backgroundColor: colors.primary }]}
+                        style={[styles.confirmButton, { backgroundColor: colors.actionBackground }]}
                         onPress={() => onConfirm(selectedIds)}
                     >
-                        <Text style={styles.confirmButtonText}>{t('confirm')}</Text>
+                        <Text style={[styles.confirmButtonText, { color: colors.actionForeground }]}>{t('confirm')}</Text>
                     </Pressable>
                 </View>
             </View>
@@ -268,7 +268,6 @@ const styles = StyleSheet.create({
         marginBottom: SPACING.l,
     },
     confirmButtonText: {
-        color: COLORS.white,
         fontSize: 16,
         fontWeight: 'bold',
     },

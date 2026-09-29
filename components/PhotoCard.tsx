@@ -18,9 +18,9 @@ import { PhotoAsset } from '../stores/useMediaStore';
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // Card padding around the image
-const CARD_PADDING = SPACING.s;
-const MAX_CARD_WIDTH = SCREEN_WIDTH * 0.85;
-const MAX_CARD_HEIGHT = SCREEN_HEIGHT * 0.55;
+const CARD_PADDING = SPACING.xs;
+const MAX_CARD_WIDTH = SCREEN_WIDTH * 0.88;
+const MAX_CARD_HEIGHT = SCREEN_HEIGHT * 0.58;
 const SWIPE_THRESHOLD = 120;
 
 interface DropZone {
@@ -222,18 +222,18 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 const styles = StyleSheet.create({
     cardContainer: {
         position: 'absolute',
-        borderRadius: BORDER_RADIUS.l,
+        borderRadius: BORDER_RADIUS.xl,
         overflow: 'hidden',
         borderWidth: 1,
         // Subtle shadow
-        elevation: 3,
+        elevation: 1,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
+        shadowOpacity: 0.04,
         shadowRadius: 8,
     },
     image: {
         flex: 1,
-        borderRadius: BORDER_RADIUS.m,
+        borderRadius: BORDER_RADIUS.l,
     },
 });

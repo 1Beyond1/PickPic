@@ -282,8 +282,8 @@ export function SimilarGroupDetailOverlay({
             >
                 <Image source={{ uri: item.uri }} style={styles.photoImage} />
                 {isSelected && (
-                    <View style={[styles.checkmark, { backgroundColor: colors.primary }]}>
-                        <Ionicons name="checkmark" size={16} color="#FFF" />
+                    <View style={[styles.checkmark, { backgroundColor: colors.actionBackground }]}>
+                        <Ionicons name="checkmark" size={16} color={colors.actionForeground} />
                     </View>
                 )}
             </Pressable>
@@ -376,11 +376,11 @@ export function SimilarGroupDetailOverlay({
                 <View style={{ flex: 1 }} />
                 {selectedIds.size > 0 && (
                     <Pressable
-                        style={[styles.deleteButton, { backgroundColor: colors.danger }, isDeleting && { opacity: 0.5 }]}
+                        style={[styles.deleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
                         onPress={handleDeleteSelected}
                         disabled={isDeleting}
                     >
-                        <Ionicons name="trash" size={20} color="#FFF" />
+                        <Ionicons name="trash" size={20} color={colors.dangerForeground} />
                     </Pressable>
                 )}
             </View>
@@ -423,11 +423,11 @@ export function SimilarGroupDetailOverlay({
                             <Ionicons name="close" size={32} color="#FFF" />
                         </Pressable>
                         <Pressable
-                            style={[styles.previewDeleteButton, { backgroundColor: colors.danger }, isDeleting && { opacity: 0.5 }]}
+                            style={[styles.previewDeleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
                             onPress={handleDeleteFromPreview}
                             disabled={isDeleting}
                         >
-                            <Ionicons name="trash" size={24} color="#FFF" />
+                            <Ionicons name="trash" size={24} color={colors.dangerForeground} />
                         </Pressable>
                         <Image
                             source={{ uri: previewPhoto.uri }}

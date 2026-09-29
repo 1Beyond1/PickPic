@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
+import { AlbumSelector } from '../../components/AlbumSelector';
 import { PhotoCard } from '../../components/PhotoCard';
 import { BORDER_RADIUS, COLORS, SPACING } from '../../constants/theme';
 import { useI18n } from '../../hooks/useI18n';
@@ -32,6 +33,7 @@ export default function PhotosScreen() {
         groupSize,
         displayOrder,
         selectedAlbumIds,
+        setSelectedAlbums,
         hasHydrated: settingsHydrated,
     } = useSettingsStore();
 
@@ -40,6 +42,8 @@ export default function PhotosScreen() {
     const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
     const [previewPhoto, setPreviewPhoto] = useState<any>(null);
     const [managingPhotoAccess, setManagingPhotoAccess] = useState(false);
+    const [showHome, setShowHome] = useState(true);
+    const [showAlbumSelector, setShowAlbumSelector] = useState(false);
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
@@ -190,13 +194,13 @@ export default function PhotosScreen() {
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                     <Text style={[styles.emptyText, { color: colors.text }]}>{t('no_delete_this_batch' as any)}</Text>
                     <Pressable
-                        style={[styles.actionButton, { backgroundColor: colors.primary }]}
+                        style={[styles.actionButton, { backgroundColor: colors.actionBackground }]}
                         onPress={() => {
                             resetBatch(visibleDeleteQueueIds);
                             loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                         }}
                     >
-                        <Text style={styles.actionButtonText}>{t('continue_next_batch' as any)}</Text>
+                        <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('continue_next_batch' as any)}</Text>
                     </Pressable>
                 </View>
             );
@@ -239,7 +243,7 @@ export default function PhotosScreen() {
                 </GlassContainer>
 
                 <Pressable
-                    style={[styles.actionButton, { backgroundColor: colors.primary }, isConfirmingDeletion && { opacity: 0.6 }]}
+                    style={[styles.actionButton, { backgroundColor: colors.dangerBackground }, isConfirmingDeletion && { opacity: 0.6 }]}
                     onPress={async () => {
                     try {
                         const deletedIds = await confirmDeletion(visibleDeleteQueueIds); // Wait for deletion to complete
@@ -256,7 +260,7 @@ export default function PhotosScreen() {
                 }}
                     disabled={isConfirmingDeletion}
                 >
-                    <Text style={styles.actionButtonText}>{t('photos_confirm')}</Text>
+                    <Text style={[styles.actionButtonText, { color: colors.dangerForeground }]}>{t('photos_confirm')}</Text>
                 </Pressable>
 
                 <Pressable
@@ -324,9 +328,9 @@ export default function PhotosScreen() {
                     <Pressable
                         onPress={handleManagePhotoAccess}
                         disabled={managingPhotoAccess}
-                        style={[styles.actionButton, { backgroundColor: colors.primary, opacity: managingPhotoAccess ? 0.6 : 1 }]}
+                        style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: managingPhotoAccess ? 0.6 : 1 }]}
                     >
-                        <Text style={styles.actionButtonText}>
+                        <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>
                             {managingPhotoAccess ? t('permission_requesting') : t('photos_manage_access')}
                         </Text>
                     </Pressable>
@@ -334,18 +338,114 @@ export default function PhotosScreen() {
                 <Pressable
                     onPress={() => loadPhotos(groupSize, displayOrder, selectedAlbumIds)}
                     disabled={managingPhotoAccess}
-                    style={[styles.actionButton, { backgroundColor: colors.primary, opacity: managingPhotoAccess ? 0.6 : 1, marginTop: hasLimitedPhotoAccess ? 10 : 0 }]}
+                    style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: managingPhotoAccess ? 0.6 : 1, marginTop: hasLimitedPhotoAccess ? 10 : 0 }]}
                 >
-                    <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
+                    <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('photos_reload')}</Text>
                 </Pressable>
             </View>
         )
     }
 
+    // Only offer the visual entry for an untouched batch. A partially
+    // processed batch resumes directly in the deck after a remount.
+    if (showHome && visiblePhotos.length === photos.length) {
+        const previewPhotos = visiblePhotos.slice(0, 3);
+        return (
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
+                <ScrollView
+                    contentContainerStyle={[styles.homeContent, { paddingTop: insets.top + 26, paddingBottom: insets.bottom + 112 }]}
+                    showsVerticalScrollIndicator={false}
+                >
+                    <View style={styles.homeBrandRow}>
+                        <View style={styles.homeBrand}>
+                            <Ionicons name="images-outline" size={23} color={colors.text} />
+                            <Text style={[styles.homeBrandText, { color: colors.text }]}>PickPic</Text>
+                        </View>
+                        <Pressable
+                            onPress={() => router.navigate('/(tabs)/settings')}
+                            accessibilityLabel={t('tab_settings')}
+                            style={[styles.homeMore, { backgroundColor: colors.surfaceHover }]}
+                        >
+                            <Ionicons name="settings-outline" size={20} color={colors.text} />
+                        </Pressable>
+                    </View>
+
+                    <View style={styles.homeHero}>
+                        <Text style={[styles.homeScope, { color: colors.textSecondary }]}>{t('photos_home_scope')}</Text>
+                        <View style={styles.homeCountRow}>
+                            <Text adjustsFontSizeToFit numberOfLines={1} style={[styles.homeCount, { color: colors.text }]}>{visiblePhotos.length}</Text>
+                            <Text style={[styles.homeCountLabel, { color: colors.textSecondary }]}>{t('photos_home_pending')}</Text>
+                        </View>
+                        <Pressable
+                            onPress={() => setShowHome(false)}
+                            accessibilityRole="button"
+                            style={[styles.homeStart, { backgroundColor: colors.actionBackground }]}
+                        >
+                            <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t('photos_home_start')}</Text>
+                            <Ionicons name="arrow-forward" size={20} color={colors.actionForeground} />
+                        </Pressable>
+                    </View>
+
+                    <View style={styles.homePreviewSection}>
+                        <View style={styles.homeSectionHeader}>
+                            <Text style={[styles.homeSectionTitle, { color: colors.text }]}>{t('photos_home_preview')}</Text>
+                            <Text style={[styles.homeSectionMeta, { color: colors.textSecondary }]}>{visiblePhotos.length}</Text>
+                        </View>
+                        <View style={styles.homeMosaic}>
+                            <Image source={{ uri: previewPhotos[0].uri }} style={[styles.homeMosaicLarge, { backgroundColor: colors.surfaceHover }]} resizeMode="cover" />
+                            {previewPhotos.length > 1 && (
+                                <View style={styles.homeMosaicSide}>
+                                    {previewPhotos.slice(1).map(photo => (
+                                        <Image key={photo.id} source={{ uri: photo.uri }} style={[styles.homeMosaicSmall, { backgroundColor: colors.surfaceHover }]} resizeMode="cover" />
+                                    ))}
+                                </View>
+                            )}
+                        </View>
+                    </View>
+
+                    <Pressable
+                        onPress={() => setShowAlbumSelector(true)}
+                        accessibilityRole="button"
+                        style={[styles.homeAlbumRow, { borderTopColor: colors.divider }]}
+                    >
+                        <View style={[styles.homeAlbumIcon, { backgroundColor: colors.surfaceHover }]}>
+                            <Ionicons name="folder-outline" size={21} color={colors.text} />
+                        </View>
+                        <View style={styles.homeAlbumCopy}>
+                            <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('photos_home_album')}</Text>
+                            <Text style={[styles.homeAlbumHint, { color: colors.textSecondary }]}>{t('photos_home_album_hint')}</Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+                    </Pressable>
+                </ScrollView>
+                <AlbumSelector
+                    visible={showAlbumSelector}
+                    onClose={() => setShowAlbumSelector(false)}
+                    initialSelection={selectedAlbumIds}
+                    onConfirm={(ids) => {
+                        setSelectedAlbums(ids);
+                        setShowAlbumSelector(false);
+                    }}
+                />
+            </View>
+        );
+    }
+
     return (
         <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
             <View style={styles.header}>
-                <Text style={[styles.headerTitle, { color: colors.text }]}>{t('photos_header')} ({visiblePhotos.length}/{groupSize})</Text>
+                <View style={styles.deckHeaderRow}>
+                    <Text style={[styles.headerTitle, { color: colors.text }]}>{t('photos_header')}</Text>
+                    <Text style={[styles.deckCounter, { color: colors.textSecondary }]}>
+                        {photos.length - visiblePhotos.length + 1} / {photos.length}
+                    </Text>
+                </View>
+                <View style={[styles.deckProgressTrack, { backgroundColor: colors.divider }]}>
+                    <View style={[styles.deckProgressFill, {
+                        backgroundColor: colors.text,
+                        width: `${((photos.length - visiblePhotos.length + 1) / photos.length) * 100}%`,
+                    }]} />
+                </View>
             </View>
 
             <View style={styles.deckContainer}>
@@ -389,8 +489,8 @@ export default function PhotosScreen() {
                         value={newAlbumName}
                         onChangeText={setNewAlbumName}
                     />
-                    <Pressable style={styles.actionButton} onPress={handleCreateAlbum}>
-                        <Text style={styles.actionButtonText}>{t('album_create_btn')}</Text>
+                    <Pressable style={[styles.actionButton, { backgroundColor: colors.actionBackground }]} onPress={handleCreateAlbum}>
+                        <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('album_create_btn')}</Text>
                     </Pressable>
                     <Pressable style={[styles.actionButton, { backgroundColor: 'transparent', marginTop: 10 }]} onPress={() => setShowNewAlbumModal(false)}>
                         <Text style={[styles.actionButtonText, { color: colors.textSecondary }]}>{t('cancel')}</Text>
@@ -413,6 +513,130 @@ export default function PhotosScreen() {
 }
 
 const styles = StyleSheet.create({
+    homeContent: {
+        flexGrow: 1,
+        paddingHorizontal: 24,
+    },
+    homeBrandRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+    },
+    homeBrand: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    homeBrandText: {
+        fontSize: 18,
+        fontWeight: '600',
+        letterSpacing: -0.4,
+    },
+    homeMore: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    homeHero: {
+        marginTop: 62,
+    },
+    homeScope: {
+        fontSize: 13,
+    },
+    homeCountRow: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 8,
+        marginTop: 8,
+        marginBottom: 18,
+    },
+    homeCount: {
+        fontSize: 77,
+        lineHeight: 88,
+        fontWeight: '400',
+        fontVariant: ['tabular-nums'],
+        flexShrink: 1,
+    },
+    homeCountLabel: {
+        fontSize: 15,
+    },
+    homeStart: {
+        height: 54,
+        borderRadius: 27,
+        paddingHorizontal: 22,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    homeStartLabel: {
+        fontSize: 15,
+        fontWeight: '600',
+    },
+    homePreviewSection: {
+        marginTop: 34,
+    },
+    homeSectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 14,
+    },
+    homeSectionTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    homeSectionMeta: {
+        fontSize: 12,
+        fontVariant: ['tabular-nums'],
+    },
+    homeMosaic: {
+        height: 224,
+        flexDirection: 'row',
+        gap: 8,
+    },
+    homeMosaicLarge: {
+        flex: 1.18,
+        height: '100%',
+        borderRadius: 14,
+    },
+    homeMosaicSide: {
+        flex: 1,
+        gap: 8,
+    },
+    homeMosaicSmall: {
+        flex: 1,
+        width: '100%',
+        borderRadius: 14,
+    },
+    homeAlbumRow: {
+        marginTop: 44,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: 22,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        minHeight: 72,
+    },
+    homeAlbumIcon: {
+        width: 43,
+        height: 43,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    homeAlbumCopy: {
+        flex: 1,
+        gap: 4,
+    },
+    homeAlbumTitle: {
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    homeAlbumHint: {
+        fontSize: 12,
+    },
     container: {
         flex: 1,
     },
@@ -422,25 +646,43 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     header: {
-        paddingHorizontal: SPACING.l,
-        paddingBottom: SPACING.m,
-        alignItems: 'center',
+        paddingHorizontal: 24,
+        paddingTop: 26,
+        paddingBottom: 10,
     },
     headerTitle: {
-        fontSize: 18,
+        fontSize: 24,
         fontWeight: '600',
+    },
+    deckHeaderRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+    },
+    deckCounter: {
+        fontSize: 13,
+        fontVariant: ['tabular-nums'],
+    },
+    deckProgressTrack: {
+        height: 2,
+        marginTop: 18,
+        borderRadius: 1,
+        overflow: 'hidden',
+    },
+    deckProgressFill: {
+        height: '100%',
+        borderRadius: 1,
     },
     deckContainer: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: -50,
     },
     footerHints: {
         flexDirection: 'row',
         justifyContent: 'space-around',
         width: '100%',
-        paddingBottom: 120,
+        paddingBottom: 100,
     },
     dropZoneContainer: {
         flexDirection: 'row',
@@ -515,13 +757,11 @@ const styles = StyleSheet.create({
         borderRadius: 8
     },
     actionButton: {
-        backgroundColor: COLORS.primary, // This needs to be dynamic, will be overridden in render
         paddingHorizontal: 40,
         paddingVertical: 15,
         borderRadius: BORDER_RADIUS.full
     },
     actionButtonText: {
-        color: COLORS.white,
         fontWeight: 'bold'
     },
     modal: {

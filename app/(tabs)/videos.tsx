@@ -377,9 +377,9 @@ export default function VideosScreen() {
                 <Pressable
                     onPress={handleRetryVideoPermission}
                     disabled={requestingVideoPermission}
-                    style={[styles.actionButton, { backgroundColor: colors.primary, opacity: requestingVideoPermission ? 0.6 : 1 }]}
+                    style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: requestingVideoPermission ? 0.6 : 1 }]}
                 >
-                    <Text style={styles.actionButtonText}>
+                    <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>
                         {requestingVideoPermission ? t('permission_requesting') : t('video_permission_retry_btn')}
                     </Text>
                 </Pressable>
@@ -397,9 +397,9 @@ export default function VideosScreen() {
                 <Pressable
                     onPress={handleRequestVideoPermission}
                     disabled={requestingVideoPermission}
-                    style={[styles.actionButton, { backgroundColor: colors.primary, opacity: requestingVideoPermission ? 0.6 : 1 }]}
+                    style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: requestingVideoPermission ? 0.6 : 1 }]}
                 >
-                    <Text style={styles.actionButtonText}>
+                    <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>
                         {requestingVideoPermission
                             ? t('permission_requesting')
                             : canAskAgain
@@ -461,9 +461,9 @@ export default function VideosScreen() {
                         <Pressable
                             onPress={handleManageVideoAccess}
                             disabled={requestingVideoPermission}
-                            style={[styles.actionButton, { backgroundColor: colors.primary, opacity: requestingVideoPermission ? 0.6 : 1 }]}
+                            style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: requestingVideoPermission ? 0.6 : 1 }]}
                         >
-                            <Text style={styles.actionButtonText}>
+                            <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>
                                 {requestingVideoPermission ? t('permission_requesting') : t('video_permission_btn')}
                             </Text>
                         </Pressable>
@@ -471,9 +471,9 @@ export default function VideosScreen() {
                     <Pressable
                         onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)}
                         disabled={requestingVideoPermission}
-                        style={[styles.actionButton, { backgroundColor: colors.primary, opacity: requestingVideoPermission ? 0.6 : 1, marginTop: hasLimitedVideoAccess ? 10 : 0 }]}
+                        style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: requestingVideoPermission ? 0.6 : 1, marginTop: hasLimitedVideoAccess ? 10 : 0 }]}
                     >
-                        <Text style={styles.actionButtonText}>{t('photos_reload')}</Text>
+                        <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('photos_reload')}</Text>
                     </Pressable>
                 </View>
             )}
@@ -610,7 +610,6 @@ const styles = StyleSheet.create({
         borderRadius: BORDER_RADIUS.full
     },
     actionButtonText: {
-        color: COLORS.white,
         fontWeight: 'bold'
     },
     trashIcon: {

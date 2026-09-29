@@ -18,7 +18,7 @@ interface AIScanGuideModalProps {
 }
 
 export function AIScanGuideModal({ visible, onStartScan, onDismiss }: AIScanGuideModalProps) {
-    const { colors, isDark } = useThemeColor();
+    const { colors } = useThemeColor();
     const { t } = useI18n();
 
     return (
@@ -32,7 +32,7 @@ export function AIScanGuideModal({ visible, onStartScan, onDismiss }: AIScanGuid
                 <View style={[styles.modalBackground, { backgroundColor: colors.surface }]}>
                     {/* Header */}
                     <View style={styles.header}>
-                        <View style={[styles.iconContainer, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F0F9FF' }]}>
+                        <View style={[styles.iconContainer, { backgroundColor: colors.selectionBackground }]}>
                             <Ionicons name="search" size={32} color={colors.primary} />
                         </View>
                         <Text style={[styles.title, { color: colors.text }]}>{t('ai_guide_title' as any)}</Text>
@@ -45,14 +45,14 @@ export function AIScanGuideModal({ visible, onStartScan, onDismiss }: AIScanGuid
                         </Text>
 
                         {/* Prominent Hint */}
-                        <View style={[styles.hintBox, { backgroundColor: isDark ? 'rgba(255, 193, 7, 0.15)' : '#FFF8E1' }]}>
-                            <Text style={[styles.hintText, { color: isDark ? '#FFD54F' : '#F57F17' }]}>
+                        <View style={[styles.hintBox, { backgroundColor: colors.surfaceHover }]}>
+                            <Text style={[styles.hintText, { color: colors.warning }]}>
                                 {t('ai_guide_classification_hint' as any)}
                             </Text>
                         </View>
 
-                        <View style={[styles.privacyBox, { backgroundColor: isDark ? 'rgba(76, 175, 80, 0.1)' : '#E8F5E9' }]}>
-                            <Text style={[styles.privacyText, { color: isDark ? '#4CAF50' : '#2E7D32' }]}>
+                        <View style={[styles.privacyBox, { backgroundColor: colors.surfaceHover }]}>
+                            <Text style={[styles.privacyText, { color: colors.success }]}>
                                 {t('ai_guide_privacy' as any)}
                             </Text>
                         </View>
@@ -61,13 +61,13 @@ export function AIScanGuideModal({ visible, onStartScan, onDismiss }: AIScanGuid
                     {/* Buttons */}
                     <View style={styles.buttonContainer}>
                         <Pressable
-                            style={[styles.button, styles.primaryButton, { backgroundColor: colors.primary }]}
+                            style={[styles.button, styles.primaryButton, { backgroundColor: colors.actionBackground }]}
                             onPress={onStartScan}
                         >
-                            <Text style={styles.primaryButtonText}>{t('ai_guide_start' as any)}</Text>
+                            <Text style={[styles.primaryButtonText, { color: colors.actionForeground }]}>{t('ai_guide_start' as any)}</Text>
                         </Pressable>
                         <Pressable
-                            style={[styles.button, styles.secondaryButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F5F5F5' }]}
+                            style={[styles.button, styles.secondaryButton, { backgroundColor: colors.surfaceHover }]}
                             onPress={onDismiss}
                         >
                             <Text style={[styles.secondaryButtonText, { color: colors.textSecondary }]}>{t('ai_guide_dismiss' as any)}</Text>
@@ -161,7 +161,6 @@ const styles = StyleSheet.create({
         elevation: 3,
     },
     primaryButtonText: {
-        color: '#FFF',
         fontSize: 16,
         fontWeight: '600',
     },

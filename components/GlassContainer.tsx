@@ -1,26 +1,25 @@
 import React from 'react';
 import { Platform, StyleSheet, View, ViewStyle } from 'react-native';
-import { BORDER_RADIUS, COLORS, COLORS_DARK } from '../constants/theme';
+import { BORDER_RADIUS } from '../constants/theme';
 import { useThemeColor } from '../hooks/useThemeColor';
 
 interface CardContainerProps {
     children: React.ReactNode;
     style?: ViewStyle;
     borderRadius?: number;
-    elevated?: boolean; // Warm Terra subtle elevation
+    elevated?: boolean;
 }
 
-// Warm Terra clean card container
 export const GlassContainer: React.FC<CardContainerProps> = ({
     children,
     style,
     borderRadius = BORDER_RADIUS.l,
     elevated = true,
 }) => {
-    const { isDark } = useThemeColor();
+    const { isDark, colors } = useThemeColor();
 
-    const backgroundColor = isDark ? COLORS_DARK.surface : COLORS.surface;
-    const borderColor = isDark ? COLORS_DARK.border : COLORS.border;
+    const backgroundColor = colors.surface;
+    const borderColor = colors.border;
 
     return (
         <View style={[
@@ -44,7 +43,7 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         padding: 16,
     },
-    // Warm Terra subtle shadow for light mode
+    // Restrained separation from the page background.
     shadowLight: {
         ...Platform.select({
             ios: {

@@ -1,47 +1,58 @@
 
-// Warm Terra Color Palette
-// Custom color scheme for PickPic app
+// Shared semantic palette for the same layout in light and dark mode.
 
 export const COLORS = {
-  // Warm Terra signature colors
-  primary: '#C4715B',         // Coral/terracotta accent color
-  primaryLight: '#D4876E',    // Lighter coral
-  background: '#FAF8F5',      // Warm beige background
-  surface: '#FFFFFF',         // White cards/inputs
-  surfaceHover: '#F5F3F0',    // Hover state
-  text: '#1F1F1E',            // Near-black text
-  textSecondary: '#6B6B6B',   // Muted gray for secondary text
-  textTertiary: '#A3A3A3',    // Light gray for hints
-  danger: '#DC2626',          // Red for destructive actions
-  warning: '#D97706',         // Amber warning
-  success: '#059669',         // Emerald green
+  primary: '#1B231D',
+  primaryLight: '#39433C',
+  background: '#F7F8F7',
+  surface: '#FFFFFF',
+  surfaceHover: '#ECEFEC',
+  text: '#1B211D',
+  textSecondary: '#626B64',
+  textTertiary: '#737D75',
+  danger: '#A23E35',
+  warning: '#956018',
+  success: '#326D4F',
   white: '#FFFFFF',
   black: '#000000',
   transparent: 'transparent',
-  overlay: 'rgba(31, 31, 30, 0.4)',
-  border: '#E8E5E0',          // Subtle warm border
-  divider: '#E8E5E0',         // Divider lines
+  overlay: 'rgba(0, 0, 0, 0.45)',
+  border: '#DEE3DE',
+  divider: '#DEE3DE',
+  actionBackground: '#1B231D',
+  actionForeground: '#FAFCF8',
+  selectionBackground: '#E2E8E2',
+  dangerBackground: '#A23E35',
+  dangerForeground: '#FFFFFF',
+  successBackground: '#326D4F',
+  successForeground: '#FFFFFF',
 };
 
-// Dark theme (Warm Terra dark mode)
 export const COLORS_DARK = {
-  primary: '#D4876E',         // Brighter coral for dark mode
-  primaryLight: '#E09A82',
-  background: '#1A1918',      // Dark warm gray
-  surface: '#2D2B28',         // Card surface
-  surfaceHover: '#3A3735',
-  text: '#FAF8F5',            // Warm white
-  textSecondary: '#A3A3A3',   // Muted light gray
-  textTertiary: '#737373',
-  danger: '#EF4444',
-  warning: '#F59E0B',
-  success: '#10B981',
+  primary: '#EFF2ED',
+  primaryLight: '#DCE3D9',
+  background: '#111212',
+  surface: '#1D1E1E',
+  surfaceHover: '#232524',
+  text: '#F1F2EF',
+  textSecondary: '#B1B8B0',
+  textTertiary: '#969D97',
+  danger: '#EAB0A4',
+  warning: '#EFC682',
+  success: '#9BCBA8',
   white: '#FFFFFF',
   black: '#000000',
   transparent: 'transparent',
-  overlay: 'rgba(0, 0, 0, 0.6)',
-  border: '#3A3735',
-  divider: '#3A3735',
+  overlay: 'rgba(0, 0, 0, 0.65)',
+  border: '#2B2D2B',
+  divider: '#2B2D2B',
+  actionBackground: '#EFF2ED',
+  actionForeground: '#181B18',
+  selectionBackground: '#282D29',
+  dangerBackground: '#A7483F',
+  dangerForeground: '#FFFFFF',
+  successBackground: '#326D4F',
+  successForeground: '#FFFFFF',
 };
 
 export const SPACING = {

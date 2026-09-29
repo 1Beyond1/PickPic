@@ -125,16 +125,16 @@ export function SimilarGroupCard({
                         resizeMode="cover"
                     />
                 )}
-                <View style={[styles.countBadge, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.countText}>{memberCount}</Text>
+                <View style={[styles.countBadge, { backgroundColor: colors.actionBackground }]}>
+                    <Text style={[styles.countText, { color: colors.actionForeground }]}>{memberCount}</Text>
                 </View>
             </View>
 
             {/* Processed Badge */}
             {isProcessed && (
-                <View style={[styles.processedBadge, { backgroundColor: colors.success || '#4CAF50' }]}>
-                    <Ionicons name="checkmark" size={12} color="#FFF" />
-                    <Text style={styles.processedText}>
+                <View style={[styles.processedBadge, { backgroundColor: colors.successBackground }]}>
+                    <Ionicons name="checkmark" size={12} color={colors.successForeground} />
+                    <Text style={[styles.processedText, { color: colors.successForeground }]}>
                         {t('similar_group_processed' as any)}
                     </Text>
                 </View>

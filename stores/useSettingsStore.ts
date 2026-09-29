@@ -6,12 +6,13 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 export const APP_VERSION = 'v0.3.1';
 
 export type DisplayOrder = 'newest' | 'oldest' | 'random';
+export type ThemeSetting = 'light' | 'dark';
 
 interface SettingsState {
     groupSize: 10 | 20 | 30;
     enableCollections: boolean;
     displayOrder: DisplayOrder;
-    theme: 'WarmTerra' | 'light' | 'dark';
+    theme: ThemeSetting;
     language: 'zh' | 'en';
     activeCollectionIds: string[];
     selectedAlbumIds: string[]; // Empty = all albums
@@ -29,7 +30,7 @@ interface SettingsState {
     toggleCollections: () => void;
     setActiveCollections: (ids: string[]) => void;
     setDisplayOrder: (order: DisplayOrder) => void;
-    setTheme: (theme: 'WarmTerra' | 'light' | 'dark') => void;
+    setTheme: (theme: ThemeSetting) => void;
     setLanguage: (lang: 'zh' | 'en') => void;
     setSelectedAlbums: (ids: string[]) => void;
     setHasHydrated: (hasHydrated: boolean) => void;
@@ -51,7 +52,7 @@ export const useSettingsStore = create<SettingsState>()(
             groupSize: 10,
             enableCollections: false,
             displayOrder: 'random', // Default to random (was enableRandomDisplay: true)
-            theme: 'WarmTerra', // Default to Warm Terra theme
+            theme: 'light',
             language: 'zh',
             activeCollectionIds: [],
             selectedAlbumIds: [], // Empty = organize all albums
@@ -84,9 +85,11 @@ export const useSettingsStore = create<SettingsState>()(
             name: 'photoapp-settings',
             storage: createJSONStorage(() => AsyncStorage),
             onRehydrateStorage: () => (state, error) => {
-                // Migration: convert legacy 'claude' and 'PPstyle' themes to 'WarmTerra'
-                if (state && ((state.theme as any) === 'claude' || (state.theme as any) === 'PPstyle')) {
-                    state.setTheme('WarmTerra');
+                // Older releases persisted WarmTerra, claude and PPstyle.
+                // Preserve every other setting while mapping those modes to
+                // the new neutral light appearance.
+                if (state && state.theme !== 'light' && state.theme !== 'dark') {
+                    state.setTheme('light');
                 }
                 // Zustand passes undefined when storage read/parse fails. The
                 // app can safely continue with defaults, but must still leave

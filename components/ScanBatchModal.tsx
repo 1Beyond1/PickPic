@@ -126,7 +126,7 @@ export function ScanBatchModal({ visible, onClose, onStartScan }: ScanBatchModal
                                         >
                                             <Text style={[
                                                 styles.countOptionText,
-                                                { color: count === option ? '#FFF' : colors.text }
+                                                { color: count === option ? colors.actionForeground : colors.text }
                                             ]}>
                                                 {option}
                                             </Text>
@@ -135,10 +135,10 @@ export function ScanBatchModal({ visible, onClose, onStartScan }: ScanBatchModal
                                 </ScrollView>
 
                                 <Pressable
-                                    style={[styles.startButton, { backgroundColor: colors.primary }]}
+                                    style={[styles.startButton, { backgroundColor: colors.actionBackground }]}
                                     onPress={handleStartByCount}
                                 >
-                                    <Text style={styles.startButtonText}>
+                                    <Text style={[styles.startButtonText, { color: colors.actionForeground }]}>
                                         {t('scan_batch_start' as any)}
                                     </Text>
                                 </Pressable>
@@ -247,7 +247,6 @@ const styles = StyleSheet.create({
         borderRadius: 14,
     },
     startButtonText: {
-        color: '#FFF',
         fontSize: 16,
         fontWeight: '600',
     },

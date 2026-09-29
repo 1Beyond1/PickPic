@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, AppState, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GlassContainer } from '../components/GlassContainer';
-import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
+import { BORDER_RADIUS, SPACING } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 
@@ -19,7 +19,7 @@ export default function Index() {
     const [checking, setChecking] = useState(true);
     const [requesting, setRequesting] = useState(false);
     const { t } = useI18n();
-    const { colors } = useThemeColor();
+    const { colors, isDark } = useThemeColor();
 
     const checkPermissions = useCallback(() => {
         if (!permissionResponse) {
@@ -79,19 +79,19 @@ export default function Index() {
 
     if (checking || !permissionResponse) {
         return (
-            <View style={styles.container}>
-                <StatusBar style="light" />
+            <View style={[styles.container, { backgroundColor: colors.background }]}>
+                <StatusBar style={isDark ? 'light' : 'dark'} />
                 <ActivityIndicator size="large" color={colors.primary} />
             </View>
         );
     }
 
     return (
-        <View style={styles.container}>
-            <StatusBar style="light" />
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
+            <StatusBar style={isDark ? 'light' : 'dark'} />
             <GlassContainer style={styles.card}>
-                <Text style={styles.title}>{t('permission_title')}</Text>
-                <Text style={styles.description}>
+                <Text style={[styles.title, { color: colors.text }]}>{t('permission_title')}</Text>
+                <Text style={[styles.description, { color: colors.textSecondary }]}>
                     {canAskAgain
                         ? t('permission_desc')
                         : t('permission_denied_desc')}
@@ -99,12 +99,12 @@ export default function Index() {
                 <Pressable
                     style={({ pressed }) => [
                         styles.button,
-                        { opacity: pressed || requesting ? 0.8 : 1, backgroundColor: colors.primary },
+                        { opacity: pressed || requesting ? 0.8 : 1, backgroundColor: colors.actionBackground },
                     ]}
                     onPress={handleRequestPermission}
                     disabled={requesting}
                 >
-                    <Text style={styles.buttonText}>
+                    <Text style={[styles.buttonText, { color: colors.actionForeground }]}>
                         {requesting
                             ? t('permission_requesting')
                             : canAskAgain
@@ -120,7 +120,6 @@ export default function Index() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: COLORS.background,
         justifyContent: 'center',
         alignItems: 'center',
         padding: SPACING.l,
@@ -133,18 +132,15 @@ const styles = StyleSheet.create({
     title: {
         fontSize: 24,
         fontWeight: 'bold',
-        color: COLORS.white,
         marginBottom: SPACING.m,
     },
     description: {
         fontSize: 16,
-        color: COLORS.textSecondary,
         textAlign: 'center',
         marginBottom: SPACING.xl,
         lineHeight: 24,
     },
     button: {
-        backgroundColor: COLORS.primary,
         paddingVertical: SPACING.m,
         paddingHorizontal: SPACING.xl,
         borderRadius: BORDER_RADIUS.full,
@@ -152,7 +148,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     buttonText: {
-        color: COLORS.white,
         fontSize: 16,
         fontWeight: '600',
     },
