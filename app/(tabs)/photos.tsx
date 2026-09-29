@@ -682,7 +682,7 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-around',
         width: '100%',
-        paddingBottom: 100,
+        paddingBottom: 140,
     },
     dropZoneContainer: {
         flexDirection: 'row',
