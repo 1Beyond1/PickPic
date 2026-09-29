@@ -91,9 +91,11 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.getByText('card:one')).toBeTruthy();
   });
 
-  it('resumes a partially processed batch without another start tap', () => {
+  it('keeps the deck open as an in-memory batch is processed', () => {
+    const view = render(<PhotosScreen />);
+    fireEvent.press(screen.getByText('photos_home_start'));
     mockMediaState.photoProcessedIds = ['one'];
-    render(<PhotosScreen />);
+    view.rerender(<PhotosScreen />);
     expect(screen.queryByText('photos_home_start')).toBeNull();
     expect(screen.getByText('card:two')).toBeTruthy();
   });

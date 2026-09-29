@@ -346,8 +346,8 @@ export default function PhotosScreen() {
         )
     }
 
-    // Only offer the visual entry for an untouched batch. A partially
-    // processed batch resumes directly in the deck after a remount.
+    // Only offer the visual entry for an untouched in-memory batch. The
+    // already-open deck stays open as items are processed.
     if (showHome && visiblePhotos.length === photos.length) {
         const previewPhotos = visiblePhotos.slice(0, 3);
         return (

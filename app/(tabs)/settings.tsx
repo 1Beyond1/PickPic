@@ -246,7 +246,7 @@ export default function SettingsScreen() {
             <ScrollView contentContainerStyle={styles.content}>
                 {/* ... existing content ... */}
                 {/* Group Size */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <SettingItem
                         label={t('settings_group_size')}
                         type="select"
@@ -260,7 +260,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* Album Filter */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <Pressable style={styles.item} onPress={() => setShowAlbumSelector(true)}>
                         <Text style={[styles.label, { color: colors.text }]}>{t('settings_album_filter' as any)}</Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -275,7 +275,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* Display Order */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <View style={styles.item}>
                         <Text style={[styles.label, { color: colors.text }]}>{t('settings_display_order')}</Text>
                     </View>
@@ -311,7 +311,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* Theme */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <SettingItem
                         label={t('settings_theme')}
                         type="select"
@@ -326,7 +326,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* Language */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <SettingItem
                         label={t('settings_language')}
                         type="select"
@@ -341,7 +341,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* AI Scanner Engine */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('ai_scanner_engine')}</Text>
 
                     {/* Progress Stats */}
@@ -431,7 +431,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* Photo Progress */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('tab_photos')} {t('photos_header')}</Text>
                     <View style={styles.progressRow}>
                         <Text style={[styles.progressText, { color: colors.textSecondary }]}>
@@ -452,7 +452,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* Video Progress */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('tab_videos')} {t('photos_header')}</Text>
                     <View style={styles.progressRow}>
                         <Text style={[styles.progressText, { color: colors.textSecondary }]}>
@@ -473,7 +473,7 @@ export default function SettingsScreen() {
                 </GlassContainer>
 
                 {/* Developer Options */}
-                <GlassContainer style={styles.section}>
+                <GlassContainer style={styles.section} elevated={false}>
                     <Pressable
                         style={styles.devOptionsHeader}
                         onPress={() => useSettingsStore.getState().toggleDevOptions()}
@@ -746,17 +746,18 @@ const styles = StyleSheet.create({
     },
     headerTitle: {
         fontSize: 28,
-        fontWeight: 'bold',
+        fontWeight: '600',
         paddingHorizontal: SPACING.l,
         marginVertical: SPACING.m,
     },
     content: {
-        padding: SPACING.m,
+        paddingHorizontal: SPACING.l,
+        paddingTop: SPACING.s,
         paddingBottom: 120,
     },
     section: {
         padding: SPACING.m,
-        marginBottom: SPACING.l,
+        marginBottom: SPACING.m,
     },
     sectionTitle: {
         fontSize: 16,
@@ -765,8 +766,10 @@ const styles = StyleSheet.create({
     },
     item: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         justifyContent: 'space-between',
         alignItems: 'center',
+        gap: SPACING.s,
         paddingVertical: SPACING.s,
     },
     label: {
@@ -784,7 +787,9 @@ const styles = StyleSheet.create({
         backgroundColor: 'transparent',
     },
     optionButton: {
-        paddingVertical: 6,
+        minHeight: 44,
+        justifyContent: 'center',
+        paddingVertical: 8,
         paddingHorizontal: 12,
         borderRadius: 20,
         overflow: 'hidden'
