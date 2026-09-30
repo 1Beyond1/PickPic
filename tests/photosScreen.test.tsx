@@ -80,6 +80,7 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.photos = [mockPhoto('one'), mockPhoto('two'), mockPhoto('three')];
     mockMediaState.photoProcessedIds = [];
     mockMediaState.deleteQueue = [];
+    mockMediaState.permissionScope = 'full';
     jest.clearAllMocks();
   });
 
@@ -105,5 +106,44 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.deleteQueue = [mockPhoto('one')];
     render(<PhotosScreen />);
     expect(screen.getByText('photos_confirm')).toBeTruthy();
+  });
+
+  it('returns to an empty home after the final batch without reopening processed photos', () => {
+    const view = render(<PhotosScreen />);
+    fireEvent.press(screen.getByText('photos_home_start'));
+    mockMediaState.photos = [];
+    mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
+    view.rerender(<PhotosScreen />);
+
+    fireEvent.press(screen.getByText('photos_back_home'));
+    expect(screen.getByText('PickPic')).toBeTruthy();
+    expect(screen.getByText('photos_home_album')).toBeTruthy();
+    expect(screen.queryByText('photos_home_start')).toBeNull();
+    expect(mockMediaState.photoProcessedIds).toEqual(['one', 'two', 'three']);
+    expect(screen.queryByText('card:one')).toBeNull();
+  });
+
+  it('opens an empty home safely when there are no photos at launch', () => {
+    mockMediaState.photos = [];
+    render(<PhotosScreen />);
+    expect(screen.getByText('PickPic')).toBeTruthy();
+    expect(screen.getByText('photos_empty')).toBeTruthy();
+    expect(screen.getByText('photos_reload')).toBeTruthy();
+  });
+
+  it('keeps a restored delete queue in review even when no photos remain', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one')];
+    render(<PhotosScreen />);
+    expect(screen.getByText('photos_confirm')).toBeTruthy();
+    expect(screen.queryByText('PickPic')).toBeNull();
+  });
+
+  it('keeps permission management available from the empty home', () => {
+    mockMediaState.photos = [];
+    mockMediaState.permissionScope = 'limited';
+    render(<PhotosScreen />);
+    expect(screen.getByText('photos_manage_access')).toBeTruthy();
+    expect(screen.getByText('photos_limited_access_desc')).toBeTruthy();
   });
 });

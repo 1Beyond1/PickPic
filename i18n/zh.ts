@@ -22,6 +22,7 @@ export default {
     photos_limited_access_desc: '当前没有可访问的照片；如果手机里有照片，请允许选择更多照片。',
     photos_manage_access: '管理照片访问',
     photos_reload: '重新加载',
+    photos_back_home: '返回首页',
     photos_finished: '本组整理完成',
     photos_delete_count: '删除: {count} 张',
     photos_confirm: '确认删除并继续',

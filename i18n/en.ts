@@ -22,6 +22,7 @@ export default {
     photos_limited_access_desc: 'No accessible photos were found. If your library has photos, allow access to select more.',
     photos_manage_access: 'Manage Photo Access',
     photos_reload: 'Reload',
+    photos_back_home: 'Back to Home',
     photos_finished: 'Batch Complete',
     photos_delete_count: 'Delete: {count} items',
     photos_confirm: 'Confirm Delete',

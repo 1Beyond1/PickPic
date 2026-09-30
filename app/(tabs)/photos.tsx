@@ -317,7 +317,7 @@ export default function PhotosScreen() {
         )
     }
 
-    if (photos.length === 0 && !isLoading) {
+    if (photos.length === 0 && !showHome) {
         const hasLimitedPhotoAccess = permissionScope === 'limited';
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
@@ -341,6 +341,13 @@ export default function PhotosScreen() {
                     style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: managingPhotoAccess ? 0.6 : 1, marginTop: hasLimitedPhotoAccess ? 10 : 0 }]}
                 >
                     <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('photos_reload')}</Text>
+                </Pressable>
+                <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setShowHome(true)}
+                    style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: SPACING.m }]}
+                >
+                    <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('photos_back_home')}</Text>
                 </Pressable>
             </View>
         )
@@ -377,12 +384,15 @@ export default function PhotosScreen() {
                             <Text style={[styles.homeCountLabel, { color: colors.textSecondary }]}>{t('photos_home_pending')}</Text>
                         </View>
                         <Pressable
-                            onPress={() => setShowHome(false)}
+                            onPress={() => {
+                                if (visiblePhotos.length > 0) setShowHome(false);
+                                else void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+                            }}
                             accessibilityRole="button"
                             style={[styles.homeStart, { backgroundColor: colors.actionBackground }]}
                         >
-                            <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t('photos_home_start')}</Text>
-                            <Ionicons name="arrow-forward" size={20} color={colors.actionForeground} />
+                            <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t(visiblePhotos.length > 0 ? 'photos_home_start' : 'photos_reload')}</Text>
+                            <Ionicons name={visiblePhotos.length > 0 ? 'arrow-forward' : 'refresh'} size={20} color={colors.actionForeground} />
                         </Pressable>
                     </View>
 
@@ -391,7 +401,7 @@ export default function PhotosScreen() {
                             <Text style={[styles.homeSectionTitle, { color: colors.text }]}>{t('photos_home_preview')}</Text>
                             <Text style={[styles.homeSectionMeta, { color: colors.textSecondary }]}>{visiblePhotos.length}</Text>
                         </View>
-                        <View style={styles.homeMosaic}>
+                        {previewPhotos.length > 0 ? <View style={styles.homeMosaic}>
                             <Image source={{ uri: previewPhotos[0].uri }} style={[styles.homeMosaicLarge, { backgroundColor: colors.surfaceHover }]} resizeMode="cover" />
                             {previewPhotos.length > 1 && (
                                 <View style={styles.homeMosaicSide}>
@@ -400,7 +410,23 @@ export default function PhotosScreen() {
                                     ))}
                                 </View>
                             )}
-                        </View>
+                        </View> : <View style={styles.homeEmpty}>
+                            <Text style={{ color: colors.textSecondary, textAlign: 'center', fontSize: 15, lineHeight: 22 }}>
+                                {t(permissionScope === 'limited' ? 'photos_limited_access_desc' : 'photos_empty')}
+                            </Text>
+                            {permissionScope === 'limited' && (
+                                <Pressable
+                                    accessibilityRole="button"
+                                    onPress={handleManagePhotoAccess}
+                                    disabled={managingPhotoAccess}
+                                    style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: SPACING.m, opacity: managingPhotoAccess ? 0.6 : 1 }]}
+                                >
+                                    <Text style={[styles.actionButtonText, { color: colors.text }]}>
+                                        {t(managingPhotoAccess ? 'permission_requesting' : 'photos_manage_access')}
+                                    </Text>
+                                </Pressable>
+                            )}
+                        </View>}
                     </View>
 
                     <Pressable
@@ -595,6 +621,12 @@ const styles = StyleSheet.create({
         height: 224,
         flexDirection: 'row',
         gap: 8,
+    },
+    homeEmpty: {
+        minHeight: 224,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: SPACING.m,
     },
     homeMosaicLarge: {
         flex: 1.18,
