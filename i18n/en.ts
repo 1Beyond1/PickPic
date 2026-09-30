@@ -26,6 +26,9 @@ export default {
     photos_back_home: 'Back to Home',
     photos_finished: 'Batch Complete',
     photos_delete_count: 'Delete: {count} items',
+    photos_review_previous: 'Previous',
+    photos_review_next: 'Next',
+    photos_review_page: 'Page {current} of {total}',
     photos_confirm: 'Confirm Delete',
     photos_skip: 'Skip Delete',
     photos_album_fallback: 'Album',
@@ -207,7 +210,7 @@ export default {
     ai_guide_dismiss: 'Don\'t Show for This Version',
 
     // AI Scan Empty Prompt
-    ai_guide_classification_hint: '💡 Tip: You can enable powerful "AI Smart Classification" in "Settings -> Developer Options".',
+    ai_guide_classification_hint: 'For image categories, turn on “Enable AI Classification” under Settings → Intelligent analysis. Classification makes scanning slower.',
     ai_scan_empty_title: 'No Scan Results',
     ai_scan_empty_message: 'Please go to Settings to start AI scanning to view classification results.',
     ai_scan_empty_close: 'Close',

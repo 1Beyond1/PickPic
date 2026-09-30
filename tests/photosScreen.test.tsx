@@ -1,6 +1,6 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react-native';
-import { Image } from 'react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Image, Modal, ScrollView, StyleSheet } from 'react-native';
 
 const mockLoadPhotos = jest.fn().mockResolvedValue(undefined);
 const mockLoadAlbums = jest.fn().mockResolvedValue(undefined);
@@ -15,6 +15,7 @@ const mockMediaState = {
   photoProcessedIds: [] as string[],
   markForDeletion: jest.fn(),
   markAsSkipped: jest.fn(),
+  undoAction: jest.fn(),
   confirmDeletion: jest.fn(),
   deleteQueue: [] as ReturnType<typeof mockPhoto>[],
   resetBatch: jest.fn(),
@@ -82,6 +83,7 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.photoProcessedIds = [];
     mockMediaState.deleteQueue = [];
     mockMediaState.permissionScope = 'full';
+    mockMediaState.isConfirmingDeletion = false;
     jest.clearAllMocks();
   });
 
@@ -165,5 +167,74 @@ describe('PhotosScreen visual entry', () => {
     render(<PhotosScreen />);
     expect(screen.getByText('photos_manage_access')).toBeTruthy();
     expect(screen.getByText('photos_limited_access_desc')).toBeTruthy();
+  });
+
+  it('lets users preview and undo a queued photo beyond the first nine without undoing earlier items', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_previous' }));
+    expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri))
+      .toEqual(mockMediaState.deleteQueue.slice(0, 9).map(photo => photo.uri));
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
+    const tenth = screen.UNSAFE_getAllByType(Image).find(image => image.props.source.uri === 'file:///queued-9.jpg')!;
+    expect(tenth).toBeTruthy();
+    fireEvent(tenth, 'longPress');
+    expect(screen.UNSAFE_getAllByType(Image).some(image => (
+      image.props.source.uri === 'file:///queued-9.jpg' && image.props.resizeMode === 'contain'
+    ))).toBe(true);
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+    fireEvent(screen.UNSAFE_getByType(Modal), 'requestClose');
+    fireEvent.press(tenth);
+    expect(mockMediaState.undoAction).toHaveBeenCalledTimes(1);
+    expect(mockMediaState.undoAction).toHaveBeenCalledWith('queued-9');
+  });
+
+  it('confirms the complete visible queue rather than just the selected review page', async () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
+    mockMediaState.confirmDeletion.mockResolvedValue([]);
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
+    fireEvent.press(screen.getByText('photos_confirm'));
+    await waitFor(() => expect(mockMediaState.confirmDeletion).toHaveBeenCalledWith(
+      mockMediaState.deleteQueue.map(photo => photo.id)
+    ));
+  });
+
+  it('clamps review pagination after the queue shrinks and prevents duplicate undo during deletion', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
+    const view = render(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
+    mockMediaState.deleteQueue = mockMediaState.deleteQueue.slice(0, 9);
+    mockMediaState.isConfirmingDeletion = true;
+    view.rerender(<PhotosScreen />);
+    const first = screen.UNSAFE_getAllByType(Image).find(image => image.props.source.uri === 'file:///queued-0.jpg')!;
+    expect(first).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'photos_review_next' })).toBeNull();
+    fireEvent.press(first);
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+  });
+
+  it('renders a bounded review page for a large restored queue', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = Array.from({ length: 1000 }, (_, i) => mockPhoto(`queued-${i}`));
+    render(<PhotosScreen />);
+    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(9);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
+    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(9);
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+  });
+
+  it('allows tall deletion-review content to grow past the viewport instead of flex-shrinking its actions offscreen', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = Array.from({ length: 9 }, (_, i) => mockPhoto(`queued-${i}`));
+    render(<PhotosScreen />);
+    const style = StyleSheet.flatten(screen.UNSAFE_getByType(ScrollView).props.contentContainerStyle);
+    expect(style.flex).not.toBe(1);
+    expect(style.flexShrink).toBe(0);
+    expect(style.flexGrow).toBe(1);
   });
 });

@@ -14,6 +14,8 @@ import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
+const REVIEW_PAGE_SIZE = 9;
+
 export default function PhotosScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -46,6 +48,7 @@ export default function PhotosScreen() {
     const [managingPhotoAccess, setManagingPhotoAccess] = useState(false);
     const [showHome, setShowHome] = useState(true);
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
+    const [reviewPage, setReviewPage] = useState(0);
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
@@ -106,6 +109,13 @@ export default function PhotosScreen() {
             ? deleteQueue.filter(asset => !hiddenQueueIds.has(asset.id))
             : [];
     const visibleDeleteQueueIds = visibleDeleteQueue.map(photo => photo.id);
+    const reviewPageCount = Math.ceil(visibleDeleteQueue.length / REVIEW_PAGE_SIZE);
+    const currentReviewPage = Math.min(reviewPage, Math.max(0, reviewPageCount - 1));
+    const reviewPhotos = visibleDeleteQueue.slice(currentReviewPage * REVIEW_PAGE_SIZE, (currentReviewPage + 1) * REVIEW_PAGE_SIZE);
+
+    useEffect(() => {
+        if (visiblePhotos.length > 0) setReviewPage(0);
+    }, [visiblePhotos.length]);
 
     const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
     useEffect(() => {
@@ -117,6 +127,7 @@ export default function PhotosScreen() {
         // accessible. Persisted review queues are kept for recovery, but are
         // filtered separately by the permission-aware queue projection.
         setPreviewPhoto(null);
+        setReviewPage(0);
         setPendingCollectionPhoto(null);
         setNewAlbumName('');
         setShowNewAlbumModal(false);
@@ -211,7 +222,7 @@ export default function PhotosScreen() {
         return (
             <ScrollView
                 style={{ flex: 1, width: '100%' }}
-                contentContainerStyle={[styles.centerContainer, { backgroundColor: colors.background, flexGrow: 1, paddingVertical: 40 }]}
+                contentContainerStyle={[styles.reviewContent, { backgroundColor: colors.background, paddingBottom: insets.bottom + 89 }]}
             >
                 <Text style={[styles.emptyText, { color: colors.text }]}>{t('photos_finished')}</Text>
 
@@ -220,7 +231,7 @@ export default function PhotosScreen() {
 
                     {/* Thumbnails Grid */}
                     <View style={styles.thumbnailsGrid}>
-                        {visibleDeleteQueue.slice(0, 9).map((photo) => (
+                        {reviewPhotos.map((photo) => (
                             <Pressable
                                 key={photo.id}
                                 onPress={() => handleUndo(photo.id)}
@@ -235,12 +246,28 @@ export default function PhotosScreen() {
                                 </View>
                             </Pressable>
                         ))}
-                        {visibleDeleteQueue.length > 9 && (
-                            <View style={styles.moreCount}>
-                                <Text style={{ color: colors.textSecondary }}>+{visibleDeleteQueue.length - 9}</Text>
-                            </View>
-                        )}
                     </View>
+                    {reviewPageCount > 1 && (
+                        <View style={styles.reviewPagination}>
+                            <Pressable
+                                accessibilityRole="button"
+                                disabled={isConfirmingDeletion || currentReviewPage === 0}
+                                onPress={() => setReviewPage(currentReviewPage - 1)}
+                                style={[styles.reviewPageButton, { opacity: isConfirmingDeletion || currentReviewPage === 0 ? 0.4 : 1 }]}
+                            >
+                                <Text style={{ color: colors.text }}>{t('photos_review_previous')}</Text>
+                            </Pressable>
+                            <Text style={{ color: colors.textSecondary }}>{t('photos_review_page', { current: currentReviewPage + 1, total: reviewPageCount })}</Text>
+                            <Pressable
+                                accessibilityRole="button"
+                                disabled={isConfirmingDeletion || currentReviewPage === reviewPageCount - 1}
+                                onPress={() => setReviewPage(currentReviewPage + 1)}
+                                style={[styles.reviewPageButton, { opacity: isConfirmingDeletion || currentReviewPage === reviewPageCount - 1 ? 0.4 : 1 }]}
+                            >
+                                <Text style={{ color: colors.text }}>{t('photos_review_next')}</Text>
+                            </Pressable>
+                        </View>
+                    )}
                     {visibleDeleteQueue.length > 0 && <Text style={{ fontSize: 10, color: colors.textSecondary, marginTop: 5 }}>{t('thumbnail_tap_undo' as any)}</Text>}
                 </GlassContainer>
 
@@ -664,6 +691,13 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    reviewContent: {
+        flexGrow: 1,
+        flexShrink: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingTop: 40,
+    },
     header: {
         paddingHorizontal: 24,
         paddingTop: 26,
@@ -767,13 +801,18 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.5)',
         borderRadius: 10
     },
-    moreCount: {
-        width: 100,
-        height: 100,
+    reviewPagination: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(128,128,128,0.2)',
-        borderRadius: 8
+        gap: 8,
+        marginTop: SPACING.s,
+    },
+    reviewPageButton: {
+        minHeight: 44,
+        paddingHorizontal: SPACING.s,
+        justifyContent: 'center',
     },
     actionButton: {
         paddingHorizontal: 40,

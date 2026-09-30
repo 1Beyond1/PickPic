@@ -26,6 +26,9 @@ export default {
     photos_back_home: '返回首页',
     photos_finished: '本组整理完成',
     photos_delete_count: '删除: {count} 张',
+    photos_review_previous: '上一页',
+    photos_review_next: '下一页',
+    photos_review_page: '{current} / {total} 页',
     photos_confirm: '确认删除并继续',
     photos_skip: '跳过删除并继续',
     photos_album_fallback: '相册',
@@ -205,7 +208,7 @@ export default {
     ai_guide_privacy: '🔒 完全本地化，无需联网，隐私安全',
     ai_guide_start: '立即开始',
     ai_guide_dismiss: '此版本不再提示',
-    ai_guide_classification_hint: '💡 提示：您可以在“设置 -> 开发者选项”中开启更强大的【AI 智能识图分类】功能。',
+    ai_guide_classification_hint: '如需图片分类，请在“设置 → 智能分析”中打开“启用 AI 图片分类”。分类会让扫描变慢。',
 
     // AI Scan Empty Prompt
     ai_scan_empty_title: '尚未进行扫描',
