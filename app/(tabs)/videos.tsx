@@ -226,27 +226,26 @@ export default function VideosScreen() {
         if (!newActiveId) return;
 
         setActiveId(newActiveId);
+        // The final item is also the end when it is the first visible item
+        // (for example a single-video library). This is a viewing state,
+        // independent of whether advancing should mark a previous video.
+        const currentVideos = videosRef.current;
+        setIsAtEnd(currentVideos.length > 0 && newActiveId === currentVideos[currentVideos.length - 1].id);
 
         // Mark previous video as processed when swiping to next. Keep the
         // callback identity stable because FlatList does not support changing
         // onViewableItemsChanged after it has mounted.
         const previousActiveId = lastActiveIdRef.current;
         if (previousActiveId && previousActiveId !== newActiveId) {
-            const currentVideos = videosRef.current;
             const previousIndex = currentVideos.findIndex(video => video.id === previousActiveId);
             const newIndex = currentVideos.findIndex(video => video.id === newActiveId);
             const isAdvancing = previousIndex >= 0 && newIndex > previousIndex;
 
             if (isAdvancing) {
-                setIsAtEnd(newIndex === currentVideos.length - 1);
                 const prevVideo = currentVideos[previousIndex];
                 if (prevVideo) {
                     markVideoAsProcessed(prevVideo);
                 }
-            } else {
-                // Going back is navigation only. It must not mark the video
-                // that the user is leaving as processed a second time.
-                setIsAtEnd(false);
             }
         }
         lastActiveIdRef.current = newActiveId;

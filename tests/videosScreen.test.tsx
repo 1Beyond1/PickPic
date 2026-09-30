@@ -111,6 +111,7 @@ describe('VideosScreen processing behavior', () => {
   });
 
   beforeEach(() => {
+    mockMediaState.videos = [videoOne, videoTwo];
     mockMarkVideoAsProcessed.mockClear();
     mockLoadVideos.mockClear();
     mockGetPermissionsAsync.mockClear();
@@ -192,6 +193,46 @@ describe('VideosScreen processing behavior', () => {
     });
 
     expect(screen.getByText('video_last_item')).toBeTruthy();
+    screen.unmount();
+  });
+
+  it('shows the final-video notice for a single-item feed without processing it', async () => {
+    mockMediaState.videos = [videoOne];
+    const screen = render(React.createElement(VideosScreen));
+    const flatList = await waitFor(() => screen.UNSAFE_getByType(ReactNative.FlatList));
+    act(() => {
+      flatList.props.onViewableItemsChanged({ viewableItems: [{ key: videoOne.id }] });
+    });
+    expect(screen.getByText('video_last_item')).toBeTruthy();
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    screen.unmount();
+  });
+
+  it('shows the notice when the first viewability event is already the final item', async () => {
+    const screen = render(React.createElement(VideosScreen));
+    const flatList = await waitFor(() => screen.UNSAFE_getByType(ReactNative.FlatList));
+    act(() => {
+      flatList.props.onViewableItemsChanged({ viewableItems: [{ key: videoTwo.id }] });
+    });
+    expect(screen.getByText('video_last_item')).toBeTruthy();
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    screen.unmount();
+  });
+
+  it('hides the final-video notice when returning to a previous item without processing the last one', async () => {
+    const screen = render(React.createElement(VideosScreen));
+    const flatList = await waitFor(() => screen.UNSAFE_getByType(ReactNative.FlatList));
+    act(() => {
+      flatList.props.onViewableItemsChanged({ viewableItems: [{ key: videoOne.id }] });
+      flatList.props.onViewableItemsChanged({ viewableItems: [{ key: videoTwo.id }] });
+    });
+    expect(screen.getByText('video_last_item')).toBeTruthy();
+    act(() => {
+      flatList.props.onViewableItemsChanged({ viewableItems: [{ key: videoOne.id }] });
+    });
+    expect(screen.queryByText('video_last_item')).toBeNull();
+    expect(mockMarkVideoAsProcessed).toHaveBeenCalledTimes(1);
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalledWith(videoTwo);
     screen.unmount();
   });
 });
