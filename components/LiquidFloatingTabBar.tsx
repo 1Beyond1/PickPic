@@ -30,7 +30,7 @@ export const LiquidFloatingTabBar = () => {
     const { colors } = useThemeColor();
     const { t } = useI18n();
     const tabWidth = width / TABS.length;
-    const lensWidth = Math.min(42, tabWidth - 16);
+    const lensWidth = Math.min(46, tabWidth - 16);
     const activeIndex = TABS.findIndex(tab => pathname.includes(tab.name));
     const safeIndex = activeIndex >= 0 ? activeIndex : 0;
     const lensX = useSharedValue(safeIndex * tabWidth + (tabWidth - lensWidth) / 2);
@@ -74,7 +74,7 @@ export const LiquidFloatingTabBar = () => {
         <View style={[styles.container, {
             height: BAR_HEIGHT + insets.bottom,
             paddingBottom: insets.bottom,
-            backgroundColor: colors.background,
+            backgroundColor: colors.surface,
             borderTopColor: colors.divider,
         }]}>
             <GestureDetector gesture={panGesture}>
@@ -85,6 +85,7 @@ export const LiquidFloatingTabBar = () => {
                             <Pressable
                                 key={tab.name}
                                 accessibilityRole="tab"
+                                accessibilityLabel={t(tab.labelKey)}
                                 accessibilityState={{ selected }}
                                 style={[styles.tab, { width: tabWidth }]}
                                 onPress={() => navigateTo(index)}
@@ -96,7 +97,7 @@ export const LiquidFloatingTabBar = () => {
                                 />
                                 <Text style={[styles.label, {
                                     color: selected ? colors.text : colors.textSecondary,
-                                    fontWeight: selected ? '600' : '400',
+                                    fontWeight: selected ? '500' : '400',
                                 }]}>
                                     {t(tab.labelKey)}
                                 </Text>
@@ -142,8 +143,8 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 7,
         left: 0,
-        height: 29,
-        borderRadius: 11,
+        height: 32,
+        borderRadius: 12,
         zIndex: 0,
     },
 });

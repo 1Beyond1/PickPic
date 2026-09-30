@@ -92,6 +92,13 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.getByText('card:one')).toBeTruthy();
   });
 
+  it('does not duplicate the dock settings entry in the home header', () => {
+    render(<PhotosScreen />);
+    expect(screen.getByText('PickPic')).toBeTruthy();
+    expect(screen.queryByLabelText('tab_settings')).toBeNull();
+    expect(screen.getByRole('button', { name: 'photos_home_album' })).toBeTruthy();
+  });
+
   it('keeps the deck open as an in-memory batch is processed', () => {
     const view = render(<PhotosScreen />);
     fireEvent.press(screen.getByText('photos_home_start'));

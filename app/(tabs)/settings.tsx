@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
 import { ScanBatchModal } from '../../components/ScanBatchModal';
+import { SegmentedControl } from '../../components/SegmentedControl';
 import { COLORS, SPACING } from '../../constants/theme';
 
 import { useAIScanner } from '../../hooks/useAIScanner';
@@ -26,32 +27,12 @@ const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [
                     thumbColor={value && isDark ? colors.actionForeground : '#FFF'}
                 />
             ) : (
-                <View style={styles.optionsContainer}>
-                    {options.map((opt: any) => {
-                        const isSelected = value === opt;
-                        return (
-                            <Pressable
-                                key={opt}
-                                onPress={() => onValueChange(opt)}
-                                style={[
-                                    styles.optionButton,
-                                    isSelected && { backgroundColor: colors.actionBackground },
-                                    !isSelected && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
-                                ]}
-                            >
-                                <Text
-                                    style={[
-                                        styles.optionText,
-                                        { color: isSelected ? colors.actionForeground : colors.textSecondary, fontFamily: fonts?.ui },
-                                        isSelected && { fontWeight: 'bold' }
-                                    ]}
-                                >
-                                    {formatOption(opt)}
-                                </Text>
-                            </Pressable>
-                        );
-                    })}
-                </View>
+                <SegmentedControl
+                    label={label}
+                    value={value}
+                    options={options.map((opt: string | number) => ({ value: opt, label: String(formatOption(opt)) }))}
+                    onChange={onValueChange}
+                />
             )}
         </View>
     );
@@ -244,8 +225,7 @@ export default function SettingsScreen() {
             <Text style={[styles.headerTitle, { color: colors.text }]}>{t('settings_title')}</Text>
 
             <ScrollView contentContainerStyle={styles.content}>
-                {/* ... existing content ... */}
-                {/* Group Size */}
+                {/* Related preferences share one surface rather than five cards. */}
                 <GlassContainer style={styles.section} elevated={false}>
                     <SettingItem
                         label={t('settings_group_size')}
@@ -257,10 +237,7 @@ export default function SettingsScreen() {
                         isDark={isDark}
                         fonts={fonts}
                     />
-                </GlassContainer>
-
-                {/* Album Filter */}
-                <GlassContainer style={styles.section} elevated={false}>
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
                     <Pressable style={styles.item} onPress={() => setShowAlbumSelector(true)}>
                         <Text style={[styles.label, { color: colors.text }]}>{t('settings_album_filter' as any)}</Text>
                         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -272,46 +249,17 @@ export default function SettingsScreen() {
                             <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
                         </View>
                     </Pressable>
-                </GlassContainer>
-
-                {/* Display Order */}
-                <GlassContainer style={styles.section} elevated={false}>
-                    <View style={styles.item}>
-                        <Text style={[styles.label, { color: colors.text }]}>{t('settings_display_order')}</Text>
-                    </View>
-                    <View style={styles.optionsContainer}>
-                        {(['newest', 'oldest', 'random'] as const).map((order) => {
-                            const isSelected = displayOrder === order;
-                            const labelKey = order === 'newest' ? 'display_order_newest'
-                                : order === 'oldest' ? 'display_order_oldest'
-                                    : 'display_order_random';
-                            return (
-                                <Pressable
-                                    key={order}
-                                    onPress={() => setDisplayOrder(order)}
-                                    style={[
-                                        styles.optionButton,
-                                        isSelected && { backgroundColor: colors.actionBackground },
-                                        !isSelected && { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
-                                    ]}
-                                >
-                                    <Text
-                                        style={[
-                                            styles.optionText,
-                                            { color: isSelected ? colors.actionForeground : colors.textSecondary },
-                                            isSelected && { fontWeight: 'bold' }
-                                        ]}
-                                    >
-                                        {t(labelKey as any)}
-                                    </Text>
-                                </Pressable>
-                            );
-                        })}
-                    </View>
-                </GlassContainer>
-
-                {/* Theme */}
-                <GlassContainer style={styles.section} elevated={false}>
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
+                    <SettingItem
+                        label={t('settings_display_order')}
+                        type="select"
+                        value={displayOrder}
+                        onValueChange={setDisplayOrder}
+                        options={['newest', 'oldest', 'random']}
+                        formatOption={(order: string) => t(`display_order_${order}` as any)}
+                        colors={colors}
+                    />
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
                     <SettingItem
                         label={t('settings_theme')}
                         type="select"
@@ -323,10 +271,7 @@ export default function SettingsScreen() {
                         isDark={isDark}
                         fonts={fonts}
                     />
-                </GlassContainer>
-
-                {/* Language */}
-                <GlassContainer style={styles.section} elevated={false}>
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
                     <SettingItem
                         label={t('settings_language')}
                         type="select"
@@ -745,8 +690,8 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     headerTitle: {
-        fontSize: 28,
-        fontWeight: '600',
+        fontSize: 26,
+        fontWeight: '500',
         paddingHorizontal: SPACING.l,
         marginVertical: SPACING.m,
     },
@@ -757,19 +702,25 @@ const styles = StyleSheet.create({
     },
     section: {
         padding: SPACING.m,
-        marginBottom: SPACING.m,
+        marginBottom: 12,
+        borderWidth: 0,
+        borderRadius: 18,
     },
     sectionTitle: {
         fontSize: 16,
-        fontWeight: 'bold',
+        fontWeight: '500',
         marginBottom: 10,
+    },
+    preferenceDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginVertical: 12,
     },
     item: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         justifyContent: 'space-between',
         alignItems: 'center',
-        gap: SPACING.s,
+        gap: 12,
         paddingVertical: SPACING.s,
     },
     label: {
@@ -780,19 +731,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         marginTop: 4,
         opacity: 0.7,
-    },
-    optionsContainer: {
-        flexDirection: 'row',
-        gap: 6,
-        backgroundColor: 'transparent',
-    },
-    optionButton: {
-        minHeight: 44,
-        justifyContent: 'center',
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        borderRadius: 20,
-        overflow: 'hidden'
     },
     optionText: {
         fontSize: 12,

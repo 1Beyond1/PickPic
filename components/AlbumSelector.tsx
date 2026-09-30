@@ -104,12 +104,12 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
             animationType="slide"
             onRequestClose={onClose}
         >
-            <View style={styles.modalContainer}>
+            <View style={[styles.modalContainer, { backgroundColor: colors.overlay }]}>
                 <View style={[styles.contentContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
                     <View style={styles.header}>
                         <Text style={[styles.title, { color: colors.text }]}>{t(titleKey as any)}</Text>
-                        <Pressable onPress={onClose}>
-                            <Ionicons name="close" size={24} color={colors.textSecondary} />
+                        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel={t('cancel')} style={[styles.closeButton, { backgroundColor: colors.surfaceHover }]}>
+                            <Ionicons name="close" size={20} color={colors.textSecondary} />
                         </Pressable>
                     </View>
 
@@ -154,19 +154,20 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
                                         style={[
                                             styles.item,
                                             { backgroundColor: colors.surface },
-                                            isSelected && { borderColor: colors.primary, borderWidth: 1, backgroundColor: colors.selectionBackground },
+                                            isSelected && { backgroundColor: colors.selectionBackground },
                                             isDisabled && styles.itemDisabled
                                         ]}
                                         onPress={() => toggleSelection(item.id)}
+                                        accessibilityRole="checkbox"
+                                        accessibilityLabel={item.title}
+                                        accessibilityState={{ checked: isSelected, disabled: isDisabled }}
                                         disabled={isDisabled ? true : false}
                                     >
                                         <Text style={[styles.itemText, { color: colors.textSecondary }, isSelected && { color: colors.text, fontWeight: '500' }]}>
                                             {item.title}
                                         </Text>
                                         <Text style={[styles.itemCount, { color: colors.textSecondary }]}>{item.assetCount}</Text>
-                                        {isSelected && (
-                                            <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                                        )}
+                                        <Ionicons name={isSelected ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={isSelected ? colors.text : colors.textTertiary} />
                                     </Pressable>
                                 );
                             }}
@@ -194,7 +195,7 @@ const styles = StyleSheet.create({
         height: '70%',
         borderTopLeftRadius: BORDER_RADIUS.xl,
         borderTopRightRadius: BORDER_RADIUS.xl,
-        padding: SPACING.m,
+        padding: SPACING.l,
         overflow: 'hidden'
     },
     header: {
@@ -205,8 +206,15 @@ const styles = StyleSheet.create({
         paddingHorizontal: SPACING.s,
     },
     title: {
-        fontSize: 18,
-        fontWeight: '600',
+        fontSize: 20,
+        fontWeight: '500',
+    },
+    closeButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     clearButton: {
         paddingVertical: SPACING.s,
@@ -268,7 +276,7 @@ const styles = StyleSheet.create({
         marginBottom: SPACING.l,
     },
     confirmButtonText: {
-        fontSize: 16,
-        fontWeight: 'bold',
+        fontSize: 15,
+        fontWeight: '500',
     },
 });

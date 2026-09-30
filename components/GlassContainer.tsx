@@ -14,7 +14,7 @@ export const GlassContainer: React.FC<CardContainerProps> = ({
     children,
     style,
     borderRadius = BORDER_RADIUS.l,
-    elevated = true,
+    elevated = false,
 }) => {
     const { isDark, colors } = useThemeColor();
 
@@ -40,7 +40,7 @@ export const GlassContainer: React.FC<CardContainerProps> = ({
 const styles = StyleSheet.create({
     container: {
         overflow: 'hidden',
-        borderWidth: 1,
+        borderWidth: StyleSheet.hairlineWidth,
         padding: 16,
     },
     // Restrained separation from the page background.

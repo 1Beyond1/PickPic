@@ -368,13 +368,6 @@ export default function PhotosScreen() {
                             <Ionicons name="images-outline" size={23} color={colors.text} />
                             <Text style={[styles.homeBrandText, { color: colors.text }]}>PickPic</Text>
                         </View>
-                        <Pressable
-                            onPress={() => router.navigate('/(tabs)/settings')}
-                            accessibilityLabel={t('tab_settings')}
-                            style={[styles.homeMore, { backgroundColor: colors.surfaceHover }]}
-                        >
-                            <Ionicons name="settings-outline" size={20} color={colors.text} />
-                        </Pressable>
                     </View>
 
                     <View style={styles.homeHero}>
@@ -544,6 +537,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
     },
     homeBrandRow: {
+        minHeight: 44,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -557,13 +551,6 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: '600',
         letterSpacing: -0.4,
-    },
-    homeMore: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     homeHero: {
         marginTop: 62,
@@ -598,7 +585,7 @@ const styles = StyleSheet.create({
     },
     homeStartLabel: {
         fontSize: 15,
-        fontWeight: '600',
+        fontWeight: '500',
     },
     homePreviewSection: {
         marginTop: 34,
