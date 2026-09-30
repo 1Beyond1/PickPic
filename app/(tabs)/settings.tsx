@@ -1,13 +1,15 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
 import { ScanBatchModal } from '../../components/ScanBatchModal';
 import { SegmentedControl } from '../../components/SegmentedControl';
-import { COLORS, SPACING } from '../../constants/theme';
+import { SettingsRow } from '../../components/SettingsRow';
+import { SettingsChoiceSheet } from '../../components/SettingsChoiceSheet';
+import { SPACING } from '../../constants/theme';
 
 import { useAIScanner } from '../../hooks/useAIScanner';
 import { useI18n } from '../../hooks/useI18n';
@@ -65,6 +67,8 @@ export default function SettingsScreen() {
 
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [showScanBatchModal, setShowScanBatchModal] = useState(false);
+    const [page, setPage] = useState<'main' | 'scanner' | 'data' | 'help'>('main');
+    const [choice, setChoice] = useState<'order' | 'theme' | 'language' | null>(null);
 
     // AI Scanner hook
     const { progress, isRunning, isFinalizing, lastError, start, stop, resumeOnce, resetScan } = useAIScanner();
@@ -78,9 +82,9 @@ export default function SettingsScreen() {
         setShowResetVideosConfirm(true);
     };
 
-    const handleOpenGitHub = async () => {
+    const handleOpenGitHub = async (project = false) => {
         try {
-            await Linking.openURL('https://github.com/1Beyond1');
+            await Linking.openURL(project ? 'https://github.com/1Beyond1/PickPic' : 'https://github.com/1Beyond1');
         } catch (error) {
             console.error('[Settings] Failed to open GitHub:', error);
         }
@@ -161,12 +165,20 @@ export default function SettingsScreen() {
                 setShowAIWarningModal(false);
                 return true;
             }
+            if (choice) {
+                setChoice(null);
+                return true;
+            }
+            if (page !== 'main') {
+                setPage('main');
+                return true;
+            }
             return false;
         };
 
         const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
         return () => subscription.remove();
-    }, [showAIWarningModal, showResetConfirm, showResetModalStatusConfirm, showResetPhotosConfirm, showResetVideosConfirm]));
+    }, [showAIWarningModal, showResetConfirm, showResetModalStatusConfirm, showResetPhotosConfirm, showResetVideosConfirm, choice, page]));
 
     const handleResetScanner = () => {
         setShowResetConfirm(true);
@@ -212,6 +224,21 @@ export default function SettingsScreen() {
         setEnableAIClassification(true);
     };
 
+    const choiceTitle = choice === 'order' ? t('settings_display_order')
+        : choice === 'theme' ? t('settings_theme') : t('settings_language');
+    const choiceValue = choice === 'order' ? displayOrder : choice === 'theme' ? theme : language;
+    const choiceOptions = choice === 'order'
+        ? (['newest', 'oldest', 'random'] as const).map(value => ({ value, label: t(`display_order_${value}`) }))
+        : choice === 'theme'
+            ? (['light', 'dark'] as const).map(value => ({ value, label: t(`theme_${value}`) }))
+            : [{ value: 'zh', label: '中文' }, { value: 'en', label: 'English' }];
+    const handleChoice = (value: string) => {
+        if (choice === 'order' && (value === 'newest' || value === 'oldest' || value === 'random')) setDisplayOrder(value);
+        if (choice === 'theme' && (value === 'light' || value === 'dark')) setTheme(value);
+        if (choice === 'language' && (value === 'zh' || value === 'en')) setLanguage(value);
+        setChoice(null);
+    };
+
     if (!settingsHydrated || !mediaHydrated) {
         return (
             <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
@@ -222,10 +249,16 @@ export default function SettingsScreen() {
 
     return (
         <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>{t('settings_title')}</Text>
+            <View style={styles.pageHeader}>
+                {page !== 'main' && <Pressable accessibilityRole="button" accessibilityLabel={t('settings_back')} onPress={() => setPage('main')} style={styles.backButton}>
+                    <Feather name="chevron-left" size={23} color={colors.text} />
+                </Pressable>}
+                <Text accessibilityRole="header" style={[styles.headerTitle, { color: colors.text }]}>{t(page === 'main' ? 'settings_title' : page === 'scanner' ? 'settings_scan_management' : page === 'data' ? 'settings_data_management' : 'settings_help')}</Text>
+            </View>
 
-            <ScrollView contentContainerStyle={styles.content}>
-                {/* Related preferences share one surface rather than five cards. */}
+            <ScrollView key={page} contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 89 }]} showsVerticalScrollIndicator={false}>
+                {page === 'main' && <>
+                <Text style={[styles.groupCaption, { color: colors.textSecondary }]}>{t('settings_organizing_preferences')}</Text>
                 <GlassContainer style={styles.section} elevated={false}>
                     <SettingItem
                         label={t('settings_group_size')}
@@ -233,59 +266,45 @@ export default function SettingsScreen() {
                         value={groupSize}
                         onValueChange={setGroupSize}
                         options={[10, 20, 30]}
+                        formatOption={(count: number) => t('settings_group_count', { count })}
                         colors={colors}
                         isDark={isDark}
                         fonts={fonts}
                     />
                     <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
-                    <Pressable style={styles.item} onPress={() => setShowAlbumSelector(true)}>
-                        <Text style={[styles.label, { color: colors.text }]}>{t('settings_album_filter' as any)}</Text>
-                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                            <Text style={[styles.optionText, { color: colors.textSecondary, marginRight: 4 }]}>
-                                {selectedAlbumIds.length === 0
-                                    ? t('album_filter_all' as any)
-                                    : t('album_filter_selected' as any, { count: selectedAlbumIds.length })}
-                            </Text>
-                            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
-                        </View>
-                    </Pressable>
+                    <SettingsRow label={t('settings_album_filter')} value={selectedAlbumIds.length === 0 ? t('album_filter_all') : t('album_filter_selected', { count: selectedAlbumIds.length })} onPress={() => setShowAlbumSelector(true)} />
                     <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
-                    <SettingItem
-                        label={t('settings_display_order')}
-                        type="select"
-                        value={displayOrder}
-                        onValueChange={setDisplayOrder}
-                        options={['newest', 'oldest', 'random']}
-                        formatOption={(order: string) => t(`display_order_${order}` as any)}
-                        colors={colors}
-                    />
-                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
-                    <SettingItem
-                        label={t('settings_theme')}
-                        type="select"
-                        value={theme}
-                        onValueChange={setTheme}
-                        options={['light', 'dark']}
-                        formatOption={(option: string) => t(`theme_${option}` as any)}
-                        colors={colors}
-                        isDark={isDark}
-                        fonts={fonts}
-                    />
-                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
-                    <SettingItem
-                        label={t('settings_language')}
-                        type="select"
-                        value={language}
-                        onValueChange={setLanguage}
-                        options={['zh', 'en']}
-                        formatOption={(option: string) => option === 'zh' ? '中文' : 'English'}
-                        colors={colors}
-                        isDark={isDark}
-                        fonts={fonts}
-                    />
+                    <SettingsRow label={t('settings_display_order')} value={t(`display_order_${displayOrder}`)} onPress={() => setChoice('order')} />
                 </GlassContainer>
 
+                <Text style={[styles.groupCaption, { color: colors.textSecondary }]}>{t('settings_appearance_language')}</Text>
+                <GlassContainer style={styles.section} elevated={false}>
+                    <SettingsRow label={t('settings_theme')} value={t(`theme_${theme}`)} onPress={() => setChoice('theme')} />
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
+                    <SettingsRow label={t('settings_language')} value={language === 'zh' ? '中文' : 'English'} onPress={() => setChoice('language')} />
+                </GlassContainer>
+
+                <Text style={[styles.groupCaption, { color: colors.textSecondary }]}>{t('settings_intelligent_analysis')}</Text>
+                <GlassContainer style={styles.section} elevated={false}>
+                    <View style={styles.item}>
+                        <View style={{ flex: 1, minWidth: 180 }}>
+                            <Text style={[styles.label, { color: colors.text }]}>{t('settings_enable_ai_classification')}</Text>
+                            <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t(aiClassificationAvailable ? 'settings_enable_ai_classification_hint' : 'settings_classification_native_only')}</Text>
+                        </View>
+                        <Switch accessibilityLabel={t('settings_enable_ai_classification')} value={enableAIClassification} onValueChange={handleToggleAIClassification} disabled={scannerBusy || !aiClassificationAvailable} trackColor={{ false: colors.surfaceHover, true: colors.actionBackground }} thumbColor={enableAIClassification && isDark ? colors.actionForeground : '#FFF'} />
+                    </View>
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
+                    <SettingsRow label={t('settings_scan_management')} value={scannerBusy ? t('scan_organizing') : t('settings_scanned_count', { count: progress.totalDone })} onPress={() => setPage('scanner')} />
+                </GlassContainer>
+
+                <Text style={[styles.groupCaption, { color: colors.textSecondary }]}>{t('settings_records_maintenance')}</Text>
+                <GlassContainer style={styles.section} elevated={false}>
+                    <SettingsRow label={t('settings_data_management')} detail={t('settings_data_management_hint')} onPress={() => setPage('data')} />
+                </GlassContainer>
+                </>}
+
                 {/* AI Scanner Engine */}
+                {page === 'scanner' && <>
                 <GlassContainer style={styles.section} elevated={false}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('ai_scanner_engine')}</Text>
 
@@ -361,63 +380,53 @@ export default function SettingsScreen() {
                         </Pressable>
                     </View>
 
-                    <Pressable
-                        style={({ pressed }) => [
-                            styles.resetButton,
-                            (pressed || isResettingScanner) && { opacity: 0.8, transform: [{ scale: 0.98 }] }
-                        ]}
-                        onPress={handleResetScanner}
-                        disabled={isResettingScanner}
-                    >
-                        <Text style={styles.resetButtonText}>
-                            {isResettingScanner ? t('ai_scanner_resetting') : t('ai_scanner_reset')}
-                        </Text>
-                    </Pressable>
                 </GlassContainer>
+                </>}
 
                 {/* Photo Progress */}
+                {page === 'data' && <>
+                <Text style={[styles.pageHint, { color: colors.textSecondary }]}>{t('settings_data_management_hint')}</Text>
                 <GlassContainer style={styles.section} elevated={false}>
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('tab_photos')} {t('photos_header')}</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings_photo_records')}</Text>
                     <View style={styles.progressRow}>
                         <Text style={[styles.progressText, { color: colors.textSecondary }]}>
                             {t('settings_progress_photos', { processed: visibleProcessedCounts.photos, total: totalPhotos })}
                         </Text>
                     </View>
-                    <Pressable
-                        style={({ pressed }) => [
-                            styles.resetButton,
-                            isConfirmingDeletion && { opacity: 0.5 },
-                            pressed && { opacity: 0.8, transform: [{ scale: 0.98 }] }
-                        ]}
-                        onPress={handleResetPhotoProgress}
-                        disabled={isConfirmingDeletion}
-                    >
-                        <Text style={styles.resetButtonText}>{t('settings_reset_photos')}</Text>
-                    </Pressable>
+                    <SettingsRow label={t('settings_reset_photos')} danger onPress={handleResetPhotoProgress} disabled={isConfirmingDeletion} />
                 </GlassContainer>
 
                 {/* Video Progress */}
                 <GlassContainer style={styles.section} elevated={false}>
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('tab_videos')} {t('photos_header')}</Text>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings_video_records')}</Text>
                     <View style={styles.progressRow}>
                         <Text style={[styles.progressText, { color: colors.textSecondary }]}>
                             {t('settings_progress_videos', { processed: visibleProcessedCounts.videos, total: totalVideos })}
                         </Text>
                     </View>
-                    <Pressable
-                        style={({ pressed }) => [
-                            styles.resetButton,
-                            isConfirmingVideoTrash && { opacity: 0.5 },
-                            pressed && { opacity: 0.8, transform: [{ scale: 0.98 }] }
-                        ]}
-                        onPress={handleResetVideoProgress}
-                        disabled={isConfirmingVideoTrash}
-                    >
-                        <Text style={styles.resetButtonText}>{t('settings_reset_videos')}</Text>
-                    </Pressable>
+                    <SettingsRow label={t('settings_reset_videos')} danger onPress={handleResetVideoProgress} disabled={isConfirmingVideoTrash} />
                 </GlassContainer>
 
+                <GlassContainer style={styles.section} elevated={false}>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings_scan_records')}</Text>
+                    <Text style={[styles.progressText, { color: colors.textSecondary }]}>{t('settings_scanned_count', { count: progress.totalDone })}</Text>
+                    <SettingsRow label={t(isResettingScanner ? 'ai_scanner_resetting' : 'ai_scanner_reset')} danger onPress={handleResetScanner} disabled={isResettingScanner} />
+                </GlassContainer>
+                </>}
+
                 {/* Developer Options */}
+                {page === 'main' && <>
+                <Text style={[styles.groupCaption, { color: colors.textSecondary }]}>{t('settings_about')}</Text>
+                <GlassContainer style={styles.section} elevated={false}>
+                    <SettingsRow label={t('settings_version')} value={APP_VERSION} />
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
+                    <SettingsRow label={t('settings_help')} onPress={() => setPage('help')} />
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
+                    <SettingsRow label={t('settings_open_source')} value="GitHub" onPress={() => { void handleOpenGitHub(true); }} />
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
+                    <SettingsRow label={t('announcement_author_title')} value="1Beyond1" onPress={() => { void handleOpenGitHub(); }} />
+                </GlassContainer>
+
                 <GlassContainer style={styles.section} elevated={false}>
                     <Pressable
                         style={styles.devOptionsHeader}
@@ -437,23 +446,6 @@ export default function SettingsScreen() {
                     {showDevOptions && (
                         <View style={styles.devOptionsContent}>
                             <View style={styles.divider} />
-                            {/* AI Classification Toggle */}
-                            <View style={styles.item}>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={[styles.label, { color: colors.text }]}>{t('settings_enable_ai_classification' as any)}</Text>
-                                    <Text style={[styles.hintText, { color: colors.textTertiary, fontSize: 12, marginTop: 2 }]}>
-                                        {t('settings_enable_ai_classification_hint' as any)}
-                                    </Text>
-                                </View>
-                                <Switch
-                                    value={enableAIClassification}
-                                    onValueChange={handleToggleAIClassification}
-                                    disabled={scannerBusy || !aiClassificationAvailable}
-                                    trackColor={{ false: colors.surfaceHover, true: colors.actionBackground }}
-                                    thumbColor={enableAIClassification && isDark ? colors.actionForeground : '#FFF'}
-                                />
-                            </View>
-
                             {/* Reset Modal State Button */}
                             <Pressable
                                 style={({ pressed }) => [
@@ -477,23 +469,16 @@ export default function SettingsScreen() {
                     )}
                 </GlassContainer>
 
-                {/* Footer: Author & Version */}
-                <View style={styles.footer}>
-                    <Pressable style={styles.githubLink} onPress={handleOpenGitHub}>
-                        <Ionicons name="logo-github" size={22} color={colors.textSecondary} style={{ marginRight: 8 }} />
-                        <Text style={[styles.footerText, { color: colors.textSecondary, fontWeight: '600' }]}>
-                            1Beyond1
-                        </Text>
-                    </Pressable>
-                    <Text style={[styles.versionText, { color: colors.textSecondary }]}>
-                        {APP_VERSION}
-                    </Text>
-                    <Text style={[styles.footerSubText, { color: colors.textSecondary }]}>
-                        Open Source Project
-                    </Text>
-                </View>
+                </>}
+
+                {page === 'help' && <GlassContainer style={styles.section} elevated={false}>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('announcement_notice_title')}</Text>
+                    {(['announcement_notice_1', 'announcement_notice_2', 'announcement_notice_3'] as const).map(key => <Text key={key} style={[styles.helpText, { color: colors.textSecondary }]}>{t(key)}</Text>)}
+                </GlassContainer>}
 
             </ScrollView>
+
+            <SettingsChoiceSheet visible={choice !== null} title={choiceTitle} value={choiceValue} options={choiceOptions} onSelect={handleChoice} onClose={() => setChoice(null)} />
 
             {/* Album Selector Modal */}
             <AlbumSelector
@@ -512,6 +497,7 @@ export default function SettingsScreen() {
 
             {/* Custom AI Warning Modal */}
             {showAIWarningModal && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => setShowAIWarningModal(false)}>
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
                     <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 25, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
                         <View style={{ marginBottom: 15, alignItems: 'center' }}>
@@ -539,17 +525,19 @@ export default function SettingsScreen() {
                         </View>
                     </View>
                 </View>
+                </Modal>
             )}
 
             {/* Custom Reset Confirm Modal */}
             {showResetConfirm && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => setShowResetConfirm(false)}>
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
                     <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
                         <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 10, textAlign: 'center' }}>
                             {language === 'zh' ? '重置 AI 扫描进度' : 'Reset AI Scanning Progress'}
                         </Text>
                         <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 20, textAlign: 'center', lineHeight: 20 }}>
-                            {language === 'zh' ? '确定要重置所有扫描进度吗？这将清空所有智能分类结果，需要重新扫描。' : 'Are you sure you want to reset all scanning progress? This will clear all AI categories and require a rescan.'}
+                            {t('settings_reset_scan_desc')}
                         </Text>
                         <View style={{ flexDirection: 'row', gap: 10 }}>
                             <Pressable
@@ -562,15 +550,17 @@ export default function SettingsScreen() {
                                 style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.dangerBackground, alignItems: 'center' }}
                                 onPress={confirmResetScanner}
                             >
-                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('confirm')}</Text>
+                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('settings_confirm_reset')}</Text>
                             </Pressable>
                         </View>
                     </View>
                 </View>
+                </Modal>
             )}
 
             {/* Reset Modal Status Confirm Modal */}
             {showResetModalStatusConfirm && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => { setShowResetSuccess(false); setShowResetModalStatusConfirm(false); }}>
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
                     <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
 
@@ -616,17 +606,19 @@ export default function SettingsScreen() {
 
                     </View>
                 </View>
+                </Modal>
             )}
 
             {/* Reset Photos Confirm Modal */}
             {showResetPhotosConfirm && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => setShowResetPhotosConfirm(false)}>
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
                     <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
                         <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 10, textAlign: 'center' }}>
                             {t('settings_reset_photos')}
                         </Text>
                         <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 20, textAlign: 'center', lineHeight: 20 }}>
-                            {t('settings_reset_desc')}
+                            {t('settings_reset_photos_desc')}
                         </Text>
                         <View style={{ flexDirection: 'row', gap: 10 }}>
                             <Pressable
@@ -643,22 +635,24 @@ export default function SettingsScreen() {
                                 }}
                                 disabled={isConfirmingDeletion}
                             >
-                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('confirm')}</Text>
+                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('settings_confirm_reset')}</Text>
                             </Pressable>
                         </View>
                     </View>
                 </View>
+                </Modal>
             )}
 
             {/* Reset Videos Confirm Modal */}
             {showResetVideosConfirm && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => setShowResetVideosConfirm(false)}>
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
                     <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
                         <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 10, textAlign: 'center' }}>
                             {t('settings_reset_videos')}
                         </Text>
                         <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 20, textAlign: 'center', lineHeight: 20 }}>
-                            {t('settings_reset_desc')}
+                            {t('settings_reset_videos_desc')}
                         </Text>
                         <View style={{ flexDirection: 'row', gap: 10 }}>
                             <Pressable
@@ -675,11 +669,12 @@ export default function SettingsScreen() {
                                 }}
                                 disabled={isConfirmingVideoTrash}
                             >
-                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('confirm')}</Text>
+                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('settings_confirm_reset')}</Text>
                             </Pressable>
                         </View>
                     </View>
                 </View>
+                </Modal>
             )}
         </View>
     );
@@ -692,9 +687,13 @@ const styles = StyleSheet.create({
     headerTitle: {
         fontSize: 26,
         fontWeight: '500',
-        paddingHorizontal: SPACING.l,
-        marginVertical: SPACING.m,
+        flex: 1,
     },
+    pageHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, minHeight: 68, gap: 8 },
+    backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+    groupCaption: { fontSize: 12, lineHeight: 18, marginTop: 12, marginBottom: 8, marginLeft: 4 },
+    pageHint: { fontSize: 13, lineHeight: 20, marginBottom: 18 },
+    helpText: { fontSize: 14, lineHeight: 23, marginBottom: 16 },
     content: {
         paddingHorizontal: SPACING.l,
         paddingTop: SPACING.s,
@@ -713,7 +712,7 @@ const styles = StyleSheet.create({
     },
     preferenceDivider: {
         height: StyleSheet.hairlineWidth,
-        marginVertical: 12,
+        marginVertical: 0,
     },
     item: {
         flexDirection: 'row',
@@ -724,16 +723,13 @@ const styles = StyleSheet.create({
         paddingVertical: SPACING.s,
     },
     label: {
-        fontSize: 16,
-        fontWeight: '500'
+        fontSize: 15,
+        fontWeight: '400'
     },
     hintText: {
         fontSize: 12,
+        lineHeight: 18,
         marginTop: 4,
-        opacity: 0.7,
-    },
-    optionText: {
-        fontSize: 12,
     },
     progressRow: {
         flexDirection: 'row',
@@ -742,40 +738,6 @@ const styles = StyleSheet.create({
     },
     progressText: {
         fontSize: 15,
-    },
-    resetButton: {
-        backgroundColor: COLORS.danger,
-        padding: 12,
-        borderRadius: 12,
-        alignItems: 'center',
-        marginTop: SPACING.m,
-    },
-    resetButtonText: {
-        color: '#FFFFFF',
-        fontWeight: '600'
-    },
-    footer: {
-        alignItems: 'center',
-        marginTop: SPACING.xl,
-        marginBottom: 20
-    },
-    githubLink: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        padding: 10,
-    },
-    footerText: {
-        fontSize: 16
-    },
-    versionText: {
-        fontSize: 14,
-        marginTop: 8,
-        fontWeight: '500',
-    },
-    footerSubText: {
-        fontSize: 11,
-        marginTop: 4,
-        opacity: 0.6,
     },
     devOptionsHeader: {
         flexDirection: 'row',
