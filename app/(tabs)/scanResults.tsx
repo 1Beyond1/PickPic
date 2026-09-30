@@ -84,6 +84,8 @@ export default function ScanResultsScreen() {
     const [similarGroups, setSimilarGroups] = useState<SimilarGroup[]>([]);
     const [loading, setLoading] = useState(true);
     const loadRequestIdRef = useRef(0);
+    const [isDeletingBlurry, setIsDeletingBlurry] = useState(false);
+    const isDeletingBlurryRef = useRef(false);
 
     // Similar Groups detail modal state
     const [selectedSimilarGroup, setSelectedSimilarGroup] = useState<{
@@ -210,6 +212,7 @@ export default function ScanResultsScreen() {
     );
 
     const handleDeleteBlurry = async (assetId: string) => {
+        if (isDeletingBlurryRef.current) return;
         Alert.alert(
             t('scan_delete_blurry_title'),
             t('scan_delete_blurry_message'),
@@ -219,6 +222,11 @@ export default function ScanResultsScreen() {
                     text: t('delete'),
                     style: 'destructive',
                     onPress: async () => {
+                        // Alert confirmations can outlive a render. Lock before
+                        // the permission preflight, not only the native request.
+                        if (isDeletingBlurryRef.current) return;
+                        isDeletingBlurryRef.current = true;
+                        setIsDeletingBlurry(true);
                         try {
                             const visibleIds = await getCurrentlyVisibleAssetIds([assetId], 'photo');
                             if (!visibleIds.has(assetId)) {
@@ -244,6 +252,9 @@ export default function ScanResultsScreen() {
                             void loadResults();
                         } catch (error) {
                             Alert.alert(t('delete_failed'), String(error));
+                        } finally {
+                            isDeletingBlurryRef.current = false;
+                            setIsDeletingBlurry(false);
                         }
                     },
                 },
@@ -265,7 +276,11 @@ export default function ScanResultsScreen() {
                 </Text>
             </View>
             <Pressable
-                style={[styles.deleteButton, { backgroundColor: colors.dangerBackground }]}
+                style={[styles.deleteButton, { backgroundColor: colors.dangerBackground }, isDeletingBlurry && { opacity: 0.5 }]}
+                disabled={isDeletingBlurry}
+                accessibilityRole="button"
+                accessibilityLabel={t('scan_delete_blurry_title')}
+                accessibilityState={{ disabled: isDeletingBlurry, busy: isDeletingBlurry }}
                 onPress={() => handleDeleteBlurry(item.assetId)}
             >
                 <Ionicons name="trash" size={20} color={colors.dangerForeground} />
@@ -617,7 +632,9 @@ export default function ScanResultsScreen() {
             >
                 <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center' }}>
                     <Pressable
-                        style={{ position: 'absolute', top: 50, right: 20, zIndex: 10 }}
+                        style={styles.viewerClose}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('close')}
                         onPress={() => setSelectedPhoto(null)}
                     >
                         <Ionicons name="close-circle" size={40} color="white" />
@@ -658,7 +675,9 @@ function CategoryThumbnail({ assetId }: { assetId?: string }) {
 
 // Full Screen Viewer Helper
 function FullPhotoViewer({ assetId }: { assetId: string }) {
-    const [image, setImage] = useState<{ assetId: string; uri: string } | null>(null);
+    const { t } = useI18n();
+    const [attempt, setAttempt] = useState(0);
+    const [image, setImage] = useState<{ assetId: string; uri: string | null; failed: boolean } | null>(null);
 
     useEffect(() => {
         let mounted = true;
@@ -666,18 +685,46 @@ function FullPhotoViewer({ assetId }: { assetId: string }) {
 
         MediaLibrary.getAssetInfoAsync(assetId).then(info => {
             const uri = info?.localUri || info?.uri;
-            if (mounted && uri) {
-                setImage({ assetId, uri });
+            if (mounted) {
+                setImage({ assetId, uri: uri || null, failed: !uri });
             }
         }).catch(() => {
-            // Ignore error
+            if (mounted) setImage({ assetId, uri: null, failed: true });
         });
         return () => { mounted = false; };
-    }, [assetId]);
+    }, [assetId, attempt]);
 
-    const uri = image && image.assetId === assetId ? image.uri : null;
+    const currentImage = image?.assetId === assetId ? image : null;
+    if (currentImage?.failed) {
+        return (
+            <View style={styles.viewerError}>
+                <Text style={styles.viewerErrorText} accessibilityLiveRegion="polite">
+                    {t('scan_photo_unavailable')}
+                </Text>
+                <Pressable
+                    style={styles.viewerRetry}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('retry')}
+                    onPress={() => setAttempt(value => value + 1)}
+                >
+                    <Text style={styles.viewerRetryText}>{t('retry')}</Text>
+                </Pressable>
+            </View>
+        );
+    }
+    const uri = currentImage?.uri;
     if (!uri) return <ActivityIndicator size="large" color="white" />;
-    return <Image source={{ uri }} style={{ width: '100%', height: '100%', resizeMode: 'contain' }} />;
+    return (
+        <Image
+            source={{ uri }}
+            style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
+            onError={() => setImage(previous => (
+                previous?.assetId === assetId && previous.uri === uri
+                    ? { ...previous, failed: true }
+                    : previous
+            ))}
+        />
+    );
 }
 
 const styles = StyleSheet.create({
@@ -844,6 +891,42 @@ const styles = StyleSheet.create({
     modalContainer: {
         flex: 1,
         paddingTop: 20,
+    },
+    viewerError: {
+        alignItems: 'center',
+        paddingHorizontal: SPACING.l,
+        gap: SPACING.m,
+    },
+    viewerClose: {
+        position: 'absolute',
+        top: 50,
+        right: 20,
+        zIndex: 10,
+        minWidth: 48,
+        minHeight: 48,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 24,
+        backgroundColor: 'rgba(0,0,0,0.65)',
+    },
+    viewerErrorText: {
+        color: '#FFF',
+        fontSize: 16,
+        textAlign: 'center',
+    },
+    viewerRetry: {
+        minHeight: 44,
+        minWidth: 88,
+        paddingHorizontal: SPACING.l,
+        justifyContent: 'center',
+        borderRadius: 12,
+        backgroundColor: '#FFF',
+    },
+    viewerRetryText: {
+        color: '#181B18',
+        fontSize: 16,
+        fontWeight: '600',
+        textAlign: 'center',
     },
     modalHeader: {
         flexDirection: 'row',

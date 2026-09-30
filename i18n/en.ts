@@ -191,6 +191,9 @@ export default {
     scan_no_blurry: 'No blurry photos found',
     scan_no_similar: 'No similar photo groups found',
     scan_category_total: '{count} photos total',
+    scan_photo_unavailable: 'This photo could not be opened. Try again or return to other photos.',
+    retry: 'Retry',
+    close: 'Close',
 
     // AI Categories
     ai_category_people: 'People',

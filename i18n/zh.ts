@@ -191,6 +191,9 @@ export default {
     scan_no_blurry: '未发现模糊照片',
     scan_no_similar: '未发现相似照片组',
     scan_category_total: '共 {count} 张照片',
+    scan_photo_unavailable: '暂时无法打开这张照片，请重试或返回查看其他照片。',
+    retry: '重试',
+    close: '关闭',
 
     // AI Categories
     ai_category_people: '人物',
