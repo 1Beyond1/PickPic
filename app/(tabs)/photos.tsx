@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { PhotoCard } from '../../components/PhotoCard';
-import { BORDER_RADIUS, COLORS, SPACING } from '../../constants/theme';
+import { BORDER_RADIUS, SPACING } from '../../constants/theme';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
@@ -146,6 +146,16 @@ export default function PhotosScreen() {
         setToastMessage(message);
         setTimeout(() => setToastMessage(null), 1500);
     };
+
+    // Batch review returns before the deck; feedback must exist in both.
+    // Text-only feedback also avoids showing a success icon for failures.
+    const toast = toastMessage && (
+        <View pointerEvents="none" style={styles.toastContainer}>
+            <View style={[styles.toast, { backgroundColor: isDark ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)' }]}>
+                <Text accessibilityLiveRegion="polite" style={[styles.toastText, { color: colors.text }]}>{toastMessage}</Text>
+            </View>
+        </View>
+    );
 
     const handleSwipeDown = async (photo: any, zoneId?: string): Promise<boolean> => {
         if (zoneId) {
@@ -321,6 +331,7 @@ export default function PhotosScreen() {
         return (
             <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
                 {handleBatchFinished()}
+                {toast}
 
                 {/* Preview Modal */}
                 <Modal
@@ -550,14 +561,7 @@ export default function PhotosScreen() {
             )}
 
             {/* Toast */}
-            {toastMessage && (
-                <View style={[styles.toastContainer, { bottom: insets.bottom + 80 }]}>
-                    <View style={[styles.toast, { backgroundColor: isDark ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)' }]}>
-                        <Ionicons name="checkmark-circle" size={20} color={COLORS.success} />
-                        <Text style={[styles.toastText, { color: colors.text }]}>{toastMessage}</Text>
-                    </View>
-                </View>
-            )}
+            {toast}
 
         </View>
     );

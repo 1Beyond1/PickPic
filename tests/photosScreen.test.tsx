@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Image, Modal, ScrollView, StyleSheet } from 'react-native';
 
 const mockLoadPhotos = jest.fn().mockResolvedValue(undefined);
@@ -78,6 +78,8 @@ jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: () => mockSet
 import PhotosScreen from '../app/(tabs)/photos';
 
 describe('PhotosScreen visual entry', () => {
+  afterEach(() => jest.useRealTimers());
+
   beforeEach(() => {
     mockMediaState.photos = [mockPhoto('one'), mockPhoto('two'), mockPhoto('three')];
     mockMediaState.photoProcessedIds = [];
@@ -201,6 +203,28 @@ describe('PhotosScreen visual entry', () => {
     await waitFor(() => expect(mockMediaState.confirmDeletion).toHaveBeenCalledWith(
       mockMediaState.deleteQueue.map(photo => photo.id)
     ));
+  });
+
+  it.each(['finished batch', 'restored queue'])('shows native deletion failure in %s review without clearing decisions', async source => {
+    jest.useFakeTimers();
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    if (source === 'restored queue') mockMediaState.photos = [];
+    else mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
+    mockMediaState.deleteQueue = [mockPhoto('one')];
+    mockMediaState.confirmDeletion.mockRejectedValueOnce(new Error('Native deletion failed'));
+    render(<PhotosScreen />);
+    mockLoadPhotos.mockClear();
+
+    fireEvent.press(screen.getByText('photos_confirm'));
+
+    await waitFor(() => expect(screen.getByText('photos_delete_failed')).toBeTruthy());
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
+    expect(mockLoadPhotos).not.toHaveBeenCalled();
+    expect(mockMediaState.deleteQueue.map(photo => photo.id)).toEqual(['one']);
+    expect(screen.getByText('photos_confirm')).toBeTruthy();
+    act(() => jest.advanceTimersByTime(1500));
+    expect(screen.queryByText('photos_delete_failed')).toBeNull();
+    expect(screen.getByText('photos_confirm')).toBeTruthy();
   });
 
   it('clamps review pagination after the queue shrinks and prevents duplicate undo during deletion', () => {
