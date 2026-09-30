@@ -13,6 +13,7 @@ export default {
 
     photos_header: '整理中',
     photos_home_scope: '本组照片',
+    photos_home_title: '整理照片',
     photos_home_pending: '张待整理',
     photos_home_start: '开始整理',
     photos_home_preview: '本组预览',

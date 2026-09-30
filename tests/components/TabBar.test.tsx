@@ -8,7 +8,7 @@ jest.mock('expo-router', () => ({
     useRouter: () => ({ navigate: mockNavigate }),
     usePathname: () => mockPath,
 }));
-jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
+jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ bottom: 24 }) }));
 jest.mock('../../hooks/useI18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 jest.mock('../../hooks/useThemeColor', () => ({

@@ -13,6 +13,7 @@ export default {
 
     photos_header: 'Organizing',
     photos_home_scope: 'Current batch',
+    photos_home_title: 'Organize photos',
     photos_home_pending: 'to review',
     photos_home_start: 'Start organizing',
     photos_home_preview: 'Batch preview',

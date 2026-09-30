@@ -1,9 +1,9 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 // import { BlurView } from 'expo-blur';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
 import { AlbumSelector } from '../../components/AlbumSelector';
@@ -17,6 +17,8 @@ import { useSettingsStore } from '../../stores/useSettingsStore';
 export default function PhotosScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const { width, height } = useWindowDimensions();
+    const previewHeight = Math.min(334, Math.max(230, Math.min(width - 48, (height - insets.top - insets.bottom - 65) * 0.4)));
     const { t } = useI18n();
     const { colors, isDark } = useThemeColor();
 
@@ -360,41 +362,28 @@ export default function PhotosScreen() {
         return (
             <View style={[styles.container, { backgroundColor: colors.background }]}>
                 <ScrollView
-                    contentContainerStyle={[styles.homeContent, { paddingTop: insets.top + 26, paddingBottom: insets.bottom + 112 }]}
+                    contentContainerStyle={[styles.homeContent, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 89 }]}
                     showsVerticalScrollIndicator={false}
                 >
                     <View style={styles.homeBrandRow}>
                         <View style={styles.homeBrand}>
-                            <Ionicons name="images-outline" size={23} color={colors.text} />
                             <Text style={[styles.homeBrandText, { color: colors.text }]}>PickPic</Text>
                         </View>
                     </View>
 
                     <View style={styles.homeHero}>
-                        <Text style={[styles.homeScope, { color: colors.textSecondary }]}>{t('photos_home_scope')}</Text>
+                        <Text accessibilityRole="header" style={[styles.homeTitle, { color: colors.text }]}>{t('photos_home_title')}</Text>
                         <View style={styles.homeCountRow}>
-                            <Text adjustsFontSizeToFit numberOfLines={1} style={[styles.homeCount, { color: colors.text }]}>{visiblePhotos.length}</Text>
-                            <Text style={[styles.homeCountLabel, { color: colors.textSecondary }]}>{t('photos_home_pending')}</Text>
+                            <Text style={[styles.homeScope, { color: colors.textSecondary }]}>{t('photos_home_scope')}</Text>
+                            <View style={styles.homeCountSummary}>
+                                <Text style={[styles.homeCount, { color: colors.text }]}>{visiblePhotos.length}</Text>
+                                <Text style={[styles.homeCountLabel, { color: colors.textSecondary }]}>{t('photos_home_pending')}</Text>
+                            </View>
                         </View>
-                        <Pressable
-                            onPress={() => {
-                                if (visiblePhotos.length > 0) setShowHome(false);
-                                else void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-                            }}
-                            accessibilityRole="button"
-                            style={[styles.homeStart, { backgroundColor: colors.actionBackground }]}
-                        >
-                            <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t(visiblePhotos.length > 0 ? 'photos_home_start' : 'photos_reload')}</Text>
-                            <Ionicons name={visiblePhotos.length > 0 ? 'arrow-forward' : 'refresh'} size={20} color={colors.actionForeground} />
-                        </Pressable>
                     </View>
 
                     <View style={styles.homePreviewSection}>
-                        <View style={styles.homeSectionHeader}>
-                            <Text style={[styles.homeSectionTitle, { color: colors.text }]}>{t('photos_home_preview')}</Text>
-                            <Text style={[styles.homeSectionMeta, { color: colors.textSecondary }]}>{visiblePhotos.length}</Text>
-                        </View>
-                        {previewPhotos.length > 0 ? <View style={styles.homeMosaic}>
+                        {previewPhotos.length > 0 ? <View accessibilityLabel={t('photos_home_preview')} style={[styles.homeMosaic, { height: previewHeight }]}>
                             <Image source={{ uri: previewPhotos[0].uri }} style={[styles.homeMosaicLarge, { backgroundColor: colors.surfaceHover }]} resizeMode="cover" />
                             {previewPhotos.length > 1 && (
                                 <View style={styles.homeMosaicSide}>
@@ -423,18 +412,34 @@ export default function PhotosScreen() {
                     </View>
 
                     <Pressable
+                        onPress={() => {
+                            if (visiblePhotos.length > 0) setShowHome(false);
+                            else void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+                        }}
+                        accessibilityRole="button"
+                        style={({ pressed }) => [styles.homeStart, {
+                            backgroundColor: colors.actionBackground,
+                            opacity: pressed ? 0.8 : 1,
+                            transform: [{ scale: pressed ? 0.985 : 1 }],
+                        }]}
+                    >
+                        <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t(visiblePhotos.length > 0 ? 'photos_home_start' : 'photos_reload')}</Text>
+                        <Feather name={visiblePhotos.length > 0 ? 'arrow-right' : 'refresh-cw'} size={19} color={colors.actionForeground} />
+                    </Pressable>
+
+                    <Pressable
                         onPress={() => setShowAlbumSelector(true)}
                         accessibilityRole="button"
-                        style={[styles.homeAlbumRow, { borderTopColor: colors.divider }]}
+                        style={({ pressed }) => [styles.homeAlbumRow, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
                     >
                         <View style={[styles.homeAlbumIcon, { backgroundColor: colors.surfaceHover }]}>
-                            <Ionicons name="folder-outline" size={21} color={colors.text} />
+                            <Feather name="folder" size={20} color={colors.textSecondary} />
                         </View>
                         <View style={styles.homeAlbumCopy}>
                             <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('photos_home_album')}</Text>
                             <Text style={[styles.homeAlbumHint, { color: colors.textSecondary }]}>{t('photos_home_album_hint')}</Text>
                         </View>
-                        <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+                        <Feather name="chevron-right" size={18} color={colors.textSecondary} />
                     </Pressable>
                 </ScrollView>
                 <AlbumSelector
@@ -537,7 +542,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: 24,
     },
     homeBrandRow: {
-        minHeight: 44,
+        minHeight: 36,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -548,39 +553,49 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     homeBrandText: {
-        fontSize: 18,
+        fontSize: 20,
         fontWeight: '600',
         letterSpacing: -0.4,
     },
     homeHero: {
-        marginTop: 62,
+        marginTop: 28,
+    },
+    homeTitle: {
+        fontSize: 30,
+        lineHeight: 40,
+        fontWeight: '400',
     },
     homeScope: {
         fontSize: 13,
     },
     homeCountRow: {
         flexDirection: 'row',
-        alignItems: 'baseline',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
         gap: 8,
         marginTop: 8,
-        marginBottom: 18,
     },
+    homeCountSummary: { flexDirection: 'row', alignItems: 'baseline', gap: 5 },
     homeCount: {
-        fontSize: 77,
-        lineHeight: 88,
-        fontWeight: '400',
+        fontSize: 18,
+        lineHeight: 26,
+        fontWeight: '500',
         fontVariant: ['tabular-nums'],
         flexShrink: 1,
     },
     homeCountLabel: {
-        fontSize: 15,
+        fontSize: 12,
     },
     homeStart: {
-        height: 54,
+        minHeight: 54,
+        marginTop: 24,
+        gap: 12,
+        paddingVertical: 15,
         borderRadius: 27,
         paddingHorizontal: 22,
         flexDirection: 'row',
-        justifyContent: 'space-between',
+        justifyContent: 'center',
         alignItems: 'center',
     },
     homeStartLabel: {
@@ -588,24 +603,9 @@ const styles = StyleSheet.create({
         fontWeight: '500',
     },
     homePreviewSection: {
-        marginTop: 34,
-    },
-    homeSectionHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginBottom: 14,
-    },
-    homeSectionTitle: {
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    homeSectionMeta: {
-        fontSize: 12,
-        fontVariant: ['tabular-nums'],
+        marginTop: 20,
     },
     homeMosaic: {
-        height: 224,
         flexDirection: 'row',
         gap: 8,
     },
@@ -616,9 +616,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: SPACING.m,
     },
     homeMosaicLarge: {
-        flex: 1.18,
+        flex: 1.35,
         height: '100%',
-        borderRadius: 14,
+        borderRadius: 18,
     },
     homeMosaicSide: {
         flex: 1,
@@ -627,20 +627,20 @@ const styles = StyleSheet.create({
     homeMosaicSmall: {
         flex: 1,
         width: '100%',
-        borderRadius: 14,
+        borderRadius: 18,
     },
     homeAlbumRow: {
-        marginTop: 44,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        paddingTop: 22,
+        marginTop: 20,
+        borderRadius: 16,
+        paddingVertical: 10,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
         minHeight: 72,
     },
     homeAlbumIcon: {
-        width: 43,
-        height: 43,
+        width: 40,
+        height: 40,
         borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
@@ -651,7 +651,7 @@ const styles = StyleSheet.create({
     },
     homeAlbumTitle: {
         fontSize: 14,
-        fontWeight: '600',
+        fontWeight: '500',
     },
     homeAlbumHint: {
         fontSize: 12,

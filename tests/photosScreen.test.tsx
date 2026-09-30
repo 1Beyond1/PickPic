@@ -1,5 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react-native';
+import { Image } from 'react-native';
 
 const mockLoadPhotos = jest.fn().mockResolvedValue(undefined);
 const mockLoadAlbums = jest.fn().mockResolvedValue(undefined);
@@ -46,7 +47,7 @@ jest.mock('expo-router', () => ({
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
+jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null, Feather: () => null }));
 jest.mock('../components/AlbumSelector', () => ({ AlbumSelector: () => null }));
 jest.mock('../components/GlassContainer', () => ({ GlassContainer: ({ children }: { children: React.ReactNode }) => children }));
 jest.mock('../components/PhotoCard', () => ({
@@ -87,7 +88,7 @@ describe('PhotosScreen visual entry', () => {
   it('shows the real current batch count, then opens the existing photo deck', () => {
     mockMediaState.photos = [mockPhoto('one'), mockPhoto('two')];
     render(<PhotosScreen />);
-    expect(screen.getAllByText('2')).toHaveLength(2);
+    expect(screen.getByText('2')).toBeTruthy();
     fireEvent.press(screen.getByText('photos_home_start'));
     expect(screen.getByText('card:one')).toBeTruthy();
   });
@@ -97,6 +98,18 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.getByText('PickPic')).toBeTruthy();
     expect(screen.queryByLabelText('tab_settings')).toBeNull();
     expect(screen.getByRole('button', { name: 'photos_home_album' })).toBeTruthy();
+  });
+
+  it.each([1, 2, 3, 30])('previews at most three real photos from a %s-photo batch without reordering it', count => {
+    mockMediaState.photos = Array.from({ length: count }, (_, index) => mockPhoto(`photo-${index}`));
+    const originalIds = mockMediaState.photos.map(photo => photo.id);
+    render(<PhotosScreen />);
+    expect(screen.getByText(String(count))).toBeTruthy();
+    expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri))
+      .toEqual(mockMediaState.photos.slice(0, 3).map(photo => photo.uri));
+    expect(mockMediaState.photos.map(photo => photo.id)).toEqual(originalIds);
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
   });
 
   it('keeps the deck open as an in-memory batch is processed', () => {

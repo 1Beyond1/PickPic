@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
@@ -16,10 +16,10 @@ import { useThemeColor } from '../hooks/useThemeColor';
 
 const BAR_HEIGHT = 65;
 const TABS = [
-    { name: 'photos', icon: 'images-outline', labelKey: 'tab_photos', path: '/(tabs)/photos' },
-    { name: 'videos', icon: 'videocam-outline', labelKey: 'tab_videos', path: '/(tabs)/videos' },
-    { name: 'scanResults', icon: 'scan-outline', labelKey: 'tab_scan_results', path: '/(tabs)/scanResults' },
-    { name: 'settings', icon: 'options-outline', labelKey: 'tab_settings', path: '/(tabs)/settings' },
+    { name: 'photos', icon: 'image', labelKey: 'tab_photos', path: '/(tabs)/photos' },
+    { name: 'videos', icon: 'video', labelKey: 'tab_videos', path: '/(tabs)/videos' },
+    { name: 'scanResults', icon: 'maximize', labelKey: 'tab_scan_results', path: '/(tabs)/scanResults' },
+    { name: 'settings', icon: 'sliders', labelKey: 'tab_settings', path: '/(tabs)/settings' },
 ] as const;
 
 export const LiquidFloatingTabBar = () => {
@@ -30,7 +30,7 @@ export const LiquidFloatingTabBar = () => {
     const { colors } = useThemeColor();
     const { t } = useI18n();
     const tabWidth = width / TABS.length;
-    const lensWidth = Math.min(46, tabWidth - 16);
+    const lensWidth = Math.min(40, tabWidth - 16);
     const activeIndex = TABS.findIndex(tab => pathname.includes(tab.name));
     const safeIndex = activeIndex >= 0 ? activeIndex : 0;
     const lensX = useSharedValue(safeIndex * tabWidth + (tabWidth - lensWidth) / 2);
@@ -90,9 +90,9 @@ export const LiquidFloatingTabBar = () => {
                                 style={[styles.tab, { width: tabWidth }]}
                                 onPress={() => navigateTo(index)}
                             >
-                                <Ionicons
+                                <Feather
                                     name={tab.icon}
-                                    size={21}
+                                    size={20}
                                     color={selected ? colors.text : colors.textTertiary}
                                 />
                                 <Text style={[styles.label, {
@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
         top: 7,
         left: 0,
         height: 32,
-        borderRadius: 12,
+        borderRadius: 10,
         zIndex: 0,
     },
 });
