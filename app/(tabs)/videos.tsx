@@ -42,7 +42,9 @@ export default function VideosScreen() {
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [selectedVideoForCollection, setSelectedVideoForCollection] = useState<any>(null);
     const [isScreenFocused, setIsScreenFocused] = useState(true);
-    const [isAtEnd, setIsAtEnd] = useState(false);
+    // Derive the notice from the current feed and visible identity. Removing
+    // an item directly (e.g. into trash) need not emit another viewability event.
+    const isAtEnd = videos.length > 0 && activeId === videos[videos.length - 1].id;
     const [videoPermission, setVideoPermission] = useState<MediaLibrary.PermissionResponse | null>(null);
     const [videoPermissionChecked, setVideoPermissionChecked] = useState(false);
     const [requestingVideoPermission, setRequestingVideoPermission] = useState(false);
@@ -104,7 +106,6 @@ export default function VideosScreen() {
         if (!isLoading) return;
         lastActiveIdRef.current = null;
         setActiveId(null);
-        setIsAtEnd(false);
     }, [isLoading]);
 
     const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
@@ -208,7 +209,6 @@ export default function VideosScreen() {
         useCallback(() => {
             setIsScreenFocused(true);
             setActiveId(null);
-            setIsAtEnd(false);
             lastActiveIdRef.current = null;
             return () => {
                 setIsScreenFocused(false);
@@ -226,11 +226,7 @@ export default function VideosScreen() {
         if (!newActiveId) return;
 
         setActiveId(newActiveId);
-        // The final item is also the end when it is the first visible item
-        // (for example a single-video library). This is a viewing state,
-        // independent of whether advancing should mark a previous video.
         const currentVideos = videosRef.current;
-        setIsAtEnd(currentVideos.length > 0 && newActiveId === currentVideos[currentVideos.length - 1].id);
 
         // Mark previous video as processed when swiping to next. Keep the
         // callback identity stable because FlatList does not support changing

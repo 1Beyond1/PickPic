@@ -235,4 +235,38 @@ describe('VideosScreen processing behavior', () => {
     expect(mockMarkVideoAsProcessed).not.toHaveBeenCalledWith(videoTwo);
     screen.unmount();
   });
+
+  it('removes the final-item notice when the final video leaves the feed without a loading cycle', async () => {
+    mockMediaState.videos = [videoOne];
+    const screen = render(React.createElement(VideosScreen));
+    const flatList = await waitFor(() => screen.UNSAFE_getByType(ReactNative.FlatList));
+    act(() => {
+      flatList.props.onViewableItemsChanged({ viewableItems: [{ key: videoOne.id }] });
+    });
+    expect(screen.getByText('video_last_item')).toBeTruthy();
+    mockMediaState.videos = [];
+    screen.rerender(React.createElement(VideosScreen));
+    expect(screen.getByText('video_empty')).toBeTruthy();
+    expect(screen.queryByText('video_last_item')).toBeNull();
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    screen.unmount();
+  });
+
+  it('does not carry a removed video\'s final-item notice onto its replacement before it is visible', async () => {
+    mockMediaState.videos = [videoOne];
+    const screen = render(React.createElement(VideosScreen));
+    const flatList = await waitFor(() => screen.UNSAFE_getByType(ReactNative.FlatList));
+    act(() => {
+      flatList.props.onViewableItemsChanged({ viewableItems: [{ key: videoOne.id }] });
+    });
+    mockMediaState.videos = [videoTwo];
+    screen.rerender(React.createElement(VideosScreen));
+    expect(screen.queryByText('video_last_item')).toBeNull();
+    act(() => {
+      flatList.props.onViewableItemsChanged({ viewableItems: [{ key: videoTwo.id }] });
+    });
+    expect(screen.getByText('video_last_item')).toBeTruthy();
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    screen.unmount();
+  });
 });
