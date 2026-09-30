@@ -104,6 +104,113 @@ describe('media visibility checks', () => {
     expect(useMediaStore.getState().photoProcessedIds).toEqual(['hidden']);
   });
 
+  describe.each(['photo', 'video'] as const)('%s deletion safety', mediaType => {
+    const queueKey = mediaType === 'photo' ? 'deleteQueue' : 'videoTrashBin';
+    const progressKey = mediaType === 'photo' ? 'photoProcessedIds' : 'videoProcessedIds';
+    const confirm = (ids?: string[]) => mediaType === 'photo'
+      ? useMediaStore.getState().confirmDeletion(ids)
+      : useMediaStore.getState().confirmVideoTrash(ids);
+    const locked = () => mediaType === 'photo'
+      ? useMediaStore.getState().isConfirmingDeletion
+      : useMediaStore.getState().isConfirmingVideoTrash;
+    const asset = { id: 'visible', mediaType } as any;
+
+    beforeEach(() => {
+      useMediaStore.setState({ [queueKey]: [asset], [progressKey]: ['visible'] });
+    });
+
+    it.each(['cancelled', 'rejected'] as const)('retains the queue and progress when native deletion is %s', async outcome => {
+      jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      if (outcome === 'cancelled') deleteAssetsAsync.mockResolvedValue(false);
+      else deleteAssetsAsync.mockRejectedValue(new Error('Native failure'));
+      await expect(confirm()).rejects.toThrow();
+      expect(useMediaStore.getState()[queueKey]).toEqual([asset]);
+      expect(useMediaStore.getState()[progressKey]).toEqual(['visible']);
+      expect(locked()).toBe(false);
+      expect(mockRemoveAssetAndDerivedData).not.toHaveBeenCalled();
+    });
+
+    it('does nothing for an explicitly empty request', async () => {
+      await expect(confirm([])).resolves.toEqual([]);
+      expect(deleteAssetsAsync).not.toHaveBeenCalled();
+      expect(getAssetInfoAsync).not.toHaveBeenCalled();
+      expect(useMediaStore.getState()[queueKey]).toEqual([asset]);
+    });
+
+    it('keeps requested-ID scope and leaves other queued visible items untouched', async () => {
+      const other = { id: 'also-visible', mediaType } as any;
+      getAssetInfoAsync.mockImplementation(async (id: string) => ({ id }));
+      useMediaStore.setState({ [queueKey]: [asset, other], [progressKey]: ['visible', 'also-visible'] });
+      await expect(confirm(['visible', 'not-queued'])).resolves.toEqual(['visible']);
+      expect(getAssetInfoAsync).toHaveBeenCalledTimes(1);
+      expect(useMediaStore.getState()[queueKey]).toEqual([other]);
+      expect(useMediaStore.getState()[progressKey]).toEqual(['also-visible']);
+      const nativeIds = deleteAssetsAsync.mock.calls[0][0].map((entry: string | { id: string }) => (
+        typeof entry === 'string' ? entry : entry.id
+      ));
+      expect(nativeIds).toEqual(['visible']);
+    });
+
+    it('blocks repeated confirmations, undo and resets while native deletion is pending', async () => {
+      let resolveDelete!: (deleted: boolean) => void;
+      deleteAssetsAsync.mockImplementationOnce(() => new Promise<boolean>(resolve => { resolveDelete = resolve; }));
+      const pending = confirm();
+      try {
+        await waitFor(() => expect(deleteAssetsAsync).toHaveBeenCalledTimes(1));
+        expect(locked()).toBe(true);
+        await expect(confirm()).resolves.toEqual([]);
+        if (mediaType === 'photo') {
+          useMediaStore.getState().undoAction('visible');
+          useMediaStore.getState().resetBatch();
+          useMediaStore.getState().resetPhotoProgress();
+        } else {
+          useMediaStore.getState().restoreFromTrash('visible');
+          useMediaStore.getState().resetVideoProgress();
+        }
+        expect(useMediaStore.getState()[queueKey]).toEqual([asset]);
+        expect(useMediaStore.getState()[progressKey]).toEqual(['visible']);
+        expect(deleteAssetsAsync).toHaveBeenCalledTimes(1);
+      } finally {
+        resolveDelete(true);
+        await pending;
+      }
+      expect(locked()).toBe(false);
+      expect(useMediaStore.getState()[queueKey]).toEqual([]);
+    });
+
+    it('rechecks the queue after preflight so external removal wins and new entries are not deleted', async () => {
+      let resolveInfo!: (info: { id: string }) => void;
+      getAssetInfoAsync.mockImplementationOnce(() => new Promise(resolve => { resolveInfo = resolve; }));
+      const pending = confirm();
+      try {
+        await waitFor(() => expect(getAssetInfoAsync).toHaveBeenCalledTimes(1));
+        useMediaStore.getState().removeDeletedAssets(['visible']);
+        const newlyQueued = { id: 'newly-queued', mediaType } as any;
+        if (mediaType === 'photo') useMediaStore.getState().markForDeletion(newlyQueued);
+        else useMediaStore.getState().markVideoForTrash(newlyQueued);
+        resolveInfo({ id: 'visible' });
+        await expect(pending).resolves.toEqual([]);
+        expect(deleteAssetsAsync).not.toHaveBeenCalled();
+        expect(useMediaStore.getState()[queueKey]).toEqual([newlyQueued]);
+      } finally {
+        resolveInfo({ id: 'visible' });
+        await pending;
+      }
+      expect(locked()).toBe(false);
+    });
+  });
+
+  it('does not report a failed deletion or retain deleted media when best-effort index cleanup fails', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const asset = { id: 'visible', mediaType: 'photo' } as any;
+    useMediaStore.setState({ deleteQueue: [asset], photoProcessedIds: ['visible'] });
+    mockRemoveAssetAndDerivedData.mockRejectedValue(new Error('Index unavailable'));
+    await expect(useMediaStore.getState().confirmDeletion()).resolves.toEqual(['visible']);
+    expect(useMediaStore.getState().deleteQueue).toEqual([]);
+    expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
+    expect(useMediaStore.getState().isConfirmingDeletion).toBe(false);
+  });
+
   it('does not widen an all-invalid album filter into an unscoped query', async () => {
     getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: 'all' });
     getAlbumsAsync.mockResolvedValue([{ id: 'still-present' }]);
