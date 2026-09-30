@@ -88,6 +88,66 @@ describe('media visibility checks', () => {
     expect(getAssetInfoAsync).not.toHaveBeenCalled();
   });
 
+  describe.each(['photo', 'video'] as const)('%s queue permission changes', mediaType => {
+    const queueKey = mediaType === 'photo' ? 'deleteQueue' : 'videoTrashBin';
+    const progressKey = mediaType === 'photo' ? 'photoProcessedIds' : 'videoProcessedIds';
+    const hiddenKey = mediaType === 'photo' ? 'hiddenPhotoQueuedAssetIds' : 'hiddenVideoQueuedAssetIds';
+    const assets = ['visible', 'hidden'].map(id => ({ id, mediaType })) as any[];
+
+    beforeEach(() => {
+      useMediaStore.setState({ [queueKey]: assets, [progressKey]: ['visible', 'hidden'] });
+    });
+
+    it('hides inaccessible entries without discarding their queue or progress, then restores full visibility', async () => {
+      useMediaStore.getState().refreshQueuedAssetVisibility('limited', mediaType);
+      expect(useMediaStore.getState()[hiddenKey]).toEqual(['visible', 'hidden']);
+      await waitFor(() => expect(useMediaStore.getState()[hiddenKey]).toEqual(['hidden']));
+      expect(useMediaStore.getState()[queueKey]).toEqual(assets);
+      expect(useMediaStore.getState()[progressKey]).toEqual(['visible', 'hidden']);
+
+      useMediaStore.getState().refreshQueuedAssetVisibility('none', mediaType);
+      expect(useMediaStore.getState()[hiddenKey]).toEqual(['visible', 'hidden']);
+      useMediaStore.getState().refreshQueuedAssetVisibility('full', mediaType);
+      expect(useMediaStore.getState()[hiddenKey]).toBeNull();
+      expect(useMediaStore.getState()[queueKey]).toEqual(assets);
+      expect(useMediaStore.getState()[progressKey]).toEqual(['visible', 'hidden']);
+      expect(deleteAssetsAsync).not.toHaveBeenCalled();
+      expect(mockRemoveAssetAndDerivedData).not.toHaveBeenCalled();
+    });
+
+    it('does not reveal assets from a stale limited check after permission is revoked or replaced', async () => {
+      let resolveOld!: (info: { id: string }) => void;
+      getAssetInfoAsync.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
+      useMediaStore.getState().refreshQueuedAssetVisibility('limited', mediaType);
+      useMediaStore.getState().refreshQueuedAssetVisibility('none', mediaType);
+      resolveOld({ id: 'visible' });
+      // Let the entire old Promise.all continuation finish before asserting;
+      // checking while it is still pending would miss a stale publication.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(useMediaStore.getState()[hiddenKey]).toEqual(['visible', 'hidden']);
+
+      getAssetInfoAsync.mockImplementation(async (id: string) => id === 'hidden' ? { id } : null);
+      useMediaStore.getState().refreshQueuedAssetVisibility('limited', mediaType);
+      await waitFor(() => expect(useMediaStore.getState()[hiddenKey]).toEqual(['visible']));
+      expect(useMediaStore.getState()[queueKey]).toEqual(assets);
+      expect(useMediaStore.getState()[progressKey]).toEqual(['visible', 'hidden']);
+    });
+
+    it('fails closed on a per-asset read error while keeping accessible entries and allowing a later retry', async () => {
+      getAssetInfoAsync.mockImplementation(async (id: string) => {
+        if (id === 'hidden') throw new Error('Native read denied');
+        return { id };
+      });
+      useMediaStore.getState().refreshQueuedAssetVisibility('limited', mediaType);
+      await waitFor(() => expect(useMediaStore.getState()[hiddenKey]).toEqual(['hidden']));
+      getAssetInfoAsync.mockImplementation(async (id: string) => ({ id }));
+      useMediaStore.getState().refreshQueuedAssetVisibility('limited', mediaType);
+      await waitFor(() => expect(useMediaStore.getState()[hiddenKey]).toEqual([]));
+      expect(useMediaStore.getState()[queueKey]).toEqual(assets);
+      expect(useMediaStore.getState()[progressKey]).toEqual(['visible', 'hidden']);
+    });
+  });
+
   it('deletes only queue items that pass the visibility preflight', async () => {
     const visibleAsset = { id: 'visible', mediaType: 'photo' } as any;
     const hiddenAsset = { id: 'hidden', mediaType: 'photo' } as any;
