@@ -392,7 +392,9 @@ export function SimilarGroupDetailOverlay({
                     renderItem={renderPhotoItem}
                     keyExtractor={(item) => item.assetId}
                     numColumns={COLUMN_COUNT}
-                    contentContainerStyle={styles.grid}
+                    // The dock is absolute-positioned: reserve its 65dp height,
+                    // the bottom safe area, and 24dp of space for the final row.
+                    contentContainerStyle={[styles.grid, { paddingBottom: insets.bottom + 89 }]}
                     style={{ opacity: isAnimating ? 0 : 1 }}
                 />
 
@@ -469,7 +471,6 @@ const styles = StyleSheet.create({
     },
     grid: {
         paddingHorizontal: 12,
-        paddingBottom: 40,
     },
     photoItem: {
         width: ITEM_SIZE,
