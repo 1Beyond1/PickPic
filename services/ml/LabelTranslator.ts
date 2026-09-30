@@ -6,6 +6,7 @@ const LABEL_MAP_ZH: Record<string, string> = {
     'cat': '猫',
     'dog': '狗',
     'bird': '鸟',
+    'screenshot': '截图与文档',
     'wild_animal': '野生动物',
     'tabby': '斑纹猫',
     'tabby cat': '斑纹猫',

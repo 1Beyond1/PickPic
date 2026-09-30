@@ -9,7 +9,7 @@
  * - Error isolation (single photo failure doesn't stop scan)
  */
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { InteractionManager } from 'react-native';
 
@@ -22,6 +22,7 @@ import {
 } from '../../database';
 import { getImageOps, GrayImageRef } from '../imageOps';
 import { hasFullPhotoLibraryAccess } from '../../stores/useMediaStore';
+import { hasDocumentContext } from '../ml/LabelClassifier';
 import { selectBestShot } from './BestShotSelector';
 import { findSimilarPhotos } from './SimilarityMatcher';
 
@@ -568,10 +569,11 @@ async function processAsset(
                 });
 
                 // Filter 2: Context Disqualifier (Ignore faces in Screenshots/Websites)
-                const DISQUALIFIERS = new Set(['web site', 'website', 'monitor', 'screen', 'computer screen', 'screenshot', 'comic book', 'menu', 'display']);
                 const topLabel = labels.length > 0 ? labels[0].text.toLowerCase() : '';
-                // Also check if ANY high-confidence label is a disqualifier
-                const isContextDisqualified = labels.some(l => l.confidence > 0.4 && DISQUALIFIERS.has(l.text.toLowerCase()));
+                // Use the same grouped evidence as the category screen.
+                // A weaker document candidate or a photographed monitor
+                // must not override an actual face detection.
+                const isContextDisqualified = hasDocumentContext(labels);
 
                 if (isContextDisqualified) {
                     console.log(`[AIScanner] Context Disqualifier Triggered: ${topLabel}. Ignoring ${validFaces.length} faces.`);

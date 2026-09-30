@@ -1,7 +1,7 @@
 import * as MediaLibrary from 'expo-media-library';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssetRecord, AssetRepository } from '../database';
-import { getCategoryGroup } from '../services/ml/CategoryGrouper';
+import { hasDocumentContext, selectImageCategory } from '../services/ml/LabelClassifier';
 import { translateLabel } from '../services/ml/LabelTranslator';
 import { ImageLabel } from '../services/ml/MLKitService';
 import { useI18n } from './useI18n';
@@ -93,24 +93,13 @@ export function useAICategories(enabled = true): AICategoriesState {
             const categorizedAssetIds = new Set<string>();
             const peopleMap = new Map<string, AssetRecord[]>();
 
-            // Disqualifying labels for People category (to prevent Screenshots/Text being classified as People)
-            const DISQUALIFYING_LABELS = new Set([
-                'web site', 'website', 'monitor', 'screen', 'computer screen',
-                'display', 'text', 'menu', 'comic book', 'screenshot', 'carton'
-            ]);
-
             peopleAssets.forEach(asset => {
                 // Check if this asset should be disqualified from "People" despite having faces
                 // (Common false positives: Screenshots, Ads, Anime)
                 if (asset.labels_json) {
                     try {
                         const labels: ImageLabel[] = JSON.parse(asset.labels_json);
-                        const isDisqualified = labels.some(l =>
-                            l.confidence > 0.4 && // Standard threshold
-                            l.text && DISQUALIFYING_LABELS.has(l.text.toLowerCase())
-                        );
-
-                        if (isDisqualified) {
+                        if (Array.isArray(labels) && hasDocumentContext(labels)) {
                             // Skip adding to people map.
                             // Do NOT add to categorizedAssetIds, so it falls through to Object/Scene categorization.
                             return;
@@ -153,66 +142,17 @@ export function useAICategories(enabled = true): AICategoriesState {
                     if (!asset.labels_json) return;
                     const labels: ImageLabel[] = JSON.parse(asset.labels_json);
 
-                    // Take the top confident label
-                    if (labels.length > 0) {
-                        // Filter out low confidence (lowered to 0.40 to capture half-body/blurry people)
-                        // User request: "Lower threshold"
-                        const validLabels = labels.filter(l => l.confidence > 0.40);
-                        if (validLabels.length === 0) return;
-
-                        // Use the top label as the category
-                        const topLabel = validLabels[0].text || (validLabels[0] as any).label; // Fallback for old data
-                        let finalLabel = topLabel;
-
-                        // Check if it's a HUMAN label (e.g. Groom, Diver) -> Move to People
-                        const group = getCategoryGroup(finalLabel);
-                        if (group === 'people') {
-                            humanAssets.push(asset);
-                            categorizedAssetIds.add(asset.asset_id);
-                            return; // Done
-                        }
-
-                        // Smart Reranking Strategy
-                        if (topLabel && typeof topLabel === 'string') {
-                            // ... (Existing Reranking Logic) ...
-                            // Check candidates
-                            const topCandidates = validLabels.slice(0, 5);
-                            for (const candidate of topCandidates) {
-                                if (candidate.confidence > 0.2) {
-                                    const labelText = candidate.text || (candidate as any).label;
-                                    if (typeof labelText === 'string') {
-                                        const candidateGroup = getCategoryGroup(labelText);
-                                        // If we find a "Strong Prior" category (Cat/Dog/People)
-                                        if (candidateGroup === 'cat' || candidateGroup === 'dog') {
-                                            if (validLabels[0].confidence < 0.8) {
-                                                finalLabel = labelText;
-                                                break;
-                                            }
-                                        }
-                                        // Also check Human Group in candidates
-                                        if (candidateGroup === 'people' && candidate.confidence > 0.4) {
-                                            humanAssets.push(asset);
-                                            categorizedAssetIds.add(asset.asset_id);
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Check for broad group again
-                            const broadGroup = getCategoryGroup(finalLabel);
-                            const labelToUse = broadGroup || finalLabel;
-
-                            // Translate label
-                            const category = translateLabel(labelToUse, language as 'en' | 'zh');
-
-                            if (!labelMap.has(category)) {
-                                labelMap.set(category, []);
-                            }
-                            labelMap.get(category)?.push(asset);
-                            categorizedAssetIds.add(asset.asset_id);
-                        }
+                    const selection = Array.isArray(labels) ? selectImageCategory(labels) : null;
+                    if (!selection) return;
+                    if (selection.category === 'people') {
+                        humanAssets.push(asset);
+                        categorizedAssetIds.add(asset.asset_id);
+                        return;
                     }
+                    const category = translateLabel(selection.category, language as 'en' | 'zh');
+                    if (!labelMap.has(category)) labelMap.set(category, []);
+                    labelMap.get(category)?.push(asset);
+                    categorizedAssetIds.add(asset.asset_id);
                 } catch (e) {
                     console.warn('Failed to parse labels for asset', asset.asset_id, e);
                 }

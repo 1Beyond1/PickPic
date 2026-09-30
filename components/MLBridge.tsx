@@ -69,7 +69,9 @@ const IMAGE_LABELING_MODELS = {
         model: require('../assets/ml/efficientnet-lite4.tflite'),
         options: {
             maxResultCount: 5,
-            confidenceThreshold: 0.4, // EfficientNet is more precise, 0.4 is good
+            // Keep secondary breeds/classes for semantic grouping. Category
+            // acceptance still uses 0.4 after aggregation, outside the model.
+            confidenceThreshold: 0.1,
         },
     },
 };
