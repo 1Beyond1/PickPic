@@ -17,6 +17,7 @@ const mockCategories = {
   peopleGroups: [], objectGroups: [mockCategory], uncategorizedGroup: null,
   isLoading: false, refresh: mockRefreshAI,
 };
+let mockClassificationEnabled = true;
 
 jest.mock('expo-media-library', () => ({
   getPermissionsAsync: jest.fn().mockResolvedValue({ granted: true, accessPrivileges: 'all' }),
@@ -40,7 +41,7 @@ jest.mock('../hooks/useThemeColor', () => ({
   } }),
 }));
 jest.mock('../hooks/useAICategories', () => ({ useAICategories: () => mockCategories }));
-jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: () => ({ enableAIClassification: true }) }));
+jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: () => ({ enableAIClassification: mockClassificationEnabled }) }));
 jest.mock('../stores/useMediaStore', () => ({
   useMediaStore: Object.assign((selector: any) => selector(mockMediaState), { getState: () => mockMediaState }),
   getCurrentlyVisibleAssetIds: jest.fn().mockImplementation(async (ids: string[]) => new Set(ids)),
@@ -53,6 +54,88 @@ jest.mock('../database', () => ({
 import ScanResultsScreen from '../app/(tabs)/scanResults';
 import { AssetRepository } from '../database';
 import { getCurrentlyVisibleAssetIds } from '../stores/useMediaStore';
+
+describe('result navigation preserves media decisions', () => {
+  beforeEach(() => {
+    mockClassificationEnabled = true;
+    mockMediaState.permissionScope = 'full';
+    mockMediaState.mediaLibraryRefreshVersion = 0;
+    (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));
+  });
+
+  it('switches among all result types without deleting media or marking a group', async () => {
+    render(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
+    expect(screen.getByText('scan_no_similar')).toBeTruthy();
+    await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
+    expect(screen.getByText('Cat')).toBeTruthy();
+    await act(async () => { fireEvent.press(screen.getByText('scan_tab_blur')); });
+    expect(screen.getByText('scan_no_blurry')).toBeTruthy();
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
+  });
+
+  it('returns from a category on system back without changing the selected result tab', async () => {
+    render(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
+    fireEvent.press(screen.getByText('Cat'));
+    const categoryModal = screen.UNSAFE_getAllByType(Modal).find(modal => modal.props.presentationStyle === 'pageSheet')!;
+    expect(categoryModal.props.visible).toBe(true);
+    await act(async () => { fireEvent(categoryModal, 'requestClose'); });
+    expect(categoryModal.props.visible).toBe(false);
+    expect(screen.getByText('Cat')).toBeTruthy();
+    expect(screen.queryByText('scan_no_blurry')).toBeNull();
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
+  });
+
+  it('exposes named, selected, wrapping result tabs with at least 44dp targets', async () => {
+    render(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    const blurry = screen.getByRole('tab', { name: 'scan_tab_blur' });
+    const similar = screen.getByRole('tab', { name: 'scan_tab_similar' });
+    const ai = screen.getByRole('tab', { name: 'scan_tab_ai' });
+    expect(blurry).toBeSelected();
+    expect(similar).not.toBeSelected();
+    expect(ai).toHaveStyle({ minHeight: 44 });
+    expect(screen.getByText('scan_tab_ai').props.numberOfLines).toBeUndefined();
+    await act(async () => { fireEvent.press(ai); });
+    expect(ai).toBeSelected();
+    expect(blurry).not.toBeSelected();
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+  });
+
+  it('names a category entry and keeps its full title outside the media preview', async () => {
+    render(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
+    const category = screen.getByRole('button', { name: 'Cat, scan_photo_count' });
+    expect(category).toBeEnabled();
+    expect(screen.getByText('Cat').props.numberOfLines).toBeUndefined();
+    await act(async () => { fireEvent.press(category); });
+    expect(screen.getByRole('button', { name: 'scan_close_category' })).toBeTruthy();
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+  });
+
+  it('reserves the actual Dock and safe areas outside every result list', async () => {
+    render(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    expect(screen.getByTestId('scan-results')).toHaveStyle({ paddingTop: 60, paddingBottom: 89, paddingLeft: 0, paddingRight: 0 });
+    expect(screen.getByRole('header', { name: 'tab_scan_results' })).toHaveStyle({ fontSize: 22, lineHeight: 30 });
+  });
+
+  it('does not offer the AI tab when classification is disabled', async () => {
+    mockClassificationEnabled = false;
+    render(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    expect(screen.queryByRole('tab', { name: 'scan_tab_ai' })).toBeNull();
+    expect(screen.getAllByRole('tab')).toHaveLength(2);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+  });
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -75,6 +158,7 @@ async function openPhoto(beforePreview?: () => void) {
 
 describe('scan result deletion safety', () => {
   beforeEach(() => {
+    mockClassificationEnabled = true;
     mockMediaState.mediaLibraryRefreshVersion = 0;
     mockMediaState.permissionScope = 'full';
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([
@@ -188,6 +272,7 @@ describe('scan result deletion safety', () => {
 
 describe('category photo viewing', () => {
   beforeEach(() => {
+    mockClassificationEnabled = true;
     mockMediaState.mediaLibraryRefreshVersion = 0;
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
     (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));

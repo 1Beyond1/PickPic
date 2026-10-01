@@ -9,10 +9,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { GlassContainer } from '../../components/GlassContainer';
 import { SimilarGroupCard } from '../../components/SimilarGroupCard';
 import { SimilarGroupDetailOverlay } from '../../components/SimilarGroupDetailOverlay';
-import { SPACING } from '../../constants/theme';
+import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { AssetRepository, DupGroupRepository } from '../../database';
 import { CategoryGroup, useAICategories } from '../../hooks/useAICategories';
 import { useI18n } from '../../hooks/useI18n';
@@ -263,7 +262,7 @@ export default function ScanResultsScreen() {
     };
 
     const renderBlurryItem = ({ item }: { item: BlurryPhoto }) => (
-        <GlassContainer style={styles.photoCard}>
+        <View style={[styles.photoCard, { borderBottomColor: colors.divider }]}>
             {item.uri && (
                 <Image source={{ uri: item.uri }} style={styles.thumbnail} />
             )}
@@ -276,16 +275,16 @@ export default function ScanResultsScreen() {
                 </Text>
             </View>
             <Pressable
-                style={[styles.deleteButton, { backgroundColor: colors.dangerBackground }, isDeletingBlurry && { opacity: 0.5 }]}
+                style={({ pressed }) => [styles.deleteButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }, isDeletingBlurry && { opacity: 0.5 }]}
                 disabled={isDeletingBlurry}
                 accessibilityRole="button"
                 accessibilityLabel={t('scan_delete_blurry_title')}
                 accessibilityState={{ disabled: isDeletingBlurry, busy: isDeletingBlurry }}
                 onPress={() => handleDeleteBlurry(item.assetId)}
             >
-                <Ionicons name="trash" size={20} color={colors.dangerForeground} />
+                <Ionicons name="trash-outline" size={20} color={colors.danger} />
             </Pressable>
-        </GlassContainer>
+        </View>
     );
 
     // Handle marking a similar group as processed
@@ -367,7 +366,10 @@ export default function ScanResultsScreen() {
     const renderCategoryCard = ({ item }: { item: CategoryGroup }) => {
         return (
             <Pressable
-                style={styles.categoryCard}
+                accessibilityRole="button"
+                accessibilityLabel={`${getCategoryDisplayTitle(item.title)}, ${t('scan_photo_count', { count: item.count })}`}
+                accessibilityState={{ disabled: item.assets.length === 0 }}
+                style={({ pressed }) => [styles.categoryCard, { opacity: pressed ? 0.7 : 1 }]}
                 disabled={item.assets.length === 0}
                 onPress={() => {
                     if (item.assets.length > 0) {
@@ -375,32 +377,38 @@ export default function ScanResultsScreen() {
                     }
                 }}
             >
-                <CategoryThumbnail assetId={item.coverAsset?.asset_id} />
-                <View style={styles.categoryInfoOverlay}>
-                    <Text style={styles.categoryTitle} numberOfLines={1}>
+                <View style={[styles.categoryMedia, { backgroundColor: colors.surfaceHover }]}>
+                    <CategoryThumbnail assetId={item.coverAsset?.asset_id} />
+                </View>
+                <View style={styles.categoryInfo}>
+                    <Text style={[styles.categoryTitle, { color: colors.text }]}>
                         {getCategoryDisplayTitle(item.title)}
                     </Text>
-                    <Text style={styles.categoryCount}>{item.count}</Text>
+                    <Text style={[styles.categoryCount, { color: colors.textSecondary }]}>{t('scan_photo_count', { count: item.count })}</Text>
                 </View>
             </Pressable>
         );
     };
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>{t('tab_scan_results')}</Text>
+        <View testID="scan-results" style={[styles.container, {
+            paddingTop: insets.top,
+            paddingBottom: UI_METRICS.dockHeight + insets.bottom,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+            backgroundColor: colors.background,
+        }]}>
+            <Text accessibilityRole="header" style={[styles.headerTitle, { color: colors.text }]}>{t('tab_scan_results')}</Text>
 
             {/* Tabs */}
             <View style={styles.tabs}>
                 <Pressable
+                    accessibilityRole="tab"
+                    accessibilityLabel={t('scan_tab_blur')}
+                    accessibilityState={{ selected: activeTab === 'blur' }}
                     style={[styles.tab, activeTab === 'blur' && { borderBottomColor: colors.primary }]}
                     onPress={() => setActiveTab('blur')}
                 >
-                    <Ionicons
-                        name="contrast"
-                        size={20}
-                        color={activeTab === 'blur' ? colors.primary : colors.textSecondary}
-                    />
                     <Text
                         style={[
                             styles.tabText,
@@ -412,14 +420,12 @@ export default function ScanResultsScreen() {
                 </Pressable>
 
                 <Pressable
+                    accessibilityRole="tab"
+                    accessibilityLabel={t('scan_tab_similar')}
+                    accessibilityState={{ selected: activeTab === 'similar' }}
                     style={[styles.tab, activeTab === 'similar' && { borderBottomColor: colors.primary }]}
                     onPress={() => setActiveTab('similar')}
                 >
-                    <Ionicons
-                        name="copy"
-                        size={20}
-                        color={activeTab === 'similar' ? colors.primary : colors.textSecondary}
-                    />
                     <Text
                         style={[
                             styles.tabText,
@@ -432,14 +438,12 @@ export default function ScanResultsScreen() {
 
                 {enableAIClassification ? (
                     <Pressable
-                        style={[styles.tab, activeTab === 'ai' && { borderBottomColor: colors.primary }]}
+                        accessibilityRole="tab"
+                        accessibilityLabel={t('scan_tab_ai')}
+                        accessibilityState={{ selected: activeTab === 'ai' }}
+                        style={[styles.tab, styles.categoryTab, activeTab === 'ai' && { borderBottomColor: colors.primary }]}
                         onPress={() => setActiveTab('ai')}
                     >
-                        <Ionicons
-                            name="sparkles"
-                            size={20}
-                            color={activeTab === 'ai' ? colors.primary : colors.textSecondary}
-                        />
                         <Text
                             style={[
                                 styles.tabText,
@@ -463,6 +467,7 @@ export default function ScanResultsScreen() {
                     ) : (
                         <FlatList
                             data={[]} // Main list is empty, utilizing ListHeaderComponent
+                            contentContainerStyle={styles.categoryContent}
                             renderItem={() => null}
                             ListHeaderComponent={
                                 <>
@@ -471,7 +476,7 @@ export default function ScanResultsScreen() {
                                         <Text style={[styles.sectionTitle, { color: colors.text }]}>
                                             {t('ai_category_people' as any)}
                                         </Text>
-                                        <Text style={{ color: colors.textSecondary }}>{t('scan_group_count', { count: peopleGroups.length })}</Text>
+                                        <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_group_count', { count: peopleGroups.length })}</Text>
                                     </View>
                                     <FlatList
                                         data={peopleGroups}
@@ -480,7 +485,7 @@ export default function ScanResultsScreen() {
                                         renderItem={renderCategoryCard}
                                         keyExtractor={item => item.id}
                                         contentContainerStyle={styles.horizontalList}
-                                        ListEmptyComponent={<Text style={{ color: colors.textSecondary, padding: 20 }}>{t('scan_no_people')}</Text>}
+                                        ListEmptyComponent={<Text style={[styles.categoryEmpty, { color: colors.textSecondary }]}>{t('scan_no_people')}</Text>}
                                     />
 
                                     {/* Objects Section */}
@@ -488,7 +493,7 @@ export default function ScanResultsScreen() {
                                         <Text style={[styles.sectionTitle, { color: colors.text }]}>
                                             {t('scan_objects_scenes')}
                                         </Text>
-                                        <Text style={{ color: colors.textSecondary }}>{t('scan_category_count', { count: objectGroups.length })}</Text>
+                                        <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_category_count', { count: objectGroups.length })}</Text>
                                     </View>
                                     <FlatList
                                         data={objectGroups}
@@ -497,7 +502,7 @@ export default function ScanResultsScreen() {
                                         renderItem={renderCategoryCard}
                                         keyExtractor={item => item.id}
                                         contentContainerStyle={styles.horizontalList}
-                                        ListEmptyComponent={<Text style={{ color: colors.textSecondary, padding: 20 }}>{t('scan_no_results')}</Text>}
+                                        ListEmptyComponent={<Text style={[styles.categoryEmpty, { color: colors.textSecondary }]}>{t('scan_no_results')}</Text>}
                                     />
 
                                     {/* Uncategorized Section */}
@@ -507,7 +512,7 @@ export default function ScanResultsScreen() {
                                                 <Text style={[styles.sectionTitle, { color: colors.text }]}>
                                                     {t('scan_uncategorized')}
                                                 </Text>
-                                                <Text style={{ color: colors.textSecondary }}>{t('scan_photo_count', { count: uncategorizedGroup.count })}</Text>
+                                                <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_photo_count', { count: uncategorizedGroup.count })}</Text>
                                             </View>
                                             <FlatList
                                                 data={[uncategorizedGroup]}
@@ -734,33 +739,36 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     headerTitle: {
-        fontSize: 28,
-        fontWeight: 'bold',
-        paddingHorizontal: SPACING.l,
-        marginVertical: SPACING.m,
+        ...TYPOGRAPHY.pageTitle,
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingTop: 16,
+        paddingBottom: 12,
     },
     tabs: {
         flexDirection: 'row',
-        paddingHorizontal: SPACING.m,
-        marginBottom: SPACING.m,
+        paddingHorizontal: UI_METRICS.pageInset,
+        marginBottom: 8,
     },
     tab: {
         flex: 1,
-        flexDirection: 'row',
+        minWidth: 0,
+        minHeight: UI_METRICS.touchTarget,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: SPACING.s,
-        gap: 8,
+        paddingVertical: 12,
+        paddingHorizontal: 4,
         borderBottomWidth: 2,
         borderBottomColor: 'transparent',
     },
     tabText: {
-        fontSize: 15,
-        fontWeight: '600',
+        ...TYPOGRAPHY.button,
+        textAlign: 'center',
+        flexShrink: 1,
     },
+    categoryTab: { flex: 1.35 },
     listContent: {
-        padding: SPACING.m,
-        paddingBottom: 100,
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingBottom: 20,
     },
     aiContainer: {
         flex: 1,
@@ -769,74 +777,68 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        paddingHorizontal: SPACING.l,
-        paddingVertical: SPACING.m,
+        gap: 12,
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingTop: 16,
+        paddingBottom: 12,
     },
     sectionTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
+        ...TYPOGRAPHY.sectionTitle,
+        flex: 1,
+        minWidth: 0,
     },
+    sectionCount: { ...TYPOGRAPHY.secondary, flexShrink: 1, textAlign: 'right' },
+    categoryContent: { paddingBottom: 20 },
+    categoryEmpty: { ...TYPOGRAPHY.body, paddingVertical: 8 },
     horizontalList: {
-        paddingHorizontal: SPACING.m,
-        paddingBottom: SPACING.l,
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingBottom: 8,
     },
     categoryCard: {
         width: 140,
-        height: 180,
-        marginRight: SPACING.m,
-        borderRadius: 12,
-        overflow: 'hidden',
-        backgroundColor: '#333',
+        marginRight: 12,
     },
+    categoryMedia: { height: 144, borderRadius: 12, overflow: 'hidden' },
     categoryThumbnail: {
         width: '100%',
         height: '100%',
     },
-    categoryInfoOverlay: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        padding: SPACING.s,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-    },
+    categoryInfo: { paddingTop: 8, gap: 2 },
     categoryTitle: {
-        color: '#FFF',
-        fontSize: 14,
-        fontWeight: 'bold',
+        ...TYPOGRAPHY.button,
     },
     categoryCount: {
-        color: '#DDD',
-        fontSize: 12,
+        ...TYPOGRAPHY.secondary,
     },
     // ... (existing styles)
     photoCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: SPACING.m,
-        marginBottom: SPACING.s,
-        gap: SPACING.m,
+        paddingVertical: 16,
+        gap: 12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     thumbnail: {
-        width: 80,
-        height: 80,
+        width: 64,
+        height: 64,
         borderRadius: 8,
     },
     cardInfo: {
         flex: 1,
+        minWidth: 0,
     },
     scoreText: {
-        fontSize: 16,
-        fontWeight: 'bold',
+        ...TYPOGRAPHY.button,
         marginBottom: 4,
     },
     metaText: {
-        fontSize: 13,
+        ...TYPOGRAPHY.secondary,
     },
     deleteButton: {
         width: 44,
         height: 44,
-        borderRadius: 22,
+        flexShrink: 0,
+        borderRadius: UI_METRICS.buttonRadius,
         alignItems: 'center',
         justifyContent: 'center',
     },

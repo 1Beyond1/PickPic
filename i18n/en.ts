@@ -195,7 +195,7 @@ export default {
     // Scan Results tabs
     scan_tab_blur: 'Blurry',
     scan_tab_similar: 'Similar',
-    scan_tab_ai: 'AI Categories',
+    scan_tab_ai: 'Categories',
     scan_delete_blurry_title: 'Delete Blurry Photo',
     scan_delete_blurry_message: 'Delete this photo?',
     delete: 'Delete',
