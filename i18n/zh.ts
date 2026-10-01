@@ -159,9 +159,9 @@ export default {
 
     // Version history
     announcement_update_title: '本次更新',
-    update_v030_1: '🔍 新增 AI 扫描引擎：自动识别模糊照片、重复照片，开发者选项可开启智能分类（Beta，完全本地化，无隐私泄露）',
-    update_v030_2: '🎨 统一弹窗 UI 风格：全新视觉体验，操作更流畅',
-    update_v030_3: '⚡ 软件性能优化：启动更快，扫描更流畅',
+    update_v030_1: 'AI 扫描引擎：分析模糊与相似照片。在“设置 → 智能分析”中可打开“启用 AI 图片分类”（Beta，本地处理）。',
+    update_v030_2: '统一弹窗 UI 风格：全新视觉体验，操作更流畅',
+    update_v030_3: '软件性能优化：启动更快，扫描更流畅',
 
     // Developer options
     settings_dev_options: '开发者选项',
@@ -241,11 +241,12 @@ export default {
     ai_category_other: '其他',
 
     // AI Scan Guide Modal
-    ai_guide_title: '新功能：AI 扫描引擎',
-    ai_guide_message: 'v0.3.1 新增 AI 扫描引擎,可自动分析模糊和重复照片。是否现在开始后台静默扫描?',
-    ai_guide_privacy: '🔒 完全本地化，无需联网，隐私安全',
-    ai_guide_start: '立即开始',
+    ai_guide_title: '扫描照片',
+    ai_guide_message: '分析照片中的模糊与相似情况。现在开始扫描，或稍后在设置的「扫描管理」中开始。',
+    ai_guide_privacy: '照片分析在设备上完成。',
+    ai_guide_start: '开始扫描',
     ai_guide_dismiss: '此版本不再提示',
+    ai_guide_close: '关闭引导，此版本不再提示',
     ai_guide_classification_hint: '如需图片分类，请在“设置 → 智能分析”中打开“启用 AI 图片分类”。分类会让扫描变慢。',
 
     // AI Scan Empty Prompt

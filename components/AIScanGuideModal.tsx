@@ -1,15 +1,12 @@
 /**
- * AIScanGuideModal - Welcome modal to introduce AI scanning feature
+ * Introduce scanning without starting work until the user explicitly agrees.
  */
-
-import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Dimensions, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { BORDER_RADIUS, SPACING } from '../constants/theme';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+import { BottomSheet } from './BottomSheet';
 
 interface AIScanGuideModalProps {
     visible: boolean;
@@ -22,151 +19,48 @@ export function AIScanGuideModal({ visible, onStartScan, onDismiss }: AIScanGuid
     const { t } = useI18n();
 
     return (
-        <Modal
+        <BottomSheet
             visible={visible}
-            transparent
-            animationType="fade"
-            onRequestClose={onDismiss}
-        >
-            <View style={styles.overlay}>
-                <View style={[styles.modalBackground, { backgroundColor: colors.surface }]}>
-                    {/* Header */}
-                    <View style={styles.header}>
-                        <View style={[styles.iconContainer, { backgroundColor: colors.selectionBackground }]}>
-                            <Ionicons name="search" size={32} color={colors.primary} />
-                        </View>
-                        <Text style={[styles.title, { color: colors.text }]}>{t('ai_guide_title' as any)}</Text>
-                    </View>
-
-                    {/* Content */}
-                    <View style={styles.content}>
-                        <Text style={[styles.message, { color: colors.textSecondary }]}>
-                            {t('ai_guide_message' as any)}
-                        </Text>
-
-                        {/* Prominent Hint */}
-                        <View style={[styles.hintBox, { backgroundColor: colors.surfaceHover }]}>
-                            <Text style={[styles.hintText, { color: colors.warning }]}>
-                                {t('ai_guide_classification_hint' as any)}
-                            </Text>
-                        </View>
-
-                        <View style={[styles.privacyBox, { backgroundColor: colors.surfaceHover }]}>
-                            <Text style={[styles.privacyText, { color: colors.success }]}>
-                                {t('ai_guide_privacy' as any)}
-                            </Text>
-                        </View>
-                    </View>
-
-                    {/* Buttons */}
-                    <View style={styles.buttonContainer}>
-                        <Pressable
-                            style={[styles.button, styles.primaryButton, { backgroundColor: colors.actionBackground }]}
-                            onPress={onStartScan}
-                        >
-                            <Text style={[styles.primaryButtonText, { color: colors.actionForeground }]}>{t('ai_guide_start' as any)}</Text>
-                        </Pressable>
-                        <Pressable
-                            style={[styles.button, styles.secondaryButton, { backgroundColor: colors.surfaceHover }]}
-                            onPress={onDismiss}
-                        >
-                            <Text style={[styles.secondaryButtonText, { color: colors.textSecondary }]}>{t('ai_guide_dismiss' as any)}</Text>
-                        </Pressable>
-                    </View>
+            title={t('ai_guide_title')}
+            onClose={onDismiss}
+            closeLabel={t('ai_guide_close')}
+            dismissOnBackdrop={false}
+            footer={
+                <View style={styles.actions}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t('ai_guide_start')}
+                        style={({ pressed }) => [styles.button, { backgroundColor: colors.actionBackground, opacity: pressed ? 0.8 : 1 }]}
+                        onPress={onStartScan}
+                    >
+                        <Text style={[styles.buttonText, { color: colors.actionForeground }]}>{t('ai_guide_start')}</Text>
+                    </Pressable>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t('ai_guide_dismiss')}
+                        style={({ pressed }) => [styles.button, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
+                        onPress={onDismiss}
+                    >
+                        <Text style={[styles.buttonText, { color: colors.textSecondary }]}>{t('ai_guide_dismiss')}</Text>
+                    </Pressable>
                 </View>
-            </View>
-        </Modal>
+            }
+        >
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+                <Text style={[styles.message, { color: colors.textSecondary }]}>{t('ai_guide_message')}</Text>
+                <Text style={[styles.message, { color: colors.textSecondary }]}>{t('ai_guide_classification_hint')}</Text>
+                <Text style={[styles.privacy, { color: colors.textSecondary }]}>{t('ai_guide_privacy')}</Text>
+            </ScrollView>
+        </BottomSheet>
     );
 }
 
 const styles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingHorizontal: 20,
-    },
-    modalBackground: {
-        width: Math.min(SCREEN_WIDTH - 40, 420),
-        borderRadius: BORDER_RADIUS.l,
-        padding: SPACING.l,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.3,
-        shadowRadius: 12,
-        elevation: 12,
-    },
-    header: {
-        alignItems: 'center',
-        marginBottom: SPACING.l,
-    },
-    iconContainer: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: SPACING.m,
-    },
-    title: {
-        fontSize: 22,
-        fontWeight: 'bold',
-        textAlign: 'center',
-    },
-    content: {
-        marginBottom: SPACING.l,
-    },
-    message: {
-        fontSize: 15,
-        lineHeight: 22,
-        textAlign: 'center',
-        marginBottom: SPACING.m,
-    },
-    privacyBox: {
-        padding: SPACING.m,
-        borderRadius: BORDER_RADIUS.m,
-    },
-    privacyText: {
-        fontSize: 14,
-        fontWeight: '600',
-        textAlign: 'center',
-    },
-    hintBox: {
-        marginBottom: SPACING.m,
-        padding: SPACING.m,
-        borderRadius: BORDER_RADIUS.m,
-        borderWidth: 1,
-        borderColor: 'rgba(255, 193, 7, 0.3)',
-    },
-    hintText: {
-        fontSize: 13,
-        fontWeight: 'bold',
-        textAlign: 'center',
-        lineHeight: 18,
-    },
-    buttonContainer: {
-        gap: SPACING.s,
-    },
-    button: {
-        paddingVertical: 14,
-        borderRadius: BORDER_RADIUS.m,
-        alignItems: 'center',
-    },
-    primaryButton: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
-    },
-    primaryButtonText: {
-        fontSize: 16,
-        fontWeight: '600',
-    },
-    secondaryButton: {},
-    secondaryButtonText: {
-        fontSize: 15,
-        fontWeight: '500',
-    },
+    scroll: { flexShrink: 1 },
+    content: { gap: 16, paddingBottom: 8 },
+    message: { ...TYPOGRAPHY.body },
+    privacy: { ...TYPOGRAPHY.secondary },
+    actions: { gap: 8 },
+    button: { minHeight: UI_METRICS.buttonHeight, borderRadius: UI_METRICS.buttonRadius, paddingHorizontal: 16, paddingVertical: 14, justifyContent: 'center' },
+    buttonText: { ...TYPOGRAPHY.button, textAlign: 'center' },
 });

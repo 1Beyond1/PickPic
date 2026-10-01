@@ -21,3 +21,13 @@ it.each([false, true])('keeps complete header/footer and explicit cancel paths i
     act(() => view.UNSAFE_getByType(Modal).props.onRequestClose());
     expect(onClose).toHaveBeenCalledTimes(3);
 });
+
+it('can preserve an inert onboarding backdrop while naming its explicit close path', () => {
+    const onClose = jest.fn();
+    const view = render(<BottomSheet visible title="Introduction" closeLabel="Close introduction" dismissOnBackdrop={false} onClose={onClose}><Text>Explanation</Text></BottomSheet>);
+    expect(screen.getByTestId('sheet-backdrop', { includeHiddenElements: true }).props.onPress).toBeUndefined();
+    fireEvent.press(screen.getByRole('button', { name: 'Close introduction' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    act(() => view.UNSAFE_getByType(Modal).props.onRequestClose());
+    expect(onClose).toHaveBeenCalledTimes(2);
+});

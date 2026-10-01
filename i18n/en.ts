@@ -159,9 +159,9 @@ export default {
 
     // Version history
     announcement_update_title: "What's New",
-    update_v030_1: '🔍 AI Scanning Engine: Auto-detect blurry & duplicate photos, with smart classification in Dev Options (Beta, fully offline, privacy-safe)',
-    update_v030_2: '🎨 Unified Dialog UI: Refreshed visual experience with smoother interactions',
-    update_v030_3: '⚡ Performance Boost: Faster startup and smoother scanning',
+    update_v030_1: 'AI scanning: Analyze blurry and similar photos. Turn on “Enable AI Classification” under Settings → Intelligent analysis (Beta, on-device processing).',
+    update_v030_2: 'Unified Dialog UI: Refreshed visual experience with smoother interactions',
+    update_v030_3: 'Performance Boost: Faster startup and smoother scanning',
 
     // Developer options
     settings_dev_options: 'Developer Options',
@@ -241,11 +241,12 @@ export default {
     ai_category_other: 'Other',
 
     // AI Scan Guide Modal
-    ai_guide_title: 'New Feature: AI Scanning Engine',
-    ai_guide_message: 'v0.3.1 introduces AI Scanning Engine to automatically analyze blurry and duplicate photos. Start background scan now?',
-    ai_guide_privacy: '🔒 Fully offline, no internet required, privacy-safe',
-    ai_guide_start: 'Start Now',
+    ai_guide_title: 'Scan photos',
+    ai_guide_message: 'Analyze photos for blur and similarity. Start now, or start later from Scan management in Settings.',
+    ai_guide_privacy: 'Photo analysis runs on your device.',
+    ai_guide_start: 'Start scan',
     ai_guide_dismiss: 'Don\'t Show for This Version',
+    ai_guide_close: 'Close introduction for this version',
 
     // AI Scan Empty Prompt
     ai_guide_classification_hint: 'For image categories, turn on “Enable AI Classification” under Settings → Intelligent analysis. Classification makes scanning slower.',

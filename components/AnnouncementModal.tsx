@@ -1,12 +1,10 @@
-import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
-import { Dimensions, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { APP_VERSION } from '../stores/useSettingsStore';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+import { BottomSheet } from './BottomSheet';
 
 interface AnnouncementModalProps {
     visible: boolean;
@@ -19,224 +17,68 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
     const { colors } = useThemeColor();
 
     return (
-        <Modal
+        <BottomSheet
             visible={visible}
-            transparent
-            animationType="fade"
-            onRequestClose={onDismissOnce}
-        >
-            <View style={[styles.overlay, { backgroundColor: colors.overlay }]}>
-                <View style={[styles.modalBackground, { backgroundColor: colors.background, borderColor: colors.border }]}>
-                    <ScrollView
-                        style={styles.scrollView}
-                        contentContainerStyle={styles.scrollContent}
-                        showsVerticalScrollIndicator={false}
+            title={t('announcement_title')}
+            onClose={onDismissOnce}
+            closeLabel={t('close')}
+            dismissOnBackdrop={false}
+            footer={
+                <View style={styles.actions}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t('announcement_close_once')}
+                        style={({ pressed }) => [styles.button, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
+                        onPress={onDismissOnce}
                     >
-                        {/* Header */}
-                        <View style={styles.header}>
-                            <View style={[styles.iconContainer, { backgroundColor: colors.selectionBackground }]}>
-                                <Ionicons name="sparkles" size={28} color={colors.primary} />
-                            </View>
-                            <Text style={[styles.title, { color: colors.text }]}>{t('announcement_title')}</Text>
-                            <Text style={[styles.version, { color: colors.textSecondary }]}>{APP_VERSION}</Text>
-                        </View>
-
-                        {/* Content */}
-                        <View style={styles.content}>
-                            <Text style={[styles.sectionTitle, { color: colors.text }]}>📢 {t('announcement_notice_title')}</Text>
-
-                            <View style={styles.noticeItem}>
-                                <Ionicons name="alert-circle" size={20} color={colors.warning} />
-                                <Text style={[styles.noticeText, { color: colors.textSecondary }]}>{t('announcement_notice_1')}</Text>
-                            </View>
-
-                            <View style={styles.noticeItem}>
-                                <Ionicons name="cloud-outline" size={20} color={colors.primary} />
-                                <Text style={[styles.noticeText, { color: colors.textSecondary }]}>{t('announcement_notice_2')}</Text>
-                            </View>
-
-                            <View style={styles.noticeItem}>
-                                <Ionicons name="construct-outline" size={20} color={colors.textSecondary} />
-                                <Text style={[styles.noticeText, { color: colors.textSecondary }]}>{t('announcement_notice_3')}</Text>
-                            </View>
-
-                            <View style={[styles.divider, { backgroundColor: colors.divider }]} />
-
-                            <Text style={[styles.sectionTitle, { color: colors.text }]}>🆕 {t('announcement_update_title' as any)}</Text>
-                            <View style={styles.updateItem}>
-                                <Text style={[styles.updateVersion, { color: colors.text }]}>v0.3.1</Text>
-                                <Text style={[styles.updateText, { color: colors.textSecondary }]}>{t('update_v030_1' as any)}</Text>
-                                <Text style={[styles.updateText, { color: colors.textSecondary }]}>{t('update_v030_2' as any)}</Text>
-                                <Text style={[styles.updateText, { color: colors.textSecondary }]}>{t('update_v030_3' as any)}</Text>
-                            </View>
-
-                            <View style={[styles.divider, { backgroundColor: colors.divider }]} />
-
-                            <Text style={[styles.sectionTitle, { color: colors.text }]}>👨‍💻 {t('announcement_author_title')}</Text>
-                            <View style={styles.authorRow}>
-                                <Ionicons name="logo-github" size={24} color={colors.text} />
-                                <Text style={[styles.authorText, { color: colors.text }]}>1Beyond1</Text>
-                            </View>
-                            <Text style={[styles.followHint, { color: colors.textSecondary }]}>{t('github_follow')}</Text>
-                        </View>
-                    </ScrollView>
-
-                    {/* Buttons */}
-                    <View style={[styles.buttonContainer, { borderTopColor: colors.border }]}>
-                        <Pressable
-                            style={[styles.button, styles.secondaryButton, { backgroundColor: colors.surface }]}
-                            onPress={onDismissOnce}
-                        >
-                            <Text style={[styles.secondaryButtonText, { color: colors.textSecondary }]}>{t('announcement_close_once')}</Text>
-                        </Pressable>
-                        <Pressable
-                            style={[styles.button, styles.primaryButton, { backgroundColor: colors.actionBackground }]}
-                            onPress={onDismissForVersion}
-                        >
-                            <Text style={[styles.primaryButtonText, { color: colors.actionForeground }]}>{t('announcement_close_version')}</Text>
-                        </Pressable>
-                    </View>
+                        <Text style={[styles.buttonText, { color: colors.textSecondary }]}>{t('announcement_close_once')}</Text>
+                    </Pressable>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t('announcement_close_version')}
+                        style={({ pressed }) => [styles.button, { backgroundColor: colors.actionBackground, opacity: pressed ? 0.8 : 1 }]}
+                        onPress={onDismissForVersion}
+                    >
+                        <Text style={[styles.buttonText, { color: colors.actionForeground }]}>{t('announcement_close_version')}</Text>
+                    </Pressable>
                 </View>
-            </View>
-        </Modal>
+            }
+        >
+            <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+                <Text style={[styles.version, { color: colors.textSecondary }]}>{APP_VERSION}</Text>
+                <View style={styles.section}>
+                    <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>{t('announcement_notice_title')}</Text>
+                    <Text style={[styles.notice, { color: colors.text }]}>{t('announcement_notice_1')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_notice_2')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_notice_3')}</Text>
+                </View>
+                <View style={[styles.section, styles.divided, { borderColor: colors.divider }]}>
+                    <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>{t('announcement_update_title')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('update_v030_1')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('update_v030_2')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('update_v030_3')}</Text>
+                </View>
+                <View style={[styles.section, styles.divided, { borderColor: colors.divider }]}>
+                    <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>{t('announcement_author_title')}</Text>
+                    <Text style={[styles.author, { color: colors.text }]}>1Beyond1</Text>
+                    <Text style={[styles.version, { color: colors.textSecondary }]}>{t('github_follow')}</Text>
+                </View>
+            </ScrollView>
+        </BottomSheet>
     );
 }
 
 const styles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(27, 20, 14, 0.5)',
-    },
-    modalBackground: {
-        width: SCREEN_WIDTH - 40,
-        maxHeight: SCREEN_HEIGHT * 0.75,
-        backgroundColor: COLORS.background,
-        borderRadius: BORDER_RADIUS.xl,
-        overflow: 'hidden',
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    scrollView: {
-        // flex: 1, // Removed to allow content to determine height (fixed empty modal issue)
-        width: '100%',
-    },
-    scrollContent: {
-        padding: SPACING.l,
-    },
-    header: {
-        alignItems: 'center',
-        marginBottom: SPACING.l,
-    },
-    iconContainer: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: 'rgba(217, 119, 6, 0.1)',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    title: {
-        fontSize: 22,
-        fontWeight: 'bold',
-        color: COLORS.text,
-        marginTop: SPACING.m,
-    },
-    version: {
-        fontSize: 14,
-        color: COLORS.primary,
-        marginTop: 4,
-        fontWeight: '600',
-    },
-    content: {
-        marginBottom: SPACING.m,
-    },
-    sectionTitle: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: COLORS.text,
-        marginBottom: SPACING.m,
-    },
-    noticeItem: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        marginBottom: SPACING.m,
-        gap: 10,
-    },
-    noticeText: {
-        flex: 1,
-        fontSize: 14,
-        color: COLORS.textSecondary,
-        lineHeight: 20,
-    },
-    highlight: {
-        color: COLORS.warning,
-        fontWeight: '600',
-    },
-    divider: {
-        height: 1,
-        backgroundColor: COLORS.border,
-        marginVertical: SPACING.l,
-    },
-    authorRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        marginBottom: 8,
-    },
-    authorText: {
-        fontSize: 16,
-        color: COLORS.text,
-        fontWeight: '600',
-    },
-    followHint: {
-        fontSize: 12,
-        color: COLORS.textSecondary,
-    },
-    buttonContainer: {
-        flexDirection: 'row',
-        gap: 12,
-        padding: SPACING.m,
-        borderTopWidth: 1,
-        borderTopColor: COLORS.border,
-    },
-    button: {
-        flex: 1,
-        paddingVertical: 14,
-        borderRadius: BORDER_RADIUS.m,
-        alignItems: 'center',
-    },
-    secondaryButton: {
-        backgroundColor: COLORS.surface,
-    },
-    secondaryButtonText: {
-        color: COLORS.textSecondary,
-        fontSize: 14,
-        fontWeight: '500',
-    },
-    primaryButton: {
-        backgroundColor: COLORS.primary,
-    },
-    primaryButtonText: {
-        color: COLORS.white,
-        fontSize: 14,
-        fontWeight: '600',
-    },
-    updateItem: {
-        marginBottom: SPACING.m,
-    },
-    updateVersion: {
-        fontSize: 15,
-        fontWeight: 'bold',
-        color: COLORS.primary,
-        marginBottom: 6,
-    },
-    updateText: {
-        fontSize: 13,
-        color: COLORS.textSecondary,
-        marginLeft: 8,
-        marginBottom: 4,
-        lineHeight: 18,
-    },
+    scroll: { flexShrink: 1 },
+    content: { paddingBottom: 8, gap: 20 },
+    section: { gap: 12 },
+    divided: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 20 },
+    sectionTitle: { ...TYPOGRAPHY.sectionTitle },
+    notice: { ...TYPOGRAPHY.body, fontWeight: '500' },
+    body: { ...TYPOGRAPHY.body },
+    version: { ...TYPOGRAPHY.secondary },
+    author: { ...TYPOGRAPHY.button },
+    actions: { gap: 8 },
+    button: { minHeight: UI_METRICS.buttonHeight, borderRadius: UI_METRICS.buttonRadius, paddingHorizontal: 16, paddingVertical: 14, justifyContent: 'center' },
+    buttonText: { ...TYPOGRAPHY.button, textAlign: 'center' },
 });

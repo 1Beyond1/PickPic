@@ -12,10 +12,12 @@ interface BottomSheetProps {
     onClose: () => void;
     children: React.ReactNode;
     footer?: React.ReactNode;
+    closeLabel?: string;
+    dismissOnBackdrop?: boolean;
 }
 
 /** A bounded native sheet. Callers own scrolling and all confirm/cancel semantics. */
-export function BottomSheet({ visible, title, onClose, children, footer }: BottomSheetProps) {
+export function BottomSheet({ visible, title, onClose, children, footer, closeLabel, dismissOnBackdrop = true }: BottomSheetProps) {
     const { colors } = useThemeColor();
     const { t } = useI18n();
     const insets = useSafeAreaInsets();
@@ -24,13 +26,15 @@ export function BottomSheet({ visible, title, onClose, children, footer }: Botto
     return (
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <View style={[styles.overlay, { backgroundColor: colors.overlay, paddingTop: insets.top + 16 }]}>
-                <Pressable
-                    testID="sheet-backdrop"
-                    accessibilityRole="button"
-                    accessibilityLabel={t('cancel')}
-                    onPress={onClose}
-                    style={StyleSheet.absoluteFill}
-                />
+                {dismissOnBackdrop ? (
+                    <Pressable
+                        testID="sheet-backdrop"
+                        accessibilityRole="button"
+                        accessibilityLabel={t('cancel')}
+                        onPress={onClose}
+                        style={StyleSheet.absoluteFill}
+                    />
+                ) : <View testID="sheet-backdrop" style={StyleSheet.absoluteFill} />}
                 <View accessibilityViewIsModal style={[styles.sheet, {
                     backgroundColor: colors.surface,
                     maxHeight: Math.max(0, height - insets.top - 16),
@@ -42,7 +46,7 @@ export function BottomSheet({ visible, title, onClose, children, footer }: Botto
                         <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>{title}</Text>
                         <Pressable
                             accessibilityRole="button"
-                            accessibilityLabel={t('cancel')}
+                            accessibilityLabel={closeLabel ?? t('cancel')}
                             onPress={onClose}
                             style={({ pressed }) => [styles.close, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
                         >
