@@ -199,6 +199,7 @@ export default {
     similar_selected_count: '已选 {count} 张',
     similar_photo: '第 {index} 张照片',
     similar_toggle_hint: '点击照片可选中或取消选中。',
+    similar_unavailable_count: '有 {count} 张照片暂时无法读取，仅显示可读取的照片。',
 
     // Scan Results tabs
     scan_tab_blur: '模糊',

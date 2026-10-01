@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Linking, Modal } from 'react-native';
+import { FlatList, Linking, Modal } from 'react-native';
 
 const mockLoadAlbums = jest.fn().mockResolvedValue(undefined);
 const mockFullAccess = jest.fn().mockResolvedValue(true);
@@ -98,4 +98,22 @@ it('explains an empty album list without applying an empty scope automatically',
     expect(onConfirm).not.toHaveBeenCalled();
     fireEvent.press(screen.getByRole('button', { name: 'confirm' }));
     expect(onConfirm).toHaveBeenCalledWith(['missing-album']);
+});
+
+it('keeps the final album in a long list selectable without applying its draft on close', async () => {
+    mockVisibleAlbums = Array.from({ length: 80 }, (_, index) => ({ id: `album-${index}`, title: `Album ${index}`, assetCount: index, type: 'album' }));
+    const onConfirm = jest.fn();
+    const onClose = jest.fn();
+    const selector = render(<AlbumSelector visible onClose={onClose} onConfirm={onConfirm} />);
+    await selector.findByRole('checkbox', { name: 'Album 0' });
+    const list = selector.UNSAFE_getByType(FlatList);
+    const last = list.props.data[79];
+    // Exercise the virtualized final row renderer, not a fake claim of native scrolling.
+    const row = list.props.renderItem({ item: last, index: 79 });
+    act(() => row.props.onPress());
+    expect(selector.UNSAFE_getByType(FlatList).props.renderItem({ item: last, index: 79 }).props.accessibilityState.checked).toBe(true);
+    expect(onConfirm).not.toHaveBeenCalled();
+    fireEvent.press(selector.getByRole('button', { name: 'cancel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
 });

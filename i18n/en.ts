@@ -199,6 +199,7 @@ export default {
     similar_selected_count: '{count} selected',
     similar_photo: 'Photo {index}',
     similar_toggle_hint: 'Tap to select or deselect photos.',
+    similar_unavailable_count: '{count} photos could not be loaded. Only available photos are shown.',
 
     // Scan Results tabs
     scan_tab_blur: 'Blurry',

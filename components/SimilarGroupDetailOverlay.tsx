@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+    ActivityIndicator,
     Alert,
     BackHandler,
     FlatList,
@@ -53,6 +54,8 @@ export function SimilarGroupDetailOverlay({
     const { t, language } = useI18n();
 
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
+    const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
+    const [unavailableCount, setUnavailableCount] = useState(0);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [previewPhoto, setPreviewPhoto] = useState<PhotoItem | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
@@ -64,6 +67,9 @@ export function SimilarGroupDetailOverlay({
 
     const loadPhotos = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
+        setIsLoadingPhotos(true);
+        setUnavailableCount(0);
+        setPhotos([]);
         const items: PhotoItem[] = [];
         for (const assetId of memberAssetIds) {
             try {
@@ -80,6 +86,8 @@ export function SimilarGroupDetailOverlay({
         }
         if (requestId === loadRequestIdRef.current) {
             setPhotos(items);
+            setUnavailableCount(memberAssetIds.length - items.length);
+            setIsLoadingPhotos(false);
         }
     }, [memberAssetIds]);
 
@@ -107,9 +115,12 @@ export function SimilarGroupDetailOverlay({
         } else {
             loadRequestIdRef.current += 1;
             setPhotos([]); // Clear on close or an empty group to avoid stale content
+            setIsLoadingPhotos(false);
+            setUnavailableCount(0);
             setSelectedIds(new Set());
             setPreviewPhoto(null);
         }
+        return () => { loadRequestIdRef.current += 1; };
     }, [visible, memberAssetIds, loadPhotos, overlayOpacity]);
 
     // Handle Back Button
@@ -292,7 +303,7 @@ export function SimilarGroupDetailOverlay({
                 <View style={styles.heading}>
                     <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>{t('similar_group_detail_title')}</Text>
                     <Text accessibilityLiveRegion="polite" style={[styles.summary, { color: colors.textSecondary }]}>
-                        {selectedIds.size > 0 ? t('similar_selected_count', { count: selectedIds.size }) : t('scan_photo_count', { count: photos.length })}
+                        {selectedIds.size > 0 ? t('similar_selected_count', { count: selectedIds.size }) : t('scan_photo_count', { count: isLoadingPhotos || (photos.length === 0 && unavailableCount > 0) ? memberAssetIds.length : photos.length })}
                     </Text>
                 </View>
                 {selectedIds.size > 0 && (
@@ -318,7 +329,8 @@ export function SimilarGroupDetailOverlay({
                     <Ionicons name="close-outline" size={24} color={colors.text} />
                 </Pressable>
             </View>
-            <Text style={[styles.hint, { color: colors.textSecondary }]}>{t(selectedIds.size > 0 ? 'similar_toggle_hint' : 'similar_select_hint')}</Text>
+            {!isLoadingPhotos && photos.length > 0 && <Text style={[styles.hint, { color: colors.textSecondary }]}>{t(selectedIds.size > 0 ? 'similar_toggle_hint' : 'similar_select_hint')}</Text>}
+            {!isLoadingPhotos && photos.length > 0 && unavailableCount > 0 && <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: colors.textSecondary }]}>{t('similar_unavailable_count', { count: unavailableCount })}</Text>}
 
             {/* Grid */}
             <View style={{ flex: 1 }}>
@@ -328,6 +340,16 @@ export function SimilarGroupDetailOverlay({
                     keyExtractor={(item) => item.assetId}
                     numColumns={COLUMN_COUNT}
                     contentContainerStyle={styles.grid}
+                    ListEmptyComponent={isLoadingPhotos ? (
+                        <ActivityIndicator color={colors.primary} style={styles.readState} />
+                    ) : unavailableCount > 0 ? (
+                        <View style={styles.readState}>
+                            <Text accessibilityRole="alert" style={[styles.readMessage, { color: colors.textSecondary }]}>{t('photos_load_failed')}</Text>
+                            <Pressable accessibilityRole="button" onPress={() => void loadPhotos()} style={[styles.retryButton, { backgroundColor: colors.actionBackground }]}>
+                                <Text style={[styles.retryText, { color: colors.actionForeground }]}>{t('retry')}</Text>
+                            </Pressable>
+                        </View>
+                    ) : null}
                 />
             </View>
 
@@ -365,14 +387,7 @@ export function SimilarGroupDetailOverlay({
                             </Pressable>
                         </View>
                         <View style={styles.previewMedia}>
-                            <Image
-                                accessible
-                                accessibilityRole="image"
-                                accessibilityLabel={t('photo_detail_title')}
-                                source={{ uri: previewPhoto.uri }}
-                                style={styles.previewImage}
-                                resizeMode="contain"
-                            />
+                            <SimilarPhotoPreview key={`${previewPhoto.assetId}:${previewPhoto.uri}`} photo={previewPhoto} />
                         </View>
                     </View>
                 </Modal>
@@ -381,7 +396,46 @@ export function SimilarGroupDetailOverlay({
     );
 }
 
+/** Keep a failed decoder from looking like an empty, successfully loaded preview. */
+function SimilarPhotoPreview({ photo }: { photo: PhotoItem }) {
+    const { colors } = useThemeColor();
+    const { t } = useI18n();
+    const [attempt, setAttempt] = useState(0);
+    const [image, setImage] = useState<{ uri: string; failed: boolean } | null>({ uri: photo.uri, failed: false });
+
+    useEffect(() => {
+        if (attempt === 0) return;
+        let active = true;
+        setImage(null);
+        void MediaLibrary.getAssetInfoAsync(photo.assetId).then(info => {
+            const uri = info?.localUri || info?.uri || '';
+            if (active) setImage({ uri, failed: !uri });
+        }).catch(() => {
+            if (active) setImage({ uri: '', failed: true });
+        });
+        return () => { active = false; };
+    }, [photo.assetId, attempt]);
+
+    if (!image) return <ActivityIndicator size="large" color={colors.primary} />;
+    if (image.failed) return (
+        <View style={styles.readState}>
+            <Text accessibilityRole="alert" style={[styles.readMessage, { color: colors.textSecondary }]}>{t('scan_photo_unavailable')}</Text>
+            <Pressable accessibilityRole="button" onPress={() => setAttempt(value => value + 1)} style={[styles.retryButton, { backgroundColor: colors.actionBackground }]}>
+                <Text style={[styles.retryText, { color: colors.actionForeground }]}>{t('retry')}</Text>
+            </Pressable>
+        </View>
+    );
+    const uri = image.uri;
+    return <Image accessible accessibilityRole="image" accessibilityLabel={t('photo_detail_title')}
+        source={{ uri }} style={styles.previewImage} resizeMode="contain"
+        onError={() => setImage(previous => previous?.uri === uri ? { ...previous, failed: true } : previous)} />;
+}
+
 const styles = StyleSheet.create({
+    readState: { alignItems: 'center', paddingHorizontal: UI_METRICS.pageInset, paddingVertical: 24, gap: 20 },
+    readMessage: { ...TYPOGRAPHY.body, textAlign: 'center' },
+    retryButton: { minHeight: UI_METRICS.buttonHeight, borderRadius: UI_METRICS.buttonRadius, paddingHorizontal: 24, paddingVertical: 14, justifyContent: 'center', alignItems: 'center' },
+    retryText: { ...TYPOGRAPHY.button },
     container: {
         zIndex: 1000,
     },

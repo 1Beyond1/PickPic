@@ -46,6 +46,68 @@ beforeEach(() => {
   (MediaLibrary.deleteAssetsAsync as jest.Mock).mockResolvedValue(false);
 });
 
+it.each(['rejected', 'no-uri'])('explains %s group members and retries without completing or deleting the group', async failure => {
+  if (failure === 'rejected') (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValue(new Error('Provider unavailable'));
+  else (MediaLibrary.getAssetInfoAsync as jest.Mock).mockResolvedValue({});
+  render(<SimilarGroupDetailOverlay {...props} />);
+  await screen.findByText('photos_load_failed');
+  expect(screen.queryByRole('button', { name: 'similar_delete_selected' })).toBeNull();
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));
+  fireEvent.press(screen.getByRole('button', { name: 'retry' }));
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
+  expect(screen.queryByText('photos_load_failed')).toBeNull();
+  expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+  expect(mockRemoveDeletedAssets).not.toHaveBeenCalled();
+  expect(props.onComplete).not.toHaveBeenCalled();
+});
+
+it('offers a preview retry when decoding fails without changing selection or deleting', async () => {
+  render(<SimilarGroupDetailOverlay {...props} />);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
+  fireEvent.press(screen.getAllByRole('button', { name: 'similar_photo' })[0]);
+  const preview = screen.getByTestId('similar-preview');
+  fireEvent(within(preview).getByRole('image'), 'error', { nativeEvent: { error: 'Decoder unavailable' } });
+  expect(within(preview).getByText('scan_photo_unavailable')).toBeTruthy();
+  fireEvent.press(within(preview).getByRole('button', { name: 'retry' }));
+  await waitFor(() => expect(within(screen.getByTestId('similar-preview')).getByRole('image')).toBeTruthy());
+  expect(screen.UNSAFE_getByType(FlatList).props.data).toHaveLength(2);
+  expect(screen.queryByRole('button', { name: 'similar_delete_selected' })).toBeNull();
+  expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+  expect(props.onComplete).not.toHaveBeenCalled();
+});
+
+it('keeps available members and explains partial failure without treating the group as completed', async () => {
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValueOnce(new Error('Member unavailable'));
+  render(<SimilarGroupDetailOverlay {...props} />);
+  await screen.findByText('similar_unavailable_count');
+  expect(screen.UNSAFE_getByType(FlatList).props.data.map((photo: { assetId: string }) => photo.assetId)).toEqual(['second']);
+  expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+  expect(props.onComplete).not.toHaveBeenCalled();
+});
+
+it('cannot publish a failed old lookup or preview retry after its group has been closed', async () => {
+  let rejectOld!: (error: Error) => void;
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockReturnValueOnce(new Promise((_, reject) => { rejectOld = reject; }));
+  const view = render(<SimilarGroupDetailOverlay {...props} />);
+  view.rerender(<SimilarGroupDetailOverlay {...props} visible={false} />);
+  const newMembers = ['new-photo'];
+  view.rerender(<SimilarGroupDetailOverlay {...props} groupId="new-group" memberAssetIds={newMembers} />);
+  await waitFor(() => expect(screen.UNSAFE_getByType(FlatList).props.data).toHaveLength(1));
+  await act(async () => { rejectOld(new Error('Old lookup failed')); });
+  expect(screen.queryByText('scan_photo_unavailable')).toBeNull();
+  expect(screen.queryByText('similar_unavailable_count')).toBeNull();
+  fireEvent.press(screen.getByRole('button', { name: 'similar_photo' }));
+  fireEvent(within(screen.getByTestId('similar-preview')).getByRole('image'), 'error');
+  let resolveRetry!: (info: { uri: string }) => void;
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockReturnValueOnce(new Promise(resolve => { resolveRetry = resolve; }));
+  fireEvent.press(screen.getByRole('button', { name: 'retry' }));
+  fireEvent.press(within(screen.getByTestId('similar-preview')).getByRole('button', { name: 'close' }));
+  await act(async () => { resolveRetry({ uri: 'file:///recovered.jpg' }); });
+  expect(screen.queryByTestId('similar-preview')).toBeNull();
+  expect(screen.UNSAFE_getByType(FlatList).props.data.map((photo: { assetId: string }) => photo.assetId)).toEqual(['new-photo']);
+  expect(props.onComplete).not.toHaveBeenCalled();
+});
+
 it.each([0, 24])('reserves the dock and safe area outside the grid (bottom inset %s)', async bottom => {
   mockBottomInset = bottom;
   render(<SimilarGroupDetailOverlay {...props} />);
