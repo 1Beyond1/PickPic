@@ -49,8 +49,9 @@ function page(assets: MediaLibrary.Asset[], hasNextPage = false, endCursor = '')
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 describe('AIScanner engine safety', () => {
@@ -222,6 +223,61 @@ describe('AIScanner engine safety', () => {
     expect(ops.resizeToGray256).not.toHaveBeenCalled();
     expect(onComplete).not.toHaveBeenCalled();
     expect((await AssetRepository.getById('one'))?.status).toBe(AssetStatus.PENDING);
+  });
+
+  it('finishes an in-flight ML asset after stop without starting another asset, and can resume', async () => {
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true });
+    const pendingLabels = deferred<Awaited<ReturnType<typeof MLKitService.labelImage>>>();
+    ml.labelImage.mockReturnValueOnce(pendingLabels.promise);
+    const onComplete = jest.fn();
+    const pendingRun = start({ onComplete });
+    try {
+      await waitFor(() => expect(ml.labelImage).toHaveBeenCalledTimes(1));
+      stop();
+      await resumeOnce({ mode: 'count', count: 1 });
+      expect(isScanning()).toBe(true);
+      expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(1);
+      expect(onComplete).not.toHaveBeenCalled();
+    } finally {
+      pendingLabels.resolve([{ text: 'Cat', confidence: 0.9 }]);
+      await pendingRun;
+    }
+    expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(1);
+    expect(ml.labelImage).toHaveBeenCalledTimes(1);
+    expect(fs.deleteAsync).toHaveBeenCalledWith('file:///test-crop.jpg', { idempotent: true });
+    expect(ops.dispose).toHaveBeenCalledTimes(1);
+    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 1, pending: 1, error: 0 });
+    expect(useScannerStore.getState()).toMatchObject({ isRunning: false, isFinalizing: false });
+    expect(onComplete).not.toHaveBeenCalled();
+
+    await resumeOnce({ mode: 'count', count: 1 }, { onComplete });
+    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 2, pending: 0, error: 0 });
+    expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(2);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a failed in-flight ML asset for retry after stop without consuming the remaining queue', async () => {
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true });
+    const pendingLabels = deferred<Awaited<ReturnType<typeof MLKitService.labelImage>>>();
+    ml.labelImage.mockReturnValueOnce(pendingLabels.promise);
+    const onComplete = jest.fn();
+    const pendingRun = start({ onComplete });
+    try {
+      await waitFor(() => expect(ml.labelImage).toHaveBeenCalledTimes(1));
+      stop();
+    } finally {
+      // Use an independently controlled promise to model a native timeout.
+      // No real ML accuracy or platform timeout behavior is claimed here.
+      pendingLabels.reject(new Error('Native ML timed out'));
+      await pendingRun;
+    }
+    expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(1);
+    expect(fs.deleteAsync).toHaveBeenCalledTimes(1);
+    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 0, pending: 1, error: 1 });
+    expect(onComplete).not.toHaveBeenCalled();
+    expect(isScanning()).toBe(false);
+    await resumeOnce({ mode: 'count', count: 2 });
+    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 2, pending: 0, error: 0 });
   });
 
   it('bounds explicit retry to one selected candidate, preserving other outdated results', async () => {

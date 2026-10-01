@@ -61,6 +61,13 @@ const expectNoReset = () => {
   expect(mockScanner.resetScan).not.toHaveBeenCalled();
 };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   Object.assign(mockSettings, { theme: 'light', language: 'zh', displayOrder: 'random', hasHydrated: true, enableAIClassification: false });
   Object.assign(mockMedia, { isConfirmingDeletion: false, isConfirmingVideoTrash: false });
@@ -229,5 +236,37 @@ it('does not expose preference controls or overwrite settings before hydration',
   expect(screen.queryByRole('radio')).toBeNull();
   expect(mockSettings.setTheme).not.toHaveBeenCalled();
   expect(mockSettings.setLanguage).not.toHaveBeenCalled();
+  expectNoReset();
+});
+
+it('does not let an old full-access progress response overwrite a newer permission snapshot', async () => {
+  const oldCounts = deferred<{ photos: number; videos: number }>();
+  mockMedia.getVisibleProcessedCounts.mockReturnValueOnce(oldCounts.promise)
+    .mockResolvedValueOnce({ photos: 1, videos: 0 });
+  const view = render(<SettingsScreen />);
+  await waitFor(() => expect(mockMedia.getVisibleProcessedCounts).toHaveBeenCalledTimes(1));
+  openData();
+  mockMedia.mediaLibraryRefreshVersion += 1;
+  view.rerender(<SettingsScreen />);
+  await screen.findByText('已整理: 1 张 / 共 7 张');
+  await act(async () => { oldCounts.resolve({ photos: 7, videos: 3 }); });
+  expect(screen.getByText('已整理: 1 张 / 共 7 张')).toBeTruthy();
+  expect(screen.getByText('已整理: 0 个 / 共 3 个')).toBeTruthy();
+  expectNoReset();
+});
+
+it('clears stale visible progress after a media read failure and recovers on the next refresh', async () => {
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  const view = render(<SettingsScreen />);
+  openData();
+  await screen.findByText('已整理: 2 张 / 共 7 张');
+  mockMedia.getVisibleProcessedCounts.mockRejectedValueOnce(new Error('Permission read failed'));
+  mockMedia.mediaLibraryRefreshVersion += 1;
+  view.rerender(<SettingsScreen />);
+  await screen.findByText('已整理: 0 张 / 共 7 张');
+  expectNoReset();
+  mockMedia.mediaLibraryRefreshVersion += 1;
+  view.rerender(<SettingsScreen />);
+  await screen.findByText('已整理: 2 张 / 共 7 张');
   expectNoReset();
 });
