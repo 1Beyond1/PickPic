@@ -60,7 +60,7 @@ jest.mock('@expo/vector-icons', () => ({
 }));
 
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import { Platform } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { VideoFeedItem } from '../../components/VideoFeedItem';
 
 const video = {
@@ -191,5 +191,33 @@ describe('VideoFeedItem with expo-video', () => {
     expect(mockPlayer.play).toHaveBeenCalledTimes(2);
     fireEvent.press(screen.getByRole('button', { name: 'video_fullscreen' }));
     await waitFor(() => expect(mockEnterFullscreen).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([
+    { background: '#F7F8F7', text: '#1B211D', textSecondary: '#626B64', danger: '#A23E35', selectionBackground: '#E2E8E2' },
+    { background: '#111212', text: '#F1F2EF', textSecondary: '#B1B8B0', danger: '#EAB0A4', selectionBackground: '#282D29' },
+  ])('keeps the action rail unframed and separate from video in palette $background', colors => {
+    const screen = renderVideo({ colors });
+    const playerStyle = StyleSheet.flatten(screen.getByRole('button', { name: 'video_pause' }).props.style);
+    expect(playerStyle.marginRight).toBeGreaterThanOrEqual(64);
+    for (const name of ['video_sound', 'video_favorite', 'video_share', 'video_queue_delete']) {
+      const buttonStyle = StyleSheet.flatten(screen.getByRole('button', { name }).props.style);
+      const labelStyle = StyleSheet.flatten(screen.getByText(name).props.style);
+      expect(buttonStyle.minHeight).toBeGreaterThanOrEqual(44);
+      expect(buttonStyle.minWidth).toBeGreaterThanOrEqual(44);
+      expect(buttonStyle.backgroundColor).toBe('transparent');
+      expect(labelStyle.backgroundColor).toBeUndefined();
+      expect(labelStyle.color).toBe(name === 'video_queue_delete' ? colors.danger : colors.textSecondary);
+    }
+  });
+
+  it('retains named touch targets in a short viewport without overlaying the video', () => {
+    const screen = renderVideo({ itemHeight: 260 });
+    expect(screen.queryByText('video_favorite')).toBeNull();
+    const style = StyleSheet.flatten(screen.getByRole('button', { name: 'video_pause' }).props.style);
+    expect(style.marginBottom).toBeGreaterThanOrEqual(100);
+    expect(screen.getByRole('button', { name: 'video_favorite' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'video_share' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'video_queue_delete' })).toBeTruthy();
   });
 });

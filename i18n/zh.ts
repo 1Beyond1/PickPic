@@ -57,7 +57,7 @@ export default {
     video_location_unknown: '未知位置',
     video_last_item: '这是最后一个视频',
     video_organize: '整理视频',
-    video_swipe_hint: '上滑下一条 · 下滑查看上一条',
+    video_swipe_hint: '上滑继续 · 下滑回看',
     video_swipe_back_hint: '下滑可查看上一条',
     video_fullscreen: '全屏查看视频',
     video_fullscreen_hint: '轻点暂停 · 长按全屏',

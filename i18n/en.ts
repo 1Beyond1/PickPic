@@ -57,7 +57,7 @@ export default {
     video_location_unknown: 'Unknown Location',
     video_last_item: 'This is the last video',
     video_organize: 'Review videos',
-    video_swipe_hint: 'Swipe up for next · Swipe down to revisit',
+    video_swipe_hint: 'Swipe up to continue · Down to revisit',
     video_swipe_back_hint: 'Swipe down to revisit the previous video',
     video_fullscreen: 'View video fullscreen',
     video_fullscreen_hint: 'Tap to pause · Hold for fullscreen',

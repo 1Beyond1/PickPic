@@ -251,7 +251,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
         <View style={[styles.container, { backgroundColor: colors.background, height: itemHeight }]}>
             <Pressable
                 onLongPress={handleLongPress}
-                style={[styles.videoWrapper, { backgroundColor: colors.background }]}
+                style={[styles.videoWrapper, compact && styles.compactVideoWrapper, { backgroundColor: colors.background }]}
                 accessibilityRole="button"
                 accessibilityLabel={t(isPaused ? 'video_resume' : 'video_pause')}
                 accessibilityHint={t('video_player_hint')}
@@ -292,10 +292,10 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                 onPress={handleLongPress}
                 disabled={!playbackUri}
             >
-                <Ionicons name="expand-outline" size={20} color={COLORS.white} />
+                <Ionicons name="expand-outline" size={18} color={colors.textSecondary} />
             </Pressable>
 
-            <View pointerEvents="none" style={[styles.metadata, { backgroundColor: colors.surface }]}>
+            <View pointerEvents="none" style={styles.metadata}>
                 <Text style={[styles.timeText, { color: colors.textSecondary }]}>{dateString}</Text>
                 {duration > 0 && <Text style={[styles.timeText, { color: colors.textSecondary }]}>{durationString}</Text>}
             </View>
@@ -309,13 +309,14 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                         accessibilityHint={'destructive' in action ? t('video_queue_delete_hint') : undefined}
                         onPress={action.onPress}
                         style={({ pressed }) => [styles.actionButton, {
-                            opacity: pressed ? 0.6 : 1,
+                            backgroundColor: pressed ? colors.selectionBackground : 'transparent',
+                            opacity: pressed ? 0.7 : 1,
                         }]}
                     >
-                        <View style={[styles.actionIcon, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                            <Ionicons name={action.icon} size={24} color={'destructive' in action ? colors.danger : colors.text} />
+                        <View style={styles.actionIcon}>
+                            <Ionicons name={action.icon} size={26} color={'destructive' in action ? colors.danger : colors.text} />
                         </View>
-                        {!compact && <Text style={[styles.actionText, { backgroundColor: colors.surface, color: 'destructive' in action ? colors.danger : colors.text }]}>{action.label}</Text>}
+                        {!compact && <Text style={[styles.actionText, { color: 'destructive' in action ? colors.danger : colors.textSecondary }]}>{action.label}</Text>}
                     </Pressable>
                 ))}
             </View>
@@ -339,6 +340,16 @@ const styles = StyleSheet.create({
     },
     videoWrapper: {
         flex: 1,
+        marginLeft: 16,
+        marginRight: 76,
+        marginTop: 8,
+        marginBottom: 48,
+        borderRadius: 12,
+        overflow: 'hidden',
+    },
+    compactVideoWrapper: {
+        marginRight: 16,
+        marginBottom: 104,
     },
     video: {
         width: '100%',
@@ -371,66 +382,59 @@ const styles = StyleSheet.create({
     },
     metadata: {
         position: 'absolute',
-        left: 16,
-        bottom: 16,
-        maxWidth: '75%',
+        left: 20,
+        bottom: 14,
+        right: 124,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
-        paddingVertical: 8,
-        paddingHorizontal: 10,
-        borderRadius: 10,
+        gap: 10,
     },
     timeText: {
-        fontSize: 12,
+        fontSize: 11,
         flexShrink: 1,
         fontVariant: ['tabular-nums'],
     },
     fullscreenHint: {
         position: 'absolute',
-        bottom: 12,
-        right: 12,
+        bottom: 2,
+        right: 76,
         width: 44,
         height: 44,
-        borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'rgba(0,0,0,0.55)',
     },
     pauseOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
     pauseIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)' },
     actions: {
         position: 'absolute',
-        right: 12,
-        bottom: 76,
-        gap: 12,
+        right: 8,
+        bottom: 68,
+        gap: 10,
     },
     compactActions: {
         flexDirection: 'row',
-        bottom: 60,
+        bottom: 50,
         gap: 8,
     },
     actionButton: {
         minWidth: 56,
-        minHeight: 48,
+        minHeight: 64,
+        paddingHorizontal: 4,
+        paddingVertical: 6,
+        borderRadius: 12,
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 5,
+        gap: 4,
     },
     actionIcon: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        borderWidth: StyleSheet.hairlineWidth,
+        width: 32,
+        height: 32,
         alignItems: 'center',
         justifyContent: 'center',
     },
     actionText: {
-        fontSize: 12,
-        fontWeight: '500',
+        fontSize: 11,
+        fontWeight: '400',
         textAlign: 'center',
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 6,
     }
 });

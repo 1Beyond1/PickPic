@@ -428,7 +428,7 @@ export default function VideosScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={`${t('video_trash_title')} · ${visibleVideoTrashBin.length}`}
                     onPress={() => setShowTrash(true)}
-                    style={({ pressed }) => [styles.trashIcon, { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.6 : 1 }]}
+                    style={({ pressed }) => [styles.trashIcon, { backgroundColor: pressed ? colors.selectionBackground : 'transparent', opacity: pressed ? 0.6 : 1 }]}
                 >
                     <Ionicons name="trash-bin-outline" size={20} color={colors.text} />
                     <Text style={[styles.trashCount, { color: visibleVideoTrashBin.length ? colors.danger : colors.textSecondary }]}>
@@ -510,11 +510,8 @@ export default function VideosScreen() {
             </View>
             {videos.length > 0 && !isLoading && (
                 <View style={styles.feedHint} pointerEvents="none">
-                    <Text style={[styles.feedHintText, { color: isAtEnd ? colors.text : colors.textSecondary }]}>
+                    <Text numberOfLines={1} style={[styles.feedHintText, { color: colors.textSecondary }]}>
                         {isAtEnd ? t('video_last_item') : t('video_swipe_hint')}
-                    </Text>
-                    <Text style={[styles.feedHintText, { color: colors.textSecondary }]}>
-                        {isAtEnd && videos.length > 1 ? t('video_swipe_back_hint') : t('video_fullscreen_hint')}
                     </Text>
                 </View>
             )}
@@ -626,14 +623,14 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         gap: 12,
         paddingHorizontal: 20,
-        paddingVertical: 12,
+        paddingVertical: 6,
     },
-    heading: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: 12 },
-    pageTitle: { fontSize: 24, fontWeight: '600', flexShrink: 1 },
-    pageCount: { fontSize: 13, fontVariant: ['tabular-nums'] },
+    heading: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: 10 },
+    pageTitle: { fontSize: 17, fontWeight: '500', flexShrink: 1 },
+    pageCount: { fontSize: 12, fontVariant: ['tabular-nums'] },
     feedViewport: { flex: 1 },
-    feedHint: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 10, gap: 4, minHeight: 44 },
-    feedHintText: { fontSize: 12, textAlign: 'center' },
+    feedHint: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 8, minHeight: 34 },
+    feedHintText: { fontSize: 11, textAlign: 'center' },
     scopeHint: { fontSize: 13, lineHeight: 20, textAlign: 'center', marginHorizontal: 32, marginBottom: 20 },
     centerContainer: {
         flex: 1,
@@ -654,20 +651,19 @@ const styles = StyleSheet.create({
         fontWeight: 'bold'
     },
     trashIcon: {
-        minWidth: 72,
+        minWidth: 56,
         minHeight: 44,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        borderRadius: 16,
-        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 8,
+        paddingVertical: 8,
+        borderRadius: 12,
         flexDirection: 'row',
-        gap: 8,
+        gap: 6,
         alignItems: 'center',
         justifyContent: 'center',
     },
     trashCount: {
-        fontSize: 13,
-        fontWeight: '600',
+        fontSize: 12,
+        fontWeight: '500',
         fontVariant: ['tabular-nums'],
     },
     trashBackdrop: { flex: 1, justifyContent: 'flex-end', paddingHorizontal: 16 },
