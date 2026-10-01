@@ -27,7 +27,7 @@ export default function PhotosScreen() {
     const { colors, isDark } = useThemeColor();
 
     const {
-        photos, albums, loadPhotos, isLoading, hasHydrated,
+        photos, albums, loadPhotos, isLoading, photoLoadFailed, hasHydrated,
         photoProcessedIds,
         markForDeletion, markAsSkipped,
         confirmDeletion, deleteQueue, resetBatch, isConfirmingDeletion,
@@ -360,9 +360,10 @@ export default function PhotosScreen() {
         const hasLimitedPhotoAccess = permissionScope === 'limited';
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                <Text style={[styles.emptyText, { color: colors.text }]}>
-                    {hasLimitedPhotoAccess ? t('photos_limited_access_desc') : t('photos_empty')}
+                <Text accessibilityRole={photoLoadFailed ? 'alert' : undefined} style={[styles.emptyText, { color: colors.text }]}>
+                    {photoLoadFailed ? t('photos_load_failed') : hasLimitedPhotoAccess ? t('photos_limited_access_desc') : t('photos_empty')}
                 </Text>
+                {photoLoadFailed && <Text style={[styles.readErrorDescription, { color: colors.textSecondary }]}>{t('media_load_retry_desc')}</Text>}
                 {hasLimitedPhotoAccess && (
                     <Pressable
                         onPress={handleManagePhotoAccess}
@@ -375,6 +376,7 @@ export default function PhotosScreen() {
                     </Pressable>
                 )}
                 <Pressable
+                    accessibilityRole="button"
                     onPress={() => loadPhotos(groupSize, displayOrder, selectedAlbumIds)}
                     disabled={managingPhotoAccess}
                     style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: managingPhotoAccess ? 0.6 : 1, marginTop: hasLimitedPhotoAccess ? 10 : 0 }]}
@@ -413,7 +415,7 @@ export default function PhotosScreen() {
                         <View style={styles.homeCountRow}>
                             <Text style={[styles.homeScope, { color: colors.textSecondary }]}>{t('photos_home_scope')}</Text>
                             <View style={styles.homeCountSummary}>
-                                <Text style={[styles.homeCount, { color: colors.text }]}>{visiblePhotos.length}</Text>
+                                <Text style={[styles.homeCount, { color: colors.text }]}>{photoLoadFailed ? '—' : visiblePhotos.length}</Text>
                                 <Text style={[styles.homeCountLabel, { color: colors.textSecondary }]}>{t('photos_home_pending')}</Text>
                             </View>
                         </View>
@@ -430,9 +432,10 @@ export default function PhotosScreen() {
                                 </View>
                             )}
                         </View> : <View style={styles.homeEmpty}>
-                            <Text style={{ color: colors.textSecondary, textAlign: 'center', fontSize: 15, lineHeight: 22 }}>
-                                {t(permissionScope === 'limited' ? 'photos_limited_access_desc' : 'photos_empty')}
+                            <Text accessibilityRole={photoLoadFailed ? 'alert' : undefined} style={[{ color: colors.textSecondary, textAlign: 'center', fontSize: 15, lineHeight: 22 }, photoLoadFailed && styles.readErrorTitle]}>
+                                {t(photoLoadFailed ? 'photos_load_failed' : permissionScope === 'limited' ? 'photos_limited_access_desc' : 'photos_empty')}
                             </Text>
+                            {photoLoadFailed && <Text style={[styles.readErrorDescription, { color: colors.textSecondary }]}>{t('media_load_retry_desc')}</Text>}
                             {permissionScope === 'limited' && (
                                 <Pressable
                                     accessibilityRole="button"
@@ -721,6 +724,8 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
+    readErrorTitle: { ...TYPOGRAPHY.sectionTitle, marginBottom: 12 },
+    readErrorDescription: { ...TYPOGRAPHY.body, textAlign: 'center', marginHorizontal: UI_METRICS.pageInset, marginBottom: 20 },
     centerContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -869,12 +874,15 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     actionButton: {
-        paddingHorizontal: 40,
-        paddingVertical: 15,
-        borderRadius: BORDER_RADIUS.full
+        minHeight: UI_METRICS.buttonHeight,
+        paddingHorizontal: 24,
+        paddingVertical: 14,
+        borderRadius: UI_METRICS.buttonRadius,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     actionButtonText: {
-        fontWeight: 'bold'
+        ...TYPOGRAPHY.button
     },
     modal: {
         position: 'absolute',

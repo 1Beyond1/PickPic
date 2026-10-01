@@ -14,6 +14,7 @@ const mockMediaState = {
   loadPhotos: mockLoadPhotos,
   loadAlbums: mockLoadAlbums,
   isLoading: false,
+  photoLoadFailed: false,
   hasHydrated: true,
   photoProcessedIds: [] as string[],
   markForDeletion: jest.fn(),
@@ -92,6 +93,7 @@ describe('PhotosScreen visual entry', () => {
   beforeEach(() => {
     mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
     mockMediaState.photos = [mockPhoto('one'), mockPhoto('two'), mockPhoto('three')];
+    mockMediaState.photoLoadFailed = false;
     mockMediaState.photoProcessedIds = [];
     mockMediaState.deleteQueue = [];
     mockMediaState.permissionScope = 'full';
@@ -100,6 +102,33 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.mediaLibraryRefreshVersion = 0;
     jest.clearAllMocks();
     mockCardSizes.clear();
+  });
+
+  it('distinguishes a failed photo read from an empty library and retries without changing decisions', () => {
+    mockMediaState.photos = [];
+    mockMediaState.photoLoadFailed = true;
+    render(<PhotosScreen />);
+    expect(screen.getByRole('alert').props.children).toBe('photos_load_failed');
+    expect(screen.queryByText('photos_empty')).toBeNull();
+    expect(screen.queryByText('0')).toBeNull();
+    mockLoadPhotos.mockClear();
+    fireEvent.press(screen.getByRole('button', { name: 'photos_reload' }));
+    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', []);
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
+  });
+
+  it('keeps a restored deletion queue reachable even if reading the next photo batch failed', () => {
+    mockMediaState.photos = [];
+    mockMediaState.photoLoadFailed = true;
+    mockMediaState.deleteQueue = [mockPhoto('pending')];
+    mockMediaState.photoProcessedIds = ['pending'];
+    render(<PhotosScreen />);
+    expect(screen.getByTestId('photo-review')).toBeTruthy();
+    expect(screen.getByText('photos_review_title')).toBeTruthy();
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
   });
 
   it('shows the real current batch count, then opens the existing photo deck', () => {

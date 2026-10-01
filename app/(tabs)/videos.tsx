@@ -23,7 +23,7 @@ export default function VideosScreen() {
     const { colors } = useThemeColor();
 
     const {
-        videos, loadVideos, isLoading, hasHydrated,
+        videos, loadVideos, isLoading, videoLoadFailed, hasHydrated,
         markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
         isConfirmingVideoTrash,
         addAssetToAlbum, hiddenVideoQueuedAssetIds, mediaLibraryRefreshVersion,
@@ -483,10 +483,11 @@ export default function VideosScreen() {
                 />
             ) : videos.length === 0 ? (
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                    <Text style={[styles.emptyText, { color: colors.text }]}>
-                        {hasLimitedVideoAccess ? t('video_permission_desc') : t('video_empty')}
+                    <Text accessibilityRole={videoLoadFailed ? 'alert' : undefined} style={[styles.emptyText, { color: colors.text }]}>
+                        {videoLoadFailed ? t('video_load_failed') : hasLimitedVideoAccess ? t('video_permission_desc') : t('video_empty')}
                     </Text>
-                    {selectedAlbumIds.length > 0 && (
+                    {videoLoadFailed && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('media_load_retry_desc')}</Text>}
+                    {selectedAlbumIds.length > 0 && !videoLoadFailed && (
                         <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('video_filtered_empty_hint')}</Text>
                     )}
                     {hasLimitedVideoAccess && (
@@ -501,6 +502,7 @@ export default function VideosScreen() {
                         </Pressable>
                     )}
                     <Pressable
+                        accessibilityRole="button"
                         onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)}
                         disabled={requestingVideoPermission}
                         style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: requestingVideoPermission ? 0.6 : 1, marginTop: hasLimitedVideoAccess ? 10 : 0 }]}
@@ -640,12 +642,15 @@ const styles = StyleSheet.create({
     },
     actionButton: {
         backgroundColor: COLORS.primary,
-        paddingHorizontal: 40,
-        paddingVertical: 15,
-        borderRadius: BORDER_RADIUS.full
+        minHeight: UI_METRICS.buttonHeight,
+        paddingHorizontal: 24,
+        paddingVertical: 14,
+        borderRadius: UI_METRICS.buttonRadius,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     actionButtonText: {
-        fontWeight: 'bold'
+        ...TYPOGRAPHY.button
     },
     trashIcon: {
         minWidth: 56,

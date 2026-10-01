@@ -29,6 +29,7 @@ const mockMediaState = {
   videos: [videoOne, videoTwo],
   loadVideos: mockLoadVideos,
   isLoading: false,
+  videoLoadFailed: false,
   hasHydrated: true,
   videoProcessedIds: [],
   markVideoForTrash: jest.fn(),
@@ -124,6 +125,7 @@ describe('VideosScreen processing behavior', () => {
 
   beforeEach(() => {
     mockMediaState.videos = [videoOne, videoTwo];
+    mockMediaState.videoLoadFailed = false;
     mockMediaState.videoTrashBin = [];
     mockMediaState.isConfirmingVideoTrash = false;
     mockMediaState.hiddenVideoQueuedAssetIds = null;
@@ -138,6 +140,22 @@ describe('VideosScreen processing behavior', () => {
       accessPrivileges: 'all',
       canAskAgain: true,
     });
+  });
+
+  it('distinguishes a failed video read from no videos and retains the pending review entry', async () => {
+    mockMediaState.videos = [];
+    mockMediaState.videoLoadFailed = true;
+    mockMediaState.videoTrashBin = [videoOne];
+    const screen = await renderScreen();
+    expect(screen.getByRole('alert').props.children).toBe('video_load_failed');
+    expect(screen.queryByText('video_empty')).toBeNull();
+    mockLoadVideos.mockClear();
+    fireEvent.press(screen.getByRole('button', { name: 'photos_reload' }));
+    expect(mockLoadVideos).toHaveBeenCalledWith(50, 'random', []);
+    fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+    expect(screen.getByRole('button', { name: 'video_restore · video-1' })).toBeTruthy();
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    expect(mockMediaState.confirmVideoTrash).not.toHaveBeenCalled();
   });
 
   it('does not mark the current video when leaving the tab', async () => {

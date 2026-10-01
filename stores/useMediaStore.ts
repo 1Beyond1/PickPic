@@ -112,6 +112,8 @@ interface MediaState {
     totalVideos: number;
 
     isLoading: boolean;
+    photoLoadFailed: boolean;
+    videoLoadFailed: boolean;
     isConfirmingDeletion: boolean;
     isConfirmingVideoTrash: boolean;
     hasPermission: boolean;
@@ -503,6 +505,8 @@ export const useMediaStore = create<MediaState>()(
     videoTrashBin: [],
 
     isLoading: false,
+    photoLoadFailed: false,
+    videoLoadFailed: false,
     isConfirmingDeletion: false,
     isConfirmingVideoTrash: false,
     hasPermission: false,
@@ -646,7 +650,7 @@ export const useMediaStore = create<MediaState>()(
         // Do not keep showing a batch that belongs to a previous filter while
         // the current request is loading or if it fails. The old batch could
         // otherwise make out-of-scope media appear actionable.
-        set({ isLoading: true, photos: [], currentIndex: 0 });
+        set({ isLoading: true, photos: [], currentIndex: 0, photoLoadFailed: false });
         try {
             const { photoProcessedIds } = get();
 
@@ -683,6 +687,8 @@ export const useMediaStore = create<MediaState>()(
             });
         } catch (error) {
             console.error("Failed to load photos", error);
+            // Only the current request owns feedback, just as it owns the list.
+            set((state) => requestId === photoLoadRequestId ? { photoLoadFailed: true } : state);
         } finally {
             activeMediaLoads--;
             if (activeMediaLoads === 0) set({ isLoading: false });
@@ -695,7 +701,7 @@ export const useMediaStore = create<MediaState>()(
         // Do not keep showing a batch that belongs to a previous filter while
         // the current request is loading or if it fails. The old batch could
         // otherwise make out-of-scope media appear actionable.
-        set({ isLoading: true, videos: [] });
+        set({ isLoading: true, videos: [], videoLoadFailed: false });
         try {
             const permission = await MediaLibrary.getPermissionsAsync(false, ['video']);
             if (!permission.granted) {
@@ -735,6 +741,7 @@ export const useMediaStore = create<MediaState>()(
             });
         } catch (error) {
             console.error("Failed to load videos", error);
+            set((state) => requestId === videoLoadRequestId ? { videoLoadFailed: true } : state);
         } finally {
             activeMediaLoads--;
             if (activeMediaLoads === 0) set({ isLoading: false });

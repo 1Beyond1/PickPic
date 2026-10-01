@@ -64,6 +64,8 @@ describe('media visibility checks', () => {
       totalPhotos: 0,
       totalVideos: 0,
       isLoading: false,
+      photoLoadFailed: false,
+      videoLoadFailed: false,
       isConfirmingDeletion: false,
       isConfirmingVideoTrash: false,
       hasPermission: true,
@@ -71,6 +73,46 @@ describe('media visibility checks', () => {
       hiddenPhotoQueuedAssetIds: null,
       hiddenVideoQueuedAssetIds: null,
     });
+  });
+
+  it.each(['photo', 'video'] as const)('exposes a recoverable %s read failure without changing queued decisions', async mediaType => {
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const listKey = mediaType === 'photo' ? 'photos' : 'videos';
+    const queueKey = mediaType === 'photo' ? 'deleteQueue' : 'videoTrashBin';
+    const progressKey = mediaType === 'photo' ? 'photoProcessedIds' : 'videoProcessedIds';
+    const errorKey = mediaType === 'photo' ? 'photoLoadFailed' : 'videoLoadFailed';
+    const queued = { id: 'queued', mediaType } as any;
+    useMediaStore.setState({ [queueKey]: [queued], [progressKey]: ['queued'] });
+    getAssetsAsync.mockRejectedValueOnce(new Error('Media provider unavailable'));
+    try {
+      await useMediaStore.getState()[mediaType === 'photo' ? 'loadPhotos' : 'loadVideos'](10);
+      expect(useMediaStore.getState()[errorKey]).toBe(true);
+      expect(useMediaStore.getState()[listKey]).toEqual([]);
+      expect(useMediaStore.getState().isLoading).toBe(false);
+      expect(useMediaStore.getState()[queueKey]).toEqual([queued]);
+      expect(useMediaStore.getState()[progressKey]).toEqual(['queued']);
+      await useMediaStore.getState()[mediaType === 'photo' ? 'loadPhotos' : 'loadVideos'](10);
+      expect(useMediaStore.getState()[errorKey]).toBe(false);
+      expect(useMediaStore.getState()[queueKey]).toEqual([queued]);
+    } finally { errorLog.mockRestore(); }
+  });
+
+  it.each(['photo', 'video'] as const)('does not let a stale %s rejection replace newer successful feedback', async mediaType => {
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const load = useMediaStore.getState()[mediaType === 'photo' ? 'loadPhotos' : 'loadVideos'];
+    const errorKey = mediaType === 'photo' ? 'photoLoadFailed' : 'videoLoadFailed';
+    let rejectOld!: (error: Error) => void;
+    getAssetsAsync.mockImplementationOnce(() => new Promise((_, reject) => { rejectOld = reject; }));
+    try {
+      const oldLoad = load(10);
+      await waitFor(() => expect(rejectOld).toBeDefined());
+      await load(10);
+      expect(useMediaStore.getState()[errorKey]).toBe(false);
+      rejectOld(new Error('Old provider request failed'));
+      await oldLoad;
+      expect(useMediaStore.getState()[errorKey]).toBe(false);
+      expect(useMediaStore.getState().isLoading).toBe(false);
+    } finally { errorLog.mockRestore(); }
   });
 
   it('uses asset-level visibility instead of trusting a limited global grant', async () => {
