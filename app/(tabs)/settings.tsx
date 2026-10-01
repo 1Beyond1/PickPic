@@ -1,7 +1,7 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -9,7 +9,7 @@ import { ScanBatchModal } from '../../components/ScanBatchModal';
 import { SegmentedControl } from '../../components/SegmentedControl';
 import { SettingsRow } from '../../components/SettingsRow';
 import { SettingsChoiceSheet } from '../../components/SettingsChoiceSheet';
-import { SPACING } from '../../constants/theme';
+import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 
 import { useAIScanner } from '../../hooks/useAIScanner';
 import { useI18n } from '../../hooks/useI18n';
@@ -42,6 +42,8 @@ const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [
 
 export default function SettingsScreen() {
     const insets = useSafeAreaInsets();
+    const { width, fontScale } = useWindowDimensions();
+    const compactStats = width < 360 || fontScale >= 1.3;
     const { t } = useI18n();
     const { colors, isDark } = useThemeColor();
     const fonts = undefined; // Custom fonts feature removed
@@ -256,7 +258,7 @@ export default function SettingsScreen() {
                 <Text accessibilityRole="header" style={[styles.headerTitle, { color: colors.text }]}>{t(page === 'main' ? 'settings_title' : page === 'scanner' ? 'settings_scan_management' : page === 'data' ? 'settings_data_management' : 'settings_help')}</Text>
             </View>
 
-            <ScrollView key={page} contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 89 }]} showsVerticalScrollIndicator={false}>
+            <ScrollView key={page} contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + UI_METRICS.dockHeight + 24 }]} showsVerticalScrollIndicator={false}>
                 {page === 'main' && <>
                 <Text style={[styles.groupCaption, { color: colors.textSecondary }]}>{t('settings_organizing_preferences')}</Text>
                 <GlassContainer style={styles.section} elevated={false}>
@@ -309,18 +311,18 @@ export default function SettingsScreen() {
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('ai_scanner_engine')}</Text>
 
                     {/* Progress Stats */}
-                    <View style={styles.scannerStats}>
-                        <View style={styles.statItem}>
-                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('ai_scanner_pending')}</Text>
+                    <View testID="scanner-stats" style={[styles.scannerStats, compactStats && styles.scannerStatsCompact]}>
+                        <View style={[styles.statItem, compactStats && styles.statItemCompact]}>
                             <Text style={[styles.statValue, { color: colors.text }]}>{progress.totalPending}</Text>
+                            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('ai_scanner_pending')}</Text>
                         </View>
-                        <View style={styles.statItem}>
+                        <View style={[styles.statItem, compactStats && styles.statItemCompact]}>
+                            <Text style={[styles.statValue, { color: colors.text }]}>{progress.totalDone}</Text>
                             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('ai_scanner_done')}</Text>
-                            <Text style={[styles.statValue, { color: colors.primary }]}>{progress.totalDone}</Text>
                         </View>
-                        <View style={styles.statItem}>
+                        <View style={[styles.statItem, compactStats && styles.statItemCompact]}>
+                            <Text style={[styles.statValue, { color: progress.totalError > 0 ? colors.danger : colors.text }]}>{progress.totalError}</Text>
                             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('ai_scanner_failed' as any)}</Text>
-                            <Text style={[styles.statValue, { color: colors.danger }]}>{progress.totalError}</Text>
                         </View>
                     </View>
 
@@ -348,6 +350,9 @@ export default function SettingsScreen() {
                     {/* Action Buttons */}
                     <View style={styles.scannerActions}>
                         <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={isRunning ? t('ai_scanner_stop') : t('ai_scanner_start')}
+                            accessibilityState={{ disabled: isResettingScanner || isFinalizing, busy: isResettingScanner || isFinalizing }}
                             style={({ pressed }) => [
                                 styles.scanButton,
                                 { backgroundColor: isRunning ? colors.dangerBackground : colors.actionBackground },
@@ -368,9 +373,11 @@ export default function SettingsScreen() {
                         </Pressable>
 
                         <Pressable
+                            accessibilityRole="button"
+                            accessibilityState={{ disabled: scannerBusy || isResettingScanner }}
                             style={({ pressed }) => [
                                 styles.scanButton,
-                                { backgroundColor: colors.surface, flex: 0.4 },
+                                { backgroundColor: colors.surface },
                                 (pressed || isResettingScanner || isFinalizing) && { opacity: 0.5 }
                             ]}
                             onPress={() => setShowScanBatchModal(true)}
@@ -685,17 +692,17 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     headerTitle: {
-        fontSize: 26,
-        fontWeight: '500',
+        ...TYPOGRAPHY.pageTitle,
         flex: 1,
+        minWidth: 0,
     },
-    pageHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 24, minHeight: 68, gap: 8 },
-    backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    groupCaption: { fontSize: 12, lineHeight: 18, marginTop: 12, marginBottom: 8, marginLeft: 4 },
-    pageHint: { fontSize: 13, lineHeight: 20, marginBottom: 18 },
-    helpText: { fontSize: 14, lineHeight: 23, marginBottom: 16 },
+    pageHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: UI_METRICS.pageInset, paddingVertical: 12, minHeight: 68, gap: 8 },
+    backButton: { width: UI_METRICS.touchTarget, height: UI_METRICS.touchTarget, flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
+    groupCaption: { ...TYPOGRAPHY.secondary, marginTop: 12, marginBottom: 8, marginLeft: 4 },
+    pageHint: { ...TYPOGRAPHY.secondary, marginBottom: 18 },
+    helpText: { ...TYPOGRAPHY.body, marginBottom: 16 },
     content: {
-        paddingHorizontal: SPACING.l,
+        paddingHorizontal: UI_METRICS.pageInset,
         paddingTop: SPACING.s,
         paddingBottom: 120,
     },
@@ -706,8 +713,7 @@ const styles = StyleSheet.create({
         borderRadius: 18,
     },
     sectionTitle: {
-        fontSize: 16,
-        fontWeight: '500',
+        ...TYPOGRAPHY.sectionTitle,
         marginBottom: 10,
     },
     preferenceDivider: {
@@ -723,12 +729,10 @@ const styles = StyleSheet.create({
         paddingVertical: SPACING.s,
     },
     label: {
-        fontSize: 15,
-        fontWeight: '400'
+        ...TYPOGRAPHY.body,
     },
     hintText: {
-        fontSize: 12,
-        lineHeight: 18,
+        ...TYPOGRAPHY.secondary,
         marginTop: 4,
     },
     progressRow: {
@@ -737,7 +741,7 @@ const styles = StyleSheet.create({
         marginBottom: 12,
     },
     progressText: {
-        fontSize: 15,
+        ...TYPOGRAPHY.body,
     },
     devOptionsHeader: {
         flexDirection: 'row',
@@ -763,56 +767,59 @@ const styles = StyleSheet.create({
     statItem: {
         alignItems: 'center',
         flex: 1,
+        gap: 4,
     },
+    scannerStatsCompact: { flexDirection: 'column', gap: 12 },
+    statItemCompact: { flex: 0, flexDirection: 'row-reverse', justifyContent: 'space-between', gap: 12 },
     statLabel: {
-        fontSize: 12,
-        marginBottom: 4,
+        ...TYPOGRAPHY.secondary,
+        flexShrink: 1,
     },
     statValue: {
         fontSize: 24,
-        fontWeight: 'bold',
+        lineHeight: 32,
+        fontWeight: '500',
+        fontVariant: ['tabular-nums'],
     },
     statusRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
         padding: SPACING.s,
-        backgroundColor: 'rgba(0,122,255,0.1)',
-        borderRadius: 8,
         marginBottom: SPACING.s,
     },
     statusText: {
-        fontSize: 14,
-        fontWeight: '500',
+        ...TYPOGRAPHY.secondary,
+        flex: 1,
     },
     errorRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
         padding: SPACING.s,
-        backgroundColor: 'rgba(255,59,48,0.1)',
-        borderRadius: 8,
         marginBottom: SPACING.s,
     },
     errorText: {
-        fontSize: 12,
+        ...TYPOGRAPHY.secondary,
         flex: 1,
     },
     scannerActions: {
-        flexDirection: 'row',
+        flexDirection: 'column',
         gap: SPACING.s,
         marginTop: SPACING.s,
     },
     scanButton: {
-        flex: 1,
+        minHeight: UI_METRICS.buttonHeight,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 14,
-        borderRadius: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: UI_METRICS.buttonRadius,
     },
     scanButtonText: {
-        fontWeight: '600',
-        fontSize: 15,
+        ...TYPOGRAPHY.button,
+        flexShrink: 1,
+        textAlign: 'center',
     },
 });

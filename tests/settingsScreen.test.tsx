@@ -270,3 +270,56 @@ it('clears stale visible progress after a media read failure and recovers on the
   await screen.findByText('已整理: 2 张 / 共 7 张');
   expectNoReset();
 });
+
+it.each([[320, 1, 'column'], [411, 1.4, 'column'], [411, 1, 'row']] as const)(
+  'keeps scan controls and original counts without starting when opened at width %s, font %s', async (width, fontScale, direction) => {
+    const dimensions = jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({ width, height: 800, scale: 3, fontScale });
+    mockSettings.language = 'en';
+    const en = require('../i18n/en').default;
+    render(<SettingsScreen />);
+    await waitFor(() => expect(mockMedia.getVisibleProcessedCounts).toHaveBeenCalled());
+    fireEvent.press(screen.getByRole('button', { name: `${en.settings_scan_management}, 7 scanned` }));
+    expect(dimensions).toHaveBeenCalled();
+    expect(screen.getByTestId('scanner-stats')).toHaveStyle({ flexDirection: direction });
+    expect(screen.getByText('7')).toBeTruthy();
+    expect(screen.getByText(en.ai_scanner_done)).toBeTruthy();
+    expect(screen.getByRole('button', { name: en.ai_scanner_start })).toHaveStyle({ minHeight: 50 });
+    expect(screen.getByRole('button', { name: en.scan_batch })).toHaveStyle({ minHeight: 50 });
+    expect(mockScanner.start).not.toHaveBeenCalled();
+    expect(mockScanner.resumeOnce).not.toHaveBeenCalled();
+    expectNoReset();
+  }
+);
+
+it('keeps a running scan stoppable while disabling batch selection', async () => {
+  mockScanner.isRunning = true;
+  render(<SettingsScreen />);
+  await waitFor(() => expect(mockMedia.getVisibleProcessedCounts).toHaveBeenCalled());
+  fireEvent.press(screen.getByRole('button', { name: `${zh.settings_scan_management}, ${zh.scan_organizing}` }));
+  const stop = screen.getByRole('button', { name: zh.ai_scanner_stop });
+  expect(stop).toBeEnabled();
+  const batch = screen.getByRole('button', { name: zh.scan_batch });
+  expect(batch).toBeDisabled();
+  fireEvent.press(batch);
+  fireEvent.press(stop);
+  expect(mockScanner.stop).toHaveBeenCalledTimes(1);
+  expect(mockScanner.start).not.toHaveBeenCalled();
+  expect(mockScanner.resumeOnce).not.toHaveBeenCalled();
+  expectNoReset();
+});
+
+it('does not start another scan from either control while finalizing', async () => {
+  mockScanner.isFinalizing = true;
+  render(<SettingsScreen />);
+  await waitFor(() => expect(mockMedia.getVisibleProcessedCounts).toHaveBeenCalled());
+  fireEvent.press(screen.getByRole('button', { name: `${zh.settings_scan_management}, ${zh.scan_organizing}` }));
+  const start = screen.getByRole('button', { name: zh.ai_scanner_start });
+  const batch = screen.getByRole('button', { name: zh.scan_batch });
+  expect(start).toBeDisabled();
+  expect(batch).toBeDisabled();
+  fireEvent.press(start);
+  fireEvent.press(batch);
+  expect(mockScanner.start).not.toHaveBeenCalled();
+  expect(mockScanner.resumeOnce).not.toHaveBeenCalled();
+  expectNoReset();
+});
