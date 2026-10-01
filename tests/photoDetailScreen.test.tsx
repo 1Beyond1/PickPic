@@ -70,10 +70,48 @@ describe('Photo detail navigation and sharing', () => {
     expect(MediaLibrary.getAssetInfoAsync).not.toHaveBeenCalled();
   });
 
+  it('explains decode failure and retries the same asset without sharing or redirecting', async () => {
+    render(<PhotoDetailScreen />);
+    fireEvent(screen.getByTestId('detail-image'), 'error', { error: 'Decoder failed' });
+    expect(screen.getByText('scan_photo_unavailable')).toBeTruthy();
+    fireEvent.press(screen.getByRole('button', { name: 'retry' }));
+    await waitFor(() => expect(screen.getByTestId('detail-image').props.source.uri).toBe('file:///resolved.jpg'));
+    expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledWith('photo');
+    expect(Sharing.shareAsync).not.toHaveBeenCalled();
+    expect(mockRouter.replace).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: 'photo_detail_back' }));
+    expect(mockRouter.back).toHaveBeenCalledTimes(1);
+  });
+
   it('exposes understandable back and share actions rather than icon glyphs', () => {
     render(<PhotoDetailScreen />);
     expect(screen.getByRole('button', { name: 'photo_detail_back' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'photo_detail_share' })).toBeTruthy();
+  });
+
+  it('shares the recovered source only after an explicit share action', async () => {
+    render(<PhotoDetailScreen />);
+    fireEvent(screen.getByTestId('detail-image'), 'error', { error: 'Decoder failed' });
+    fireEvent.press(screen.getByRole('button', { name: 'retry' }));
+    await waitFor(() => expect(screen.getByTestId('detail-image').props.source.uri).toBe('file:///resolved.jpg'));
+    expect(Sharing.shareAsync).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: 'photo_detail_share' }));
+    await waitFor(() => expect(Sharing.shareAsync).toHaveBeenCalledWith('file:///resolved.jpg'));
+  });
+
+  it('does not let a late initial Apple URI lookup overwrite a recovered share source', async () => {
+    let resolveInitial!: (value: any) => void;
+    mockParams = { uri: 'ph://photo', assetId: 'photo' };
+    jest.mocked(MediaLibrary.getAssetInfoAsync)
+      .mockReturnValueOnce(new Promise(resolve => { resolveInitial = resolve; }))
+      .mockResolvedValueOnce({ localUri: 'file:///recovered.jpg' } as any);
+    render(<PhotoDetailScreen />);
+    fireEvent(screen.getByTestId('detail-image'), 'error', { error: 'Decoder failed' });
+    fireEvent.press(screen.getByRole('button', { name: 'retry' }));
+    await waitFor(() => expect(screen.getByTestId('detail-image').props.source.uri).toBe('file:///recovered.jpg'));
+    await act(async () => resolveInitial({ localUri: 'file:///outdated.jpg' }));
+    fireEvent.press(screen.getByRole('button', { name: 'photo_detail_share' }));
+    await waitFor(() => expect(Sharing.shareAsync).toHaveBeenCalledWith('file:///recovered.jpg'));
   });
 
   it('keeps safe areas outside the media and fixed 44dp controls beside a wrapping title', () => {

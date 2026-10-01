@@ -44,6 +44,7 @@ const mockSettingsState = {
 
 jest.mock('expo-media-library', () => ({
   getPermissionsAsync: jest.fn(),
+  getAssetInfoAsync: jest.fn(async (id: string) => ({ uri: `file:///${id}.jpg` })),
   presentPermissionsPickerAsync: jest.fn(),
 }));
 jest.mock('expo-router', () => ({
@@ -357,6 +358,24 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
     expect(mockMediaState.undoAction).not.toHaveBeenCalled();
     expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+  });
+
+  it('explains a failed review preview and retries without undoing the queue or closing the preview', async () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one')];
+    render(<PhotosScreen />);
+    fireEvent(screen.UNSAFE_getAllByType(Image)[0], 'longPress');
+    const preview = screen.UNSAFE_getAllByType(Image).find(image => image.props.resizeMode === 'contain')!;
+    fireEvent(preview, 'error', { nativeEvent: { error: 'Decoder failed' } });
+    expect(screen.getByText('scan_photo_unavailable')).toBeTruthy();
+    fireEvent.press(screen.getByRole('button', { name: 'retry' }));
+    await waitFor(() => expect(screen.UNSAFE_getAllByType(Image).some(image => image.props.resizeMode === 'contain')).toBe(true));
+    expect(screen.UNSAFE_getByType(Modal).props.visible).toBe(true);
+    expect(mockMediaState.deleteQueue.map(photo => photo.id)).toEqual(['one']);
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: 'close' }));
+    expect(screen.UNSAFE_getByType(Modal).props.visible).toBe(false);
   });
 
   it('names thumbnail undo actions and disables all review actions while deletion is pending', () => {

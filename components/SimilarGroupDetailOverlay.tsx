@@ -401,7 +401,7 @@ function SimilarPhotoPreview({ photo }: { photo: PhotoItem }) {
     const { colors } = useThemeColor();
     const { t } = useI18n();
     const [attempt, setAttempt] = useState(0);
-    const [image, setImage] = useState<{ uri: string; failed: boolean } | null>({ uri: photo.uri, failed: false });
+    const [image, setImage] = useState<{ uri: string; failed: boolean; attempt: number } | null>({ uri: photo.uri, failed: false, attempt: 0 });
 
     useEffect(() => {
         if (attempt === 0) return;
@@ -409,9 +409,9 @@ function SimilarPhotoPreview({ photo }: { photo: PhotoItem }) {
         setImage(null);
         void MediaLibrary.getAssetInfoAsync(photo.assetId).then(info => {
             const uri = info?.localUri || info?.uri || '';
-            if (active) setImage({ uri, failed: !uri });
+            if (active) setImage({ uri, failed: !uri, attempt });
         }).catch(() => {
-            if (active) setImage({ uri: '', failed: true });
+            if (active) setImage({ uri: '', failed: true, attempt });
         });
         return () => { active = false; };
     }, [photo.assetId, attempt]);
@@ -426,9 +426,9 @@ function SimilarPhotoPreview({ photo }: { photo: PhotoItem }) {
         </View>
     );
     const uri = image.uri;
-    return <Image accessible accessibilityRole="image" accessibilityLabel={t('photo_detail_title')}
+    return <Image key={attempt} accessible accessibilityRole="image" accessibilityLabel={t('photo_detail_title')}
         source={{ uri }} style={styles.previewImage} resizeMode="contain"
-        onError={() => setImage(previous => previous?.uri === uri ? { ...previous, failed: true } : previous)} />;
+        onError={() => setImage(previous => previous?.attempt === attempt && previous.uri === uri ? { ...previous, failed: true } : previous)} />;
 }
 
 const styles = StyleSheet.create({

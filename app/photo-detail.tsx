@@ -4,11 +4,13 @@ import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
+import { PhotoReadFeedback } from '../components/PhotoReadFeedback';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
+import { usePhotoPreviewSource } from '../hooks/usePhotoPreviewSource';
 import { useMediaStore } from '../stores/useMediaStore';
 
 export default function PhotoDetailScreen() {
@@ -22,6 +24,12 @@ export default function PhotoDetailScreen() {
     const [shareUri, setShareUri] = useState<string | null>(() => (
         needsLocalUri ? null : uri
     ));
+    const shareRequestIdRef = useRef(0);
+    const handleResolvedUri = useCallback((resolvedUri: string) => {
+        // An explicit recovery is newer than an initial Apple URI lookup.
+        ++shareRequestIdRef.current;
+        setShareUri(resolvedUri);
+    }, []);
     const permissionScope = useMediaStore(state => state.permissionScope);
     const permissionRefreshVersion = useMediaStore(state => state.permissionRefreshVersion);
     const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion);
@@ -78,6 +86,7 @@ export default function PhotoDetailScreen() {
 
     useEffect(() => {
         let mounted = true;
+        const requestId = ++shareRequestIdRef.current;
         setShareUri(needsLocalUri ? null : uri);
 
         if (!assetId || !needsLocalUri) {
@@ -88,10 +97,10 @@ export default function PhotoDetailScreen() {
 
         void resolveShareUri()
             .then((resolvedUri) => {
-                if (mounted) setShareUri(resolvedUri);
+                if (mounted && requestId === shareRequestIdRef.current) setShareUri(resolvedUri);
             })
             .catch((error) => {
-                if (mounted) {
+                if (mounted && requestId === shareRequestIdRef.current) {
                     console.warn('[PhotoDetail] Failed to resolve local photo URI:', error);
                     setShareUri(uri);
                 }
@@ -146,14 +155,21 @@ export default function PhotoDetailScreen() {
                 </Pressable>
             </View>
             <View testID="photo-detail-media" style={styles.media}>
-                <Image
-                    source={{ uri }}
-                    style={styles.image}
-                    contentFit="contain"
-                />
+                <PhotoDetailMedia key={`${assetId}:${uri}`} uri={uri} assetId={assetId} onResolvedUri={handleResolvedUri} />
             </View>
         </View>
     );
+}
+
+function PhotoDetailMedia({ uri, assetId, onResolvedUri }: { uri: string; assetId: string; onResolvedUri: (uri: string) => void }) {
+    const image = usePhotoPreviewSource(uri, assetId);
+    const { colors } = useThemeColor();
+    useEffect(() => {
+        if (image.attempt > 0 && image.uri && !image.failed) onResolvedUri(image.uri);
+    }, [image.attempt, image.uri, image.failed, onResolvedUri]);
+    if (image.loading) return <ActivityIndicator size="large" color={colors.primary} />;
+    if (image.failed) return <PhotoReadFeedback onRetry={image.retry} />;
+    return <Image key={image.attempt} source={{ uri: image.uri }} style={styles.image} contentFit="contain" onError={image.onError} />;
 }
 
 const styles = StyleSheet.create({

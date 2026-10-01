@@ -85,6 +85,20 @@ it('keeps available members and explains partial failure without treating the gr
   expect(props.onComplete).not.toHaveBeenCalled();
 });
 
+it('ignores a late decoder error from before a same-URI preview retry', async () => {
+  render(<SimilarGroupDetailOverlay {...props} />);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
+  fireEvent.press(screen.getAllByRole('button', { name: 'similar_photo' })[0]);
+  const image = within(screen.getByTestId('similar-preview')).getByRole('image');
+  const oldError = image.props.onError;
+  fireEvent(image, 'error');
+  fireEvent.press(screen.getByRole('button', { name: 'retry' }));
+  await waitFor(() => expect(within(screen.getByTestId('similar-preview')).getByRole('image')).toBeTruthy());
+  act(() => oldError());
+  expect(within(screen.getByTestId('similar-preview')).queryByText('scan_photo_unavailable')).toBeNull();
+  expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+});
+
 it('cannot publish a failed old lookup or preview retry after its group has been closed', async () => {
   let rejectOld!: (error: Error) => void;
   (MediaLibrary.getAssetInfoAsync as jest.Mock).mockReturnValueOnce(new Promise((_, reject) => { rejectOld = reject; }));
