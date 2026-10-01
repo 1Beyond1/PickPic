@@ -5,12 +5,12 @@ import * as MediaLibrary from 'expo-media-library';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, FlatList, Image, Linking, Modal, NativeScrollEvent, NativeSyntheticEvent, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
+import { ActivityIndicator, Alert, AppState, FlatList, Image, Linking, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
-import { GlassContainer } from '../../components/GlassContainer';
+import { BottomSheet } from '../../components/BottomSheet';
 import { VideoFeedItem } from '../../components/VideoFeedItem';
-import { BORDER_RADIUS, COLORS, SPACING } from '../../constants/theme';
+import { BORDER_RADIUS, COLORS, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
@@ -37,6 +37,7 @@ export default function VideosScreen() {
     const [activeId, setActiveId] = useState<string | null>(null);
     const [isMuted, setIsMuted] = useState(true);
     const [showTrash, setShowTrash] = useState(false);
+    const [trashDeleteFailed, setTrashDeleteFailed] = useState(false);
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [selectedVideoForCollection, setSelectedVideoForCollection] = useState<any>(null);
     const [isScreenFocused, setIsScreenFocused] = useState(true);
@@ -282,6 +283,7 @@ export default function VideosScreen() {
 
     const handleRestoreFromTrash = (assetId: string) => {
         restoreFromTrash(assetId);
+        setTrashDeleteFailed(false);
         // A persisted trash item may belong to the filter that was active in
         // an earlier session. Re-query the current scope instead of blindly
         // inserting the restored asset into this feed.
@@ -427,7 +429,7 @@ export default function VideosScreen() {
                 <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`${t('video_trash_title')} · ${visibleVideoTrashBin.length}`}
-                    onPress={() => setShowTrash(true)}
+                    onPress={() => { setTrashDeleteFailed(false); setShowTrash(true); }}
                     style={({ pressed }) => [styles.trashIcon, { backgroundColor: pressed ? colors.selectionBackground : 'transparent', opacity: pressed ? 0.6 : 1 }]}
                 >
                     <Ionicons name="trash-bin-outline" size={20} color={colors.text} />
@@ -518,54 +520,17 @@ export default function VideosScreen() {
 
             {/* Trash Bin Modal */}
             {showTrash && (
-                <Modal visible={isFocused} transparent animationType="slide" onRequestClose={() => setShowTrash(false)}>
-                <View style={[styles.trashBackdrop, { backgroundColor: colors.overlay, paddingBottom: insets.bottom + 12, paddingTop: insets.top + 12 }]}>
-                <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowTrash(false)} accessibilityRole="button" accessibilityLabel={t('cancel')} />
-                <GlassContainer style={styles.trashModal}>
-                    <View style={styles.trashHeader}>
-                        <Text style={[styles.trashTitle, { color: colors.text }]}>{t('video_trash_title')}</Text>
-                        <Pressable style={styles.closeButton} onPress={() => setShowTrash(false)} accessibilityRole="button" accessibilityLabel={t('cancel')}>
-                            <Ionicons name="close" size={24} color={colors.textSecondary} />
-                        </Pressable>
-                    </View>
-
-                    {visibleVideoTrashBin.length === 0 ? (
-                        <Text style={[styles.emptyTextSmall, { color: colors.textSecondary }]}>{t('video_trash_empty')}</Text>
-                    ) : (
-                        <FlatList
-                            data={visibleVideoTrashBin}
-                            keyExtractor={item => item.id}
-                            horizontal
-                            contentContainerStyle={{ gap: 10, paddingVertical: 20 }}
-                            renderItem={({ item }) => (
-                                <View style={[styles.trashCard, { backgroundColor: colors.surface }]}>
-                                    <Image
-                                        source={{ uri: item.uri }}
-                                        style={styles.trashThumbnail}
-                                        resizeMode="cover"
-                                    />
-                                    <View style={styles.videoIconOverlay}>
-                                        <Ionicons name="videocam" size={20} color="white" />
-                                    </View>
-                                    <Pressable
-                                        style={[styles.restoreBtn, { backgroundColor: colors.selectionBackground }, isConfirmingVideoTrash && { opacity: 0.5 }]}
-                                        onPress={() => handleRestoreFromTrash(item.id)}
-                                        disabled={isConfirmingVideoTrash}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`${t('video_restore')} · ${item.filename || item.id}`}
-                                    >
-                                        <Text style={[styles.restoreText, { color: colors.text }]}>{t('video_restore')}</Text>
-                                    </Pressable>
-                                </View>
-                            )}
-                        />
-                    )}
-
-                    {visibleVideoTrashBin.length > 0 && (
+                <BottomSheet
+                    visible={isFocused}
+                    title={t('video_trash_title')}
+                    onClose={() => { setShowTrash(false); setTrashDeleteFailed(false); }}
+                    footer={visibleVideoTrashBin.length > 0 ? (
                         <Pressable
                             style={[styles.confirmDeleteBtn, { backgroundColor: colors.dangerBackground }, isConfirmingVideoTrash && { opacity: 0.6 }]}
                             accessibilityRole="button"
+                            accessibilityLabel={t('video_confirm_delete')}
                             onPress={async () => {
+                            setTrashDeleteFailed(false);
                             try {
                                 const requestedIds = visibleVideoTrashBin.map(video => video.id);
                                 await confirmVideoTrash(requestedIds);
@@ -585,20 +550,52 @@ export default function VideosScreen() {
                                 }
                             } catch (error) {
                                 console.error('Failed to permanently delete videos', error);
-                                Alert.alert(
-                                    language === 'zh' ? '删除失败' : 'Delete failed',
-                                    language === 'zh' ? '视频仍保留在废纸篓中，请重试。' : 'The videos remain in the trash. Please try again.'
-                                );
+                                // A native Alert can end up below RN's modal window on
+                                // Android. Keep recovery feedback inside this sheet.
+                                setTrashDeleteFailed(true);
                             }
                         }}
                             disabled={isConfirmingVideoTrash}
                         >
                             <Text style={[styles.confirmDeleteText, { color: colors.dangerForeground }]}>{t('video_confirm_delete')}</Text>
                         </Pressable>
-                    )}
-                </GlassContainer>
-                </View>
-                </Modal>
+                    ) : undefined}
+                >
+                    <ScrollView style={styles.trashContent}>
+                        {trashDeleteFailed && (
+                            <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.trashError, { color: colors.danger }]}>
+                                {language === 'zh' ? '视频仍保留在废纸篓中，请重试。' : 'The videos remain in the trash. Please try again.'}
+                            </Text>
+                        )}
+                        {visibleVideoTrashBin.length === 0 ? (
+                            <Text style={[styles.emptyTextSmall, { color: colors.textSecondary }]}>{t('video_trash_empty')}</Text>
+                        ) : (
+                            <FlatList
+                                data={visibleVideoTrashBin}
+                                keyExtractor={item => item.id}
+                                horizontal
+                                contentContainerStyle={{ gap: 12, paddingVertical: 8 }}
+                                renderItem={({ item }) => (
+                                    <View style={[styles.trashCard, { backgroundColor: colors.selectionBackground }]}>
+                                        <Image source={{ uri: item.uri }} style={styles.trashThumbnail} resizeMode="cover" />
+                                        <View style={styles.videoIconOverlay}>
+                                            <Ionicons name="videocam" size={20} color="white" />
+                                        </View>
+                                        <Pressable
+                                            style={[styles.restoreBtn, isConfirmingVideoTrash && { opacity: 0.5 }]}
+                                            onPress={() => handleRestoreFromTrash(item.id)}
+                                            disabled={isConfirmingVideoTrash}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`${t('video_restore')} · ${item.filename || item.id}`}
+                                        >
+                                            <Text style={[styles.restoreText, { color: colors.text }]}>{t('video_restore')}</Text>
+                                        </Pressable>
+                                    </View>
+                                )}
+                            />
+                        )}
+                    </ScrollView>
+                </BottomSheet>
             )}
 
             {/* Album Selector Modal */}
@@ -666,34 +663,19 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         fontVariant: ['tabular-nums'],
     },
-    trashBackdrop: { flex: 1, justifyContent: 'flex-end', paddingHorizontal: 16 },
-    trashModal: {
-        maxHeight: '100%',
-        padding: SPACING.m,
-        justifyContent: 'space-between'
-    },
-    closeButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-    trashHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center'
-    },
-    trashTitle: {
-        fontSize: 18,
-        fontWeight: 'bold'
-    },
+    trashContent: { flexShrink: 1 },
+    trashError: { ...TYPOGRAPHY.body, marginBottom: 12 },
     emptyTextSmall: {
         textAlign: 'center',
         paddingVertical: 40,
     },
     trashCard: {
         width: 100,
-        height: 164,
         borderRadius: BORDER_RADIUS.m,
         overflow: 'hidden',
     },
     trashThumbnail: {
-        flex: 1,
+        height: 120,
         width: '100%',
     },
     videoIconOverlay: {
@@ -713,16 +695,17 @@ const styles = StyleSheet.create({
     },
     restoreText: {
         color: COLORS.white,
-        fontSize: 12
+        ...TYPOGRAPHY.secondary
     },
     confirmDeleteBtn: {
-        backgroundColor: COLORS.danger,
-        padding: SPACING.m,
-        borderRadius: BORDER_RADIUS.full,
-        alignItems: 'center'
+        minHeight: UI_METRICS.buttonHeight,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        borderRadius: UI_METRICS.buttonRadius,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     confirmDeleteText: {
-        color: COLORS.white,
-        fontWeight: 'bold'
+        ...TYPOGRAPHY.button
     },
 });

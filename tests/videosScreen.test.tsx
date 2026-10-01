@@ -71,6 +71,7 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 jest.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
+  Feather: () => null,
 }));
 jest.mock('../components/AlbumSelector', () => ({
   AlbumSelector: () => null,
@@ -124,6 +125,10 @@ describe('VideosScreen processing behavior', () => {
   beforeEach(() => {
     mockMediaState.videos = [videoOne, videoTwo];
     mockMediaState.videoTrashBin = [];
+    mockMediaState.isConfirmingVideoTrash = false;
+    mockMediaState.hiddenVideoQueuedAssetIds = null;
+    mockMediaState.confirmVideoTrash.mockReset();
+    mockMediaState.restoreFromTrash.mockClear();
     mockSettingsState.selectedAlbumIds = [];
     mockMarkVideoAsProcessed.mockClear();
     mockLoadVideos.mockClear();
@@ -344,7 +349,7 @@ describe('VideosScreen processing behavior', () => {
     expect(screen.UNSAFE_getAllByType(itemType).some(item => item.props.shouldPlay)).toBe(true);
     fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 0' }));
     expect(screen.UNSAFE_getAllByType(itemType).every(item => !item.props.shouldPlay)).toBe(true);
-    fireEvent.press(screen.getAllByRole('button', { name: 'cancel' })[1]);
+    fireEvent.press(screen.getByRole('button', { name: 'cancel' }));
     expect(screen.UNSAFE_getAllByType(itemType).some(item => item.props.shouldPlay)).toBe(true);
     expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
     expect(mockMediaState.confirmVideoTrash).not.toHaveBeenCalled();
@@ -358,5 +363,106 @@ describe('VideosScreen processing behavior', () => {
     expect(screen.getByText('video_filtered_empty_hint')).toBeTruthy();
     expect(mockSettingsState.selectedAlbumIds).toEqual(['photos-only-album']);
     screen.unmount();
+  });
+
+  it('restores a pending video then re-queries the current album scope without changing review progress', async () => {
+    mockMediaState.videoTrashBin = [videoOne];
+    mockSettingsState.selectedAlbumIds = ['current-album'];
+    const screen = await renderScreen();
+    fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+    mockLoadVideos.mockClear();
+    fireEvent.press(screen.getByRole('button', { name: 'video_restore · video-1' }));
+    expect(mockMediaState.restoreFromTrash).toHaveBeenCalledWith('video-1');
+    expect(mockLoadVideos).toHaveBeenCalledWith(50, 'random', ['current-album']);
+    expect(mockMediaState.confirmVideoTrash).not.toHaveBeenCalled();
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+  });
+
+  it('keeps queued videos and the panel open when permanent deletion fails', async () => {
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const alert = jest.spyOn(ReactNative.Alert, 'alert').mockImplementation(() => {});
+    mockMediaState.videoTrashBin = [videoOne];
+    mockMediaState.confirmVideoTrash.mockRejectedValueOnce(new Error('Native cancellation'));
+    try {
+      const screen = await renderScreen();
+      fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+      fireEvent.press(screen.getByRole('button', { name: 'video_confirm_delete' }));
+      await waitFor(() => expect(screen.getByText('视频仍保留在废纸篓中，请重试。')).toBeTruthy());
+      expect(alert).not.toHaveBeenCalled();
+      expect(mockMediaState.confirmVideoTrash).toHaveBeenCalledWith(['video-1']);
+      expect(screen.getByRole('button', { name: 'video_restore · video-1' })).toBeTruthy();
+      expect(mockMediaState.videoTrashBin).toEqual([videoOne]);
+      expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+      alert.mockRestore();
+    }
+  });
+
+  it('does not imply success when visibility preflight leaves a requested video pending', async () => {
+    mockMediaState.videoTrashBin = [videoOne];
+    mockMediaState.confirmVideoTrash.mockResolvedValueOnce([]);
+    const screen = await renderScreen();
+    fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+    fireEvent.press(screen.getByRole('button', { name: 'video_confirm_delete' }));
+    await act(async () => {});
+    expect(mockMediaState.confirmVideoTrash).toHaveBeenCalledWith(['video-1']);
+    expect(screen.getByRole('button', { name: 'video_restore · video-1' })).toBeTruthy();
+  });
+
+  it('clears old failure feedback when the pending panel is closed and reopened without changing the queue', async () => {
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockMediaState.videoTrashBin = [videoOne];
+    mockMediaState.confirmVideoTrash.mockRejectedValueOnce(new Error('Native failure'));
+    try {
+      const screen = await renderScreen();
+      fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+      fireEvent.press(screen.getByRole('button', { name: 'video_confirm_delete' }));
+      await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+      fireEvent(screen.UNSAFE_getByType(ReactNative.Modal), 'requestClose');
+      fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(mockMediaState.videoTrashBin).toEqual([videoOne]);
+      expect(mockMediaState.confirmVideoTrash).toHaveBeenCalledTimes(1);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it('allows retry after failure and closes only when all requested videos are gone', async () => {
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockMediaState.videoTrashBin = [videoOne];
+    mockMediaState.confirmVideoTrash.mockRejectedValueOnce(new Error('Native failure'));
+    try {
+      const screen = await renderScreen();
+      fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+      fireEvent.press(screen.getByRole('button', { name: 'video_confirm_delete' }));
+      await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+      mockMediaState.confirmVideoTrash.mockImplementationOnce(async () => {
+        mockMediaState.videoTrashBin = [];
+        return ['video-1'];
+      });
+      fireEvent.press(screen.getByRole('button', { name: 'video_confirm_delete' }));
+      await waitFor(() => expect(screen.queryByText('video_confirm_delete')).toBeNull());
+      expect(mockMediaState.confirmVideoTrash).toHaveBeenCalledTimes(2);
+      expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  it('blocks restore and repeated deletion while allowing the pending panel to be closed', async () => {
+    mockMediaState.videoTrashBin = [videoOne];
+    mockMediaState.isConfirmingVideoTrash = true;
+    const screen = await renderScreen();
+    fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+    fireEvent.press(screen.getByRole('button', { name: 'video_restore · video-1' }));
+    fireEvent.press(screen.getByRole('button', { name: 'video_confirm_delete' }));
+    expect(mockMediaState.restoreFromTrash).not.toHaveBeenCalled();
+    expect(mockMediaState.confirmVideoTrash).not.toHaveBeenCalled();
+    fireEvent(screen.UNSAFE_getByType(ReactNative.Modal), 'requestClose');
+    expect(screen.queryByText('video_confirm_delete')).toBeNull();
+    expect(mockMediaState.videoTrashBin).toEqual([videoOne]);
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
   });
 });
