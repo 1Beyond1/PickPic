@@ -191,6 +191,9 @@ export default {
     similar_group_detail_title: '相似照片组',
     similar_select_hint: '长按选中，单击查看详情',
     similar_delete_selected: '删除选中',
+    similar_selected_count: '已选 {count} 张',
+    similar_photo: '第 {index} 张照片',
+    similar_toggle_hint: '点击照片可选中或取消选中。',
 
     // Scan Results tabs
     scan_tab_blur: '模糊',

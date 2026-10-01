@@ -31,8 +31,10 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('../components/GlassContainer', () => ({ GlassContainer: ({ children }: any) => children }));
-jest.mock('../components/SimilarGroupCard', () => ({ SimilarGroupCard: () => null }));
-jest.mock('../components/SimilarGroupDetailOverlay', () => ({ SimilarGroupDetailOverlay: () => null }));
+jest.mock('../components/SimilarGroupCard', () => ({ SimilarGroupCard: ({ onPress }: any) =>
+  require('react').createElement(require('react-native').Pressable, { accessibilityRole: 'button', accessibilityLabel: 'Open group', onPress: () => onPress({ x: 0, y: 0, width: 80, height: 80 }) }) }));
+jest.mock('../components/SimilarGroupDetailOverlay', () => ({ SimilarGroupDetailOverlay: ({ visible, onClose }: any) => visible
+  ? require('react').createElement(require('react-native').Pressable, { accessibilityRole: 'button', accessibilityLabel: 'Close group', onPress: onClose }) : null }));
 jest.mock('../hooks/useI18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 jest.mock('../hooks/useThemeColor', () => ({
   useThemeColor: () => ({ colors: {
@@ -48,11 +50,11 @@ jest.mock('../stores/useMediaStore', () => ({
 }));
 jest.mock('../database', () => ({
   AssetRepository: { getBlurryAssets: jest.fn(), removeAssetAndDerivedData: jest.fn() },
-  DupGroupRepository: { getAllGroups: jest.fn().mockResolvedValue([]) },
+  DupGroupRepository: { getAllGroups: jest.fn().mockResolvedValue([]), getGroupMembers: jest.fn() },
 }));
 
 import ScanResultsScreen from '../app/(tabs)/scanResults';
-import { AssetRepository } from '../database';
+import { AssetRepository, DupGroupRepository } from '../database';
 import { getCurrentlyVisibleAssetIds } from '../stores/useMediaStore';
 
 describe('result navigation preserves media decisions', () => {
@@ -134,6 +136,26 @@ describe('result navigation preserves media decisions', () => {
     expect(screen.queryByRole('tab', { name: 'scan_tab_ai' })).toBeNull();
     expect(screen.getAllByRole('tab')).toHaveLength(2);
     expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+  });
+
+  it('hides the covered result controls from accessibility until the similar detail closes', async () => {
+    (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([{ group_id: 'group', representative_asset_id: 'first', best_asset_id: 'first' }]);
+    (DupGroupRepository.getGroupMembers as jest.Mock).mockResolvedValue([{ asset_id: 'first' }, { asset_id: 'second' }]);
+    const view = render(<ScanResultsScreen />);
+    try {
+      await screen.findByText('scan_no_blurry');
+      await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
+      fireEvent.press(await screen.findByRole('button', { name: 'Open group' }));
+      expect(screen.getByTestId('scan-results-main', { includeHiddenElements: true }).props).toMatchObject({ accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' });
+      expect(screen.queryByRole('tab', { name: 'scan_tab_similar' })).toBeNull();
+      await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'Close group' })); });
+      expect(screen.getByTestId('scan-results-main').props).toMatchObject({ accessibilityElementsHidden: false, importantForAccessibility: 'auto' });
+      expect(screen.getByRole('tab', { name: 'scan_tab_similar' })).toBeSelected();
+      expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([]);
+    }
   });
 });
 

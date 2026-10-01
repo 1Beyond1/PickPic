@@ -191,6 +191,9 @@ export default {
     similar_group_detail_title: 'Similar Photos',
     similar_select_hint: 'Long press to select, tap to preview',
     similar_delete_selected: 'Delete Selected',
+    similar_selected_count: '{count} selected',
+    similar_photo: 'Photo {index}',
+    similar_toggle_hint: 'Tap to select or deselect photos.',
 
     // Scan Results tabs
     scan_tab_blur: 'Blurry',

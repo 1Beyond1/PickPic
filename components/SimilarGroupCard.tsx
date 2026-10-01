@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 
@@ -18,13 +19,12 @@ interface SimilarGroupCardProps {
 }
 
 export function SimilarGroupCard({
-    groupId,
     memberCount,
     memberAssetIds,
     isProcessed = false,
     onPress,
 }: SimilarGroupCardProps) {
-    const { colors, isDark } = useThemeColor();
+    const { colors } = useThemeColor();
     const { t } = useI18n();
     const [thumbnails, setThumbnails] = useState<string[]>([]);
     const containerRef = React.useRef<View>(null);
@@ -39,7 +39,7 @@ export function SimilarGroupCard({
     const loadThumbnails = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
         const uris: string[] = [];
-        // Load up to 4 thumbnails for stacking effect
+        // Keep the existing small thumbnail lookup snapshot.
         const idsToLoad = memberAssetIds.slice(0, 4);
         for (const assetId of idsToLoad) {
             try {
@@ -63,82 +63,33 @@ export function SimilarGroupCard({
         };
     }, [loadThumbnails]);
 
-    const renderStackedCards = () => {
-        const stackCount = Math.min(thumbnails.length, 3);
-        const cards = [];
-
-        // Render stacked cards (back to front)
-        for (let i = stackCount - 1; i >= 0; i--) {
-            const offset = (stackCount - 1 - i) * 6;
-            const rotation = (i - 1) * 3;
-            cards.push(
-                <View
-                    key={i}
-                    style={[
-                        styles.stackedCard,
-                        {
-                            transform: [
-                                { translateX: offset },
-                                { rotate: `${rotation}deg` },
-                            ],
-                            zIndex: i,
-                            backgroundColor: colors.surface,
-                        },
-                    ]}
-                >
-                    {thumbnails[i] && (
-                        <Image
-                            source={{ uri: thumbnails[i] }}
-                            style={styles.stackedImage}
-                            resizeMode="cover"
-                        />
-                    )}
-                </View>
-            );
-        }
-
-        return cards;
-    };
-
     return (
         <Pressable
             ref={containerRef}
             collapsable={false}
-            style={[
-                styles.container,
-                { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#F9F9F9' },
-                isProcessed && styles.processedContainer,
-            ]}
+            accessibilityRole="button"
+            accessibilityLabel={`${t('similar_group_detail_title')}, ${t('scan_photo_count', { count: memberCount })}${isProcessed ? `, ${t('similar_group_processed')}` : ''}`}
+            style={({ pressed }) => [styles.container, { borderBottomColor: colors.divider, backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
             onPress={handlePress}
         >
-            {/* Stacked Cards */}
-            <View style={styles.stackContainer}>
-                {renderStackedCards()}
+            <View style={styles.previews}>
+                {[0, 1].map(index => (
+                    <View key={index} style={[styles.thumbnail, { backgroundColor: colors.surfaceHover }]}>
+                        {thumbnails[index] && <Image source={{ uri: thumbnails[index] }} style={styles.image} resizeMode="cover" />}
+                    </View>
+                ))}
             </View>
-
-            {/* Main Representative Card */}
-            <View style={[styles.mainCard, { backgroundColor: colors.surface }]}>
-                {thumbnails[0] && (
-                    <Image
-                        source={{ uri: thumbnails[0] }}
-                        style={styles.mainImage}
-                        resizeMode="cover"
-                    />
+            <View style={styles.info}>
+                <Text style={[styles.title, { color: colors.text }]}>{t('similar_group_detail_title')}</Text>
+                <Text style={[styles.count, { color: colors.textSecondary }]}>{t('scan_photo_count', { count: memberCount })}</Text>
+                {isProcessed && (
+                    <View style={styles.processed}>
+                        <Ionicons name="checkmark" size={14} color={colors.success} />
+                        <Text style={[styles.count, { color: colors.success }]}>{t('similar_group_processed')}</Text>
+                    </View>
                 )}
-                <View style={[styles.countBadge, { backgroundColor: colors.actionBackground }]}>
-                    <Text style={[styles.countText, { color: colors.actionForeground }]}>{memberCount}</Text>
-                </View>
             </View>
-
-            {/* Processed Badge */}
-            {isProcessed && (
-                <View style={[styles.processedBadge, { backgroundColor: colors.successBackground }]}>
-                    <Ionicons name="checkmark" size={12} color={colors.successForeground} />
-                    <Text style={[styles.processedText, { color: colors.successForeground }]}>
-                        {t('similar_group_processed' as any)}
-                    </Text>
-                </View>
-            )}
+            <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
         </Pressable>
     );
 }
@@ -147,78 +98,16 @@ const styles = StyleSheet.create({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 12,
-        borderRadius: 16,
-        marginHorizontal: 16,
-        marginVertical: 6,
+        minHeight: UI_METRICS.touchTarget,
+        paddingVertical: 16,
+        gap: 12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
-    processedContainer: {
-        opacity: 0.6,
-    },
-    stackContainer: {
-        width: 80,
-        height: 70,
-        position: 'relative',
-        marginRight: 16,
-    },
-    stackedCard: {
-        position: 'absolute',
-        width: 60,
-        height: 70,
-        borderRadius: 8,
-        shadowColor: '#000',
-        shadowOffset: { width: 1, height: 2 },
-        shadowOpacity: 0.15,
-        shadowRadius: 3,
-        elevation: 3,
-        overflow: 'hidden',
-    },
-    stackedImage: {
-        width: '100%',
-        height: '100%',
-    },
-    mainCard: {
-        width: 80,
-        height: 80,
-        borderRadius: 12,
-        overflow: 'hidden',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 4,
-    },
-    mainImage: {
-        width: '100%',
-        height: '100%',
-    },
-    countBadge: {
-        position: 'absolute',
-        bottom: 4,
-        right: 4,
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 10,
-    },
-    countText: {
-        color: '#FFF',
-        fontSize: 12,
-        fontWeight: 'bold',
-    },
-    processedBadge: {
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 12,
-        gap: 4,
-    },
-    processedText: {
-        color: '#FFF',
-        fontSize: 11,
-        fontWeight: '600',
-    },
+    previews: { flexDirection: 'row', gap: 4, flexShrink: 0 },
+    thumbnail: { width: 48, height: 64, borderRadius: 8, overflow: 'hidden' },
+    image: { width: '100%', height: '100%' },
+    info: { flex: 1, minWidth: 0, gap: 4 },
+    title: { ...TYPOGRAPHY.button },
+    count: { ...TYPOGRAPHY.secondary },
+    processed: { flexDirection: 'row', alignItems: 'center', gap: 4 },
 });

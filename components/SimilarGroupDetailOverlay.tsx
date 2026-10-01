@@ -5,32 +5,28 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     BackHandler,
-    Dimensions,
     FlatList,
     Image,
     Modal,
     Pressable,
     StyleSheet,
+    Text,
     View
 } from 'react-native';
 import Animated, {
-    Easing,
-    Extrapolation,
-    interpolate,
     runOnJS,
     useAnimatedStyle,
     useSharedValue,
     withTiming
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { AssetRepository } from '../database';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { getCurrentlyVisibleAssetIds, useMediaStore } from '../stores/useMediaStore';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const COLUMN_COUNT = 3;
-const ITEM_SIZE = (SCREEN_WIDTH - 24) / COLUMN_COUNT;
 
 interface PhotoItem {
     assetId: string;
@@ -48,14 +44,12 @@ interface SimilarGroupDetailOverlayProps {
 
 export function SimilarGroupDetailOverlay({
     visible,
-    groupId,
     memberAssetIds,
-    originRect,
     onClose,
     onComplete,
 }: SimilarGroupDetailOverlayProps) {
     const insets = useSafeAreaInsets();
-    const { colors, isDark } = useThemeColor();
+    const { colors } = useThemeColor();
     const { t, language } = useI18n();
 
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
@@ -66,8 +60,6 @@ export function SimilarGroupDetailOverlay({
     const loadRequestIdRef = useRef(0);
 
     // Animation state
-    const [isAnimating, setIsAnimating] = useState(false);
-    const animProgress = useSharedValue(0); // 0 (Origin) -> 1 (Spread) -> 2 (Grid)
     const overlayOpacity = useSharedValue(0);
 
     const loadPhotos = useCallback(async () => {
@@ -111,26 +103,14 @@ export function SimilarGroupDetailOverlay({
             setSelectedIds(new Set());
             setPreviewPhoto(null);
             // Start enter animation
-            overlayOpacity.value = withTiming(1, { duration: 300 });
-
-            setIsAnimating(true);
-            animProgress.value = 0;
-            // 2-step animation: Fan (0.5s) -> Fly (0.5s)
-            animProgress.value = withTiming(2, {
-                duration: 1000,
-                easing: Easing.bezier(0.25, 0.1, 0.25, 1),
-            }, (finished) => {
-                if (finished) {
-                    runOnJS(setIsAnimating)(false);
-                }
-            });
+            overlayOpacity.value = withTiming(1, { duration: 180 });
         } else {
             loadRequestIdRef.current += 1;
             setPhotos([]); // Clear on close or an empty group to avoid stale content
             setSelectedIds(new Set());
             setPreviewPhoto(null);
         }
-    }, [visible, memberAssetIds, loadPhotos, overlayOpacity, animProgress]);
+    }, [visible, memberAssetIds, loadPhotos, overlayOpacity]);
 
     // Handle Back Button
     useEffect(() => {
@@ -267,10 +247,14 @@ export function SimilarGroupDetailOverlay({
         }
     };
 
-    const renderPhotoItem = ({ item }: { item: PhotoItem }) => {
+    const renderPhotoItem = ({ item, index }: { item: PhotoItem; index: number }) => {
         const isSelected = selectedIds.has(item.assetId);
         return (
             <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('similar_photo', { index: index + 1 })}
+                accessibilityHint={t(selectedIds.size > 0 ? 'similar_toggle_hint' : 'similar_select_hint')}
+                accessibilityState={{ selected: isSelected, disabled: isDeleting }}
                 style={[
                     styles.photoItem,
                     isSelected && { borderColor: colors.primary, borderWidth: 3 },
@@ -290,72 +274,6 @@ export function SimilarGroupDetailOverlay({
         );
     };
 
-    // Animation Item
-    const AnimatedPhotoItem = ({ item, index, total }: { item: PhotoItem, index: number, total: number }) => {
-        const style = useAnimatedStyle(() => {
-            // Target Grid (Phase 2)
-            const col = index % COLUMN_COUNT;
-            const row = Math.floor(index / COLUMN_COUNT);
-            const gridX = col * ITEM_SIZE + 12; // + padding
-            const gridY = row * ITEM_SIZE + insets.top + 60; // Header offset approximation
-
-            // Origin (Stack Phase 0)
-            const startX = originRect ? originRect.x : (SCREEN_WIDTH - 80) / 2;
-            const startY = originRect ? originRect.y : SCREEN_WIDTH / 2;
-
-            // Fan Out (Phase 1)
-            // Fan to the right like cards
-            const fanGap = 35;
-            const maxFanX = SCREEN_WIDTH - ITEM_SIZE - 20;
-            // Calculate X with overlap
-            const fanXRaw = startX + (index * fanGap);
-            const fanX = Math.min(fanXRaw, maxFanX);
-            // Slight Y arc or straight? Let's do straight for now as "table spread"
-            const fanY = startY;
-            // Rotation for fan effect
-            const fanRotate = (index * 4); // 4 degrees per item
-
-            const val = animProgress.value;
-
-            let translateX, translateY, rotate, scale;
-
-            if (val <= 1) {
-                // Phase 1: Stack -> Fan Right
-                translateX = interpolate(val, [0, 1], [startX, fanX], Extrapolation.CLAMP);
-                translateY = interpolate(val, [0, 1], [startY, fanY], Extrapolation.CLAMP);
-                rotate = interpolate(val, [0, 1], [0, fanRotate], Extrapolation.CLAMP);
-                scale = interpolate(val, [0, 1], [0.5, 0.9], Extrapolation.CLAMP); // Grow slightly
-            } else {
-                // Phase 2: Fan Right -> Grid
-                translateX = interpolate(val, [1, 2], [fanX, gridX], Extrapolation.CLAMP);
-                translateY = interpolate(val, [1, 2], [fanY, gridY], Extrapolation.CLAMP);
-                rotate = interpolate(val, [1, 2], [fanRotate, 0], Extrapolation.CLAMP);
-                scale = interpolate(val, [1, 2], [0.9, 1], Extrapolation.CLAMP); // Grow to full
-            }
-
-            return {
-                position: 'absolute',
-                left: 0,
-                top: 0,
-                width: ITEM_SIZE,
-                height: ITEM_SIZE,
-                transform: [
-                    { translateX },
-                    { translateY },
-                    { rotate: `${rotate}deg` },
-                    { scale },
-                ],
-                zIndex: total - index,
-            };
-        });
-
-        return (
-            <Animated.View style={[styles.photoItem, style]}>
-                <Image source={{ uri: item.uri }} style={styles.photoImage} />
-            </Animated.View>
-        );
-    };
-
     const containerAnimatedStyle = useAnimatedStyle(() => ({
         opacity: overlayOpacity.value,
     }));
@@ -363,20 +281,20 @@ export function SimilarGroupDetailOverlay({
     if (!visible) return null;
 
     return (
-        <Animated.View style={[StyleSheet.absoluteFill, styles.container, { backgroundColor: isDark ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.8)' }, containerAnimatedStyle]}>
-            {/* Header - Transparent/Minimal */}
-            <View style={[styles.header, { paddingTop: insets.top }]}>
-                <Pressable
-                    style={[styles.closeButton, isDeleting && { opacity: 0.5 }]}
-                    onPress={handleClose}
-                    disabled={isDeleting}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('close')}
-                    accessibilityState={{ disabled: isDeleting }}
-                >
-                    <Ionicons name="close" size={28} color={colors.text} />
-                </Pressable>
-                <View style={{ flex: 1 }} />
+        <Animated.View accessibilityViewIsModal testID="similar-detail" style={[StyleSheet.absoluteFill, styles.container, {
+            backgroundColor: colors.background,
+            paddingTop: insets.top + 8,
+            paddingBottom: UI_METRICS.dockHeight + insets.bottom,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+        }, containerAnimatedStyle]}>
+            <View style={styles.header}>
+                <View style={styles.heading}>
+                    <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>{t('similar_group_detail_title')}</Text>
+                    <Text accessibilityLiveRegion="polite" style={[styles.summary, { color: colors.textSecondary }]}>
+                        {selectedIds.size > 0 ? t('similar_selected_count', { count: selectedIds.size }) : t('scan_photo_count', { count: photos.length })}
+                    </Text>
+                </View>
                 {selectedIds.size > 0 && (
                     <Pressable
                         style={[styles.deleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
@@ -386,10 +304,21 @@ export function SimilarGroupDetailOverlay({
                         accessibilityLabel={t('similar_delete_selected')}
                         accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
                     >
-                        <Ionicons name="trash" size={20} color={colors.dangerForeground} />
+                        <Ionicons name="trash-outline" size={20} color={colors.dangerForeground} />
                     </Pressable>
                 )}
+                <Pressable
+                    style={[styles.closeButton, isDeleting && { opacity: 0.5 }]}
+                    onPress={handleClose}
+                    disabled={isDeleting}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('close')}
+                    accessibilityState={{ disabled: isDeleting }}
+                >
+                    <Ionicons name="close-outline" size={24} color={colors.text} />
+                </Pressable>
             </View>
+            <Text style={[styles.hint, { color: colors.textSecondary }]}>{t(selectedIds.size > 0 ? 'similar_toggle_hint' : 'similar_select_hint')}</Text>
 
             {/* Grid */}
             <View style={{ flex: 1 }}>
@@ -398,56 +327,53 @@ export function SimilarGroupDetailOverlay({
                     renderItem={renderPhotoItem}
                     keyExtractor={(item) => item.assetId}
                     numColumns={COLUMN_COUNT}
-                    // The dock is absolute-positioned: reserve its 65dp height,
-                    // the bottom safe area, and 24dp of space for the final row.
-                    contentContainerStyle={[styles.grid, { paddingBottom: insets.bottom + 89 }]}
-                    style={{ opacity: isAnimating ? 0 : 1 }}
+                    contentContainerStyle={styles.grid}
                 />
-
-                {/* Animation Overlay */}
-                {isAnimating && (
-                    <View style={StyleSheet.absoluteFill}>
-                        {photos.slice(0, 15).map((photo, index) => (
-                            <AnimatedPhotoItem
-                                key={photo.assetId}
-                                item={photo}
-                                index={index}
-                                total={Math.min(photos.length, 15)}
-                            />
-                        ))}
-                    </View>
-                )}
             </View>
 
             {/* Preview Modal */}
             {previewPhoto && (
-                <Modal visible={true} transparent animationType="fade" onRequestClose={handleClosePreview}>
-                    <View style={styles.previewOverlay}>
-                        <Pressable
-                            style={[styles.previewClose, isDeleting && { opacity: 0.5 }]}
-                            onPress={handleClosePreview}
-                            disabled={isDeleting}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('close')}
-                            accessibilityState={{ disabled: isDeleting }}
-                        >
-                            <Ionicons name="close" size={32} color="#FFF" />
-                        </Pressable>
-                        <Pressable
-                            style={[styles.previewDeleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
-                            onPress={handleDeleteFromPreview}
-                            disabled={isDeleting}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('delete')}
-                            accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
-                        >
-                            <Ionicons name="trash" size={24} color={colors.dangerForeground} />
-                        </Pressable>
-                        <Image
-                            source={{ uri: previewPhoto.uri }}
-                            style={styles.previewImage}
-                            resizeMode="contain"
-                        />
+                <Modal visible={true} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={handleClosePreview}>
+                    <View accessibilityViewIsModal testID="similar-preview" style={[styles.previewOverlay, {
+                        backgroundColor: colors.background,
+                        paddingTop: insets.top + 8,
+                        paddingBottom: insets.bottom,
+                        paddingLeft: insets.left,
+                        paddingRight: insets.right,
+                    }]}>
+                        <View style={styles.previewHeader}>
+                            <Text accessibilityRole="header" style={[styles.previewTitle, { color: colors.text }]}>{t('photo_detail_title')}</Text>
+                            <Pressable
+                                style={[styles.previewClose, isDeleting && { opacity: 0.5 }]}
+                                onPress={handleClosePreview}
+                                disabled={isDeleting}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('close')}
+                                accessibilityState={{ disabled: isDeleting }}
+                            >
+                                <Ionicons name="close-outline" size={24} color={colors.text} />
+                            </Pressable>
+                            <Pressable
+                                style={[styles.previewDeleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
+                                onPress={handleDeleteFromPreview}
+                                disabled={isDeleting}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('delete')}
+                                accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
+                            >
+                                <Ionicons name="trash-outline" size={20} color={colors.dangerForeground} />
+                            </Pressable>
+                        </View>
+                        <View style={styles.previewMedia}>
+                            <Image
+                                accessible
+                                accessibilityRole="image"
+                                accessibilityLabel={t('photo_detail_title')}
+                                source={{ uri: previewPhoto.uri }}
+                                style={styles.previewImage}
+                                resizeMode="contain"
+                            />
+                        </View>
                     </View>
                 </Modal>
             )}
@@ -462,28 +388,29 @@ const styles = StyleSheet.create({
     header: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 16,
+        paddingHorizontal: UI_METRICS.pageInset,
         paddingBottom: 12,
-        // No border for cleaner look in overlay
+        gap: 12,
     },
+    heading: { flex: 1, minWidth: 0, gap: 4 },
     closeButton: {
         minWidth: 44,
         minHeight: 44,
         alignItems: 'center',
         justifyContent: 'center',
         padding: 4,
-        backgroundColor: 'rgba(0,0,0,0.1)', // Subtle background for visibility
-        borderRadius: 20,
+        flexShrink: 0,
+        borderRadius: UI_METRICS.buttonRadius,
     },
     title: {
-        flex: 1,
-        fontSize: 18,
-        fontWeight: 'bold',
-        marginLeft: 12,
+        ...TYPOGRAPHY.pageTitle,
     },
+    summary: { ...TYPOGRAPHY.secondary },
+    hint: { ...TYPOGRAPHY.secondary, paddingHorizontal: UI_METRICS.pageInset, paddingBottom: 16 },
     deleteButton: {
         minWidth: 44,
         minHeight: 44,
+        flexShrink: 0,
         alignItems: 'center',
         justifyContent: 'center',
         padding: 10,
@@ -491,10 +418,11 @@ const styles = StyleSheet.create({
     },
     grid: {
         paddingHorizontal: 12,
+        paddingBottom: 20,
     },
     photoItem: {
-        width: ITEM_SIZE,
-        height: ITEM_SIZE,
+        width: '33.333333%',
+        aspectRatio: 1,
         padding: 4,
     },
     photoImage: {
@@ -514,30 +442,29 @@ const styles = StyleSheet.create({
     },
     previewOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.95)',
-        justifyContent: 'center',
-        alignItems: 'center',
     },
+    previewHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: UI_METRICS.pageInset, paddingBottom: 12 },
+    previewTitle: { ...TYPOGRAPHY.sectionTitle, flex: 1, minWidth: 0 },
+    previewMedia: { flex: 1, minHeight: 0 },
     previewClose: {
         minWidth: 44,
         minHeight: 44,
         alignItems: 'center',
         justifyContent: 'center',
-        position: 'absolute',
-        top: 50,
-        left: 20,
-        zIndex: 10,
+        flexShrink: 0,
+        borderRadius: UI_METRICS.buttonRadius,
     },
     previewDeleteButton: {
-        position: 'absolute',
-        top: 50,
-        right: 20,
-        padding: 12,
-        borderRadius: 25,
-        zIndex: 10,
+        minWidth: 44,
+        minHeight: 44,
+        flexShrink: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 10,
+        borderRadius: UI_METRICS.buttonRadius,
     },
     previewImage: {
-        width: '90%',
-        height: '70%',
+        width: '100%',
+        height: '100%',
     },
 });

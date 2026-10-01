@@ -398,173 +398,175 @@ export default function ScanResultsScreen() {
             paddingRight: insets.right,
             backgroundColor: colors.background,
         }]}>
-            <Text accessibilityRole="header" style={[styles.headerTitle, { color: colors.text }]}>{t('tab_scan_results')}</Text>
+            <View testID="scan-results-main" style={styles.mainContent} accessibilityElementsHidden={!!selectedSimilarGroup} importantForAccessibility={selectedSimilarGroup ? 'no-hide-descendants' : 'auto'}>
+                <Text accessibilityRole="header" style={[styles.headerTitle, { color: colors.text }]}>{t('tab_scan_results')}</Text>
 
-            {/* Tabs */}
-            <View style={styles.tabs}>
-                <Pressable
-                    accessibilityRole="tab"
-                    accessibilityLabel={t('scan_tab_blur')}
-                    accessibilityState={{ selected: activeTab === 'blur' }}
-                    style={[styles.tab, activeTab === 'blur' && { borderBottomColor: colors.primary }]}
-                    onPress={() => setActiveTab('blur')}
-                >
-                    <Text
-                        style={[
-                            styles.tabText,
-                            { color: activeTab === 'blur' ? colors.primary : colors.textSecondary },
-                        ]}
-                    >
-                        {t('scan_tab_blur' as any)}
-                    </Text>
-                </Pressable>
-
-                <Pressable
-                    accessibilityRole="tab"
-                    accessibilityLabel={t('scan_tab_similar')}
-                    accessibilityState={{ selected: activeTab === 'similar' }}
-                    style={[styles.tab, activeTab === 'similar' && { borderBottomColor: colors.primary }]}
-                    onPress={() => setActiveTab('similar')}
-                >
-                    <Text
-                        style={[
-                            styles.tabText,
-                            { color: activeTab === 'similar' ? colors.primary : colors.textSecondary },
-                        ]}
-                    >
-                        {t('scan_tab_similar' as any)}
-                    </Text>
-                </Pressable>
-
-                {enableAIClassification ? (
+                {/* Tabs */}
+                <View style={styles.tabs}>
                     <Pressable
                         accessibilityRole="tab"
-                        accessibilityLabel={t('scan_tab_ai')}
-                        accessibilityState={{ selected: activeTab === 'ai' }}
-                        style={[styles.tab, styles.categoryTab, activeTab === 'ai' && { borderBottomColor: colors.primary }]}
-                        onPress={() => setActiveTab('ai')}
+                        accessibilityLabel={t('scan_tab_blur')}
+                        accessibilityState={{ selected: activeTab === 'blur' }}
+                        style={[styles.tab, activeTab === 'blur' && { borderBottomColor: colors.primary }]}
+                        onPress={() => setActiveTab('blur')}
                     >
                         <Text
                             style={[
                                 styles.tabText,
-                                { color: activeTab === 'ai' ? colors.primary : colors.textSecondary },
+                                { color: activeTab === 'blur' ? colors.primary : colors.textSecondary },
                             ]}
                         >
-                            {t('scan_tab_ai' as any)}
+                            {t('scan_tab_blur' as any)}
                         </Text>
                     </Pressable>
-                ) : null}
+
+                    <Pressable
+                        accessibilityRole="tab"
+                        accessibilityLabel={t('scan_tab_similar')}
+                        accessibilityState={{ selected: activeTab === 'similar' }}
+                        style={[styles.tab, activeTab === 'similar' && { borderBottomColor: colors.primary }]}
+                        onPress={() => setActiveTab('similar')}
+                    >
+                        <Text
+                            style={[
+                                styles.tabText,
+                                { color: activeTab === 'similar' ? colors.primary : colors.textSecondary },
+                            ]}
+                        >
+                            {t('scan_tab_similar' as any)}
+                        </Text>
+                    </Pressable>
+
+                    {enableAIClassification ? (
+                        <Pressable
+                            accessibilityRole="tab"
+                            accessibilityLabel={t('scan_tab_ai')}
+                            accessibilityState={{ selected: activeTab === 'ai' }}
+                            style={[styles.tab, styles.categoryTab, activeTab === 'ai' && { borderBottomColor: colors.primary }]}
+                            onPress={() => setActiveTab('ai')}
+                        >
+                            <Text
+                                style={[
+                                    styles.tabText,
+                                    { color: activeTab === 'ai' ? colors.primary : colors.textSecondary },
+                                ]}
+                            >
+                                {t('scan_tab_ai' as any)}
+                            </Text>
+                        </Pressable>
+                    ) : null}
+                </View>
+
+                {/* Content */}
+                {activeTab === 'ai' ? (
+                    <View style={styles.aiContainer}>
+                        {aiLoading ? (
+                            <View style={styles.loadingContainer}>
+                                <ActivityIndicator size="large" color={colors.primary} />
+                                <Text style={{ color: colors.textSecondary, marginTop: 10 }}>{t('scan_organizing')}</Text>
+                            </View>
+                        ) : (
+                            <FlatList
+                                data={[]} // Main list is empty, utilizing ListHeaderComponent
+                                contentContainerStyle={styles.categoryContent}
+                                renderItem={() => null}
+                                ListHeaderComponent={
+                                    <>
+                                        {/* People Section */}
+                                        <View style={styles.sectionHeader}>
+                                            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                                                {t('ai_category_people' as any)}
+                                            </Text>
+                                            <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_group_count', { count: peopleGroups.length })}</Text>
+                                        </View>
+                                        <FlatList
+                                            data={peopleGroups}
+                                            horizontal
+                                            showsHorizontalScrollIndicator={false}
+                                            renderItem={renderCategoryCard}
+                                            keyExtractor={item => item.id}
+                                            contentContainerStyle={styles.horizontalList}
+                                            ListEmptyComponent={<Text style={[styles.categoryEmpty, { color: colors.textSecondary }]}>{t('scan_no_people')}</Text>}
+                                        />
+
+                                        {/* Objects Section */}
+                                        <View style={styles.sectionHeader}>
+                                            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                                                {t('scan_objects_scenes')}
+                                            </Text>
+                                            <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_category_count', { count: objectGroups.length })}</Text>
+                                        </View>
+                                        <FlatList
+                                            data={objectGroups}
+                                            horizontal
+                                            showsHorizontalScrollIndicator={false}
+                                            renderItem={renderCategoryCard}
+                                            keyExtractor={item => item.id}
+                                            contentContainerStyle={styles.horizontalList}
+                                            ListEmptyComponent={<Text style={[styles.categoryEmpty, { color: colors.textSecondary }]}>{t('scan_no_results')}</Text>}
+                                        />
+
+                                        {/* Uncategorized Section */}
+                                        {uncategorizedGroup && (
+                                            <>
+                                                <View style={styles.sectionHeader}>
+                                                    <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                                                        {t('scan_uncategorized')}
+                                                    </Text>
+                                                    <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_photo_count', { count: uncategorizedGroup.count })}</Text>
+                                                </View>
+                                                <FlatList
+                                                    data={[uncategorizedGroup]}
+                                                    horizontal
+                                                    showsHorizontalScrollIndicator={false}
+                                                    renderItem={renderCategoryCard}
+                                                    keyExtractor={item => item.id}
+                                                    contentContainerStyle={styles.horizontalList}
+                                                />
+                                            </>
+                                        )}
+                                    </>
+                                }
+                            />
+                        )}
+                    </View>
+                ) : loading ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={colors.primary} />
+                    </View>
+                ) : activeTab === 'blur' ? (
+                    <FlatList<BlurryPhoto>
+                        data={blurryPhotos}
+                        renderItem={renderBlurryItem}
+                        keyExtractor={(item) => item.assetId}
+                        contentContainerStyle={styles.listContent}
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <Ionicons name="checkmark-circle" size={64} color={colors.textSecondary} />
+                                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                                    {t('scan_no_blurry')}
+                                </Text>
+                            </View>
+                        }
+                    />
+                ) : (
+                    <FlatList<SimilarGroup>
+                        data={sortedSimilarGroups}
+                        renderItem={renderSimilarItem}
+                        keyExtractor={(item) => item.groupId}
+                        contentContainerStyle={styles.listContent}
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <Ionicons name="checkmark-circle" size={64} color={colors.textSecondary} />
+                                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                                    {t('scan_no_similar')}
+                                </Text>
+                            </View>
+                        }
+                    />
+                )}
+
             </View>
-
-            {/* Content */}
-            {activeTab === 'ai' ? (
-                <View style={styles.aiContainer}>
-                    {aiLoading ? (
-                        <View style={styles.loadingContainer}>
-                            <ActivityIndicator size="large" color={colors.primary} />
-                            <Text style={{ color: colors.textSecondary, marginTop: 10 }}>{t('scan_organizing')}</Text>
-                        </View>
-                    ) : (
-                        <FlatList
-                            data={[]} // Main list is empty, utilizing ListHeaderComponent
-                            contentContainerStyle={styles.categoryContent}
-                            renderItem={() => null}
-                            ListHeaderComponent={
-                                <>
-                                    {/* People Section */}
-                                    <View style={styles.sectionHeader}>
-                                        <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                                            {t('ai_category_people' as any)}
-                                        </Text>
-                                        <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_group_count', { count: peopleGroups.length })}</Text>
-                                    </View>
-                                    <FlatList
-                                        data={peopleGroups}
-                                        horizontal
-                                        showsHorizontalScrollIndicator={false}
-                                        renderItem={renderCategoryCard}
-                                        keyExtractor={item => item.id}
-                                        contentContainerStyle={styles.horizontalList}
-                                        ListEmptyComponent={<Text style={[styles.categoryEmpty, { color: colors.textSecondary }]}>{t('scan_no_people')}</Text>}
-                                    />
-
-                                    {/* Objects Section */}
-                                    <View style={styles.sectionHeader}>
-                                        <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                                            {t('scan_objects_scenes')}
-                                        </Text>
-                                        <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_category_count', { count: objectGroups.length })}</Text>
-                                    </View>
-                                    <FlatList
-                                        data={objectGroups}
-                                        horizontal
-                                        showsHorizontalScrollIndicator={false}
-                                        renderItem={renderCategoryCard}
-                                        keyExtractor={item => item.id}
-                                        contentContainerStyle={styles.horizontalList}
-                                        ListEmptyComponent={<Text style={[styles.categoryEmpty, { color: colors.textSecondary }]}>{t('scan_no_results')}</Text>}
-                                    />
-
-                                    {/* Uncategorized Section */}
-                                    {uncategorizedGroup && (
-                                        <>
-                                            <View style={styles.sectionHeader}>
-                                                <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                                                    {t('scan_uncategorized')}
-                                                </Text>
-                                                <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{t('scan_photo_count', { count: uncategorizedGroup.count })}</Text>
-                                            </View>
-                                            <FlatList
-                                                data={[uncategorizedGroup]}
-                                                horizontal
-                                                showsHorizontalScrollIndicator={false}
-                                                renderItem={renderCategoryCard}
-                                                keyExtractor={item => item.id}
-                                                contentContainerStyle={styles.horizontalList}
-                                            />
-                                        </>
-                                    )}
-                                </>
-                            }
-                        />
-                    )}
-                </View>
-            ) : loading ? (
-                <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="large" color={colors.primary} />
-                </View>
-            ) : activeTab === 'blur' ? (
-                <FlatList<BlurryPhoto>
-                    data={blurryPhotos}
-                    renderItem={renderBlurryItem}
-                    keyExtractor={(item) => item.assetId}
-                    contentContainerStyle={styles.listContent}
-                    ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <Ionicons name="checkmark-circle" size={64} color={colors.textSecondary} />
-                            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                                {t('scan_no_blurry')}
-                            </Text>
-                        </View>
-                    }
-                />
-            ) : (
-                <FlatList<SimilarGroup>
-                    data={sortedSimilarGroups}
-                    renderItem={renderSimilarItem}
-                    keyExtractor={(item) => item.groupId}
-                    contentContainerStyle={styles.listContent}
-                    ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <Ionicons name="checkmark-circle" size={64} color={colors.textSecondary} />
-                            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                                {t('scan_no_similar')}
-                            </Text>
-                        </View>
-                    }
-                />
-            )}
-
             {/* Similar Group Detail Overlay */}
             <SimilarGroupDetailOverlay
                 visible={!!selectedSimilarGroup}
@@ -768,6 +770,7 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
+    mainContent: { flex: 1 },
     headerTitle: {
         ...TYPOGRAPHY.pageTitle,
         paddingHorizontal: UI_METRICS.pageInset,
