@@ -1,9 +1,10 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
+import { ConfirmationSheet } from '../../components/ConfirmationSheet';
 import { GlassContainer } from '../../components/GlassContainer';
 import { ScanBatchModal } from '../../components/ScanBatchModal';
 import { SegmentedControl } from '../../components/SegmentedControl';
@@ -502,186 +503,77 @@ export default function SettingsScreen() {
                 onStartScan={handleScanBatch}
             />
 
-            {/* Custom AI Warning Modal */}
             {showAIWarningModal && (
-                <Modal visible transparent animationType="fade" onRequestClose={() => setShowAIWarningModal(false)}>
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
-                    <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 25, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
-                        <View style={{ marginBottom: 15, alignItems: 'center' }}>
-                            <Ionicons name="warning" size={48} color={colors.warning} />
-                        </View>
-                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 10, textAlign: 'center' }}>
-                            {t('ai_classification_warning_title' as any)}
-                        </Text>
-                        <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 25, textAlign: 'center', lineHeight: 22 }}>
-                            {t('ai_classification_warning_message' as any)}
-                        </Text>
-                        <View style={{ flexDirection: 'row', gap: 12 }}>
-                            <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F0F0F0', alignItems: 'center' }}
-                                onPress={() => setShowAIWarningModal(false)}
-                            >
-                                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('ai_classification_warning_cancel' as any)}</Text>
-                            </Pressable>
-                            <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.actionBackground, alignItems: 'center' }}
-                                onPress={confirmEnableAIClassification}
-                            >
-                                <Text style={{ color: colors.actionForeground, fontWeight: 'bold' }}>{t('ai_classification_warning_confirm' as any)}</Text>
-                            </Pressable>
-                        </View>
-                    </View>
-                </View>
-                </Modal>
+                <ConfirmationSheet
+                    title={t('ai_classification_warning_title')}
+                    message={t('ai_classification_warning_message')}
+                    cancelLabel={t('ai_classification_warning_cancel')}
+                    confirmLabel={t('ai_classification_warning_confirm')}
+                    onCancel={() => setShowAIWarningModal(false)}
+                    onConfirm={confirmEnableAIClassification}
+                />
             )}
 
-            {/* Custom Reset Confirm Modal */}
             {showResetConfirm && (
-                <Modal visible transparent animationType="fade" onRequestClose={() => setShowResetConfirm(false)}>
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
-                    <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
-                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 10, textAlign: 'center' }}>
-                            {language === 'zh' ? '重置 AI 扫描进度' : 'Reset AI Scanning Progress'}
-                        </Text>
-                        <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 20, textAlign: 'center', lineHeight: 20 }}>
-                            {t('settings_reset_scan_desc')}
-                        </Text>
-                        <View style={{ flexDirection: 'row', gap: 10 }}>
-                            <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F0F0F0', alignItems: 'center' }}
-                                onPress={() => setShowResetConfirm(false)}
-                            >
-                                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
-                            </Pressable>
-                            <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.dangerBackground, alignItems: 'center' }}
-                                onPress={confirmResetScanner}
-                            >
-                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('settings_confirm_reset')}</Text>
-                            </Pressable>
-                        </View>
-                    </View>
-                </View>
-                </Modal>
+                <ConfirmationSheet
+                    title={language === 'zh' ? '重置 AI 扫描进度' : 'Reset AI Scanning Progress'}
+                    message={t('settings_reset_scan_desc')}
+                    confirmLabel={t('settings_confirm_reset')}
+                    destructive
+                    onCancel={() => setShowResetConfirm(false)}
+                    onConfirm={confirmResetScanner}
+                />
             )}
 
-            {/* Reset Modal Status Confirm Modal */}
             {showResetModalStatusConfirm && (
-                <Modal visible transparent animationType="fade" onRequestClose={() => { setShowResetSuccess(false); setShowResetModalStatusConfirm(false); }}>
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
-                    <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
-
-                        {!showResetSuccess ? (
-                            <>
-                                <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 10, textAlign: 'center' }}>
-                                    {language === 'zh' ? '重置弹窗状态' : 'Reset Modal Status'}
-                                </Text>
-                                <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 20, textAlign: 'center', lineHeight: 20 }}>
-                                    {language === 'zh' ? '确定要重置公告和 AI 引导弹窗的状态吗？下次启动 App 时它们将重新显示。' : 'Reset status for announcement and AI guide? They will reappear on next launch.'}
-                                </Text>
-                                <View style={{ flexDirection: 'row', gap: 10 }}>
-                                    <Pressable
-                                        style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F0F0F0', alignItems: 'center' }}
-                                        onPress={() => setShowResetModalStatusConfirm(false)}
-                                    >
-                                        <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
-                                    </Pressable>
-                                    <Pressable
-                                        style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.actionBackground, alignItems: 'center' }}
-                                        onPress={() => {
-                                            useSettingsStore.getState().dismissAnnouncement(null as any);
-                                            useSettingsStore.getState().dismissAIGuide(null as any);
-                                            setShowResetSuccess(true);
-                                            setTimeout(() => {
-                                                setShowResetSuccess(false);
-                                                setShowResetModalStatusConfirm(false);
-                                            }, 1500);
-                                        }}
-                                    >
-                                        <Text style={{ color: colors.actionForeground, fontWeight: '600' }}>{t('confirm')}</Text>
-                                    </Pressable>
-                                </View>
-                            </>
-                        ) : (
-                            <View style={{ alignItems: 'center', paddingVertical: 10 }}>
-                                <Ionicons name="checkmark-circle" size={48} color={colors.primary} style={{ marginBottom: 10 }} />
-                                <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.text }}>
-                                    {language === 'zh' ? '重置成功' : 'Reset Successful'}
-                                </Text>
-                            </View>
-                        )}
-
-                    </View>
-                </View>
-                </Modal>
+                <ConfirmationSheet
+                    title={showResetSuccess
+                        ? (language === 'zh' ? '重置成功' : 'Reset Successful')
+                        : (language === 'zh' ? '重置弹窗状态' : 'Reset Modal Status')}
+                    message={showResetSuccess ? '' : (language === 'zh' ? '确定要重置公告和 AI 引导弹窗的状态吗？下次启动 App 时它们将重新显示。' : 'Reset status for announcement and AI guide? They will reappear on next launch.')}
+                    hideActions={showResetSuccess}
+                    confirmLabel={t('confirm')}
+                    onCancel={() => { setShowResetSuccess(false); setShowResetModalStatusConfirm(false); }}
+                    onConfirm={() => {
+                        useSettingsStore.getState().dismissAnnouncement(null as any);
+                        useSettingsStore.getState().dismissAIGuide(null as any);
+                        setShowResetSuccess(true);
+                        setTimeout(() => {
+                            setShowResetSuccess(false);
+                            setShowResetModalStatusConfirm(false);
+                        }, 1500);
+                    }}
+                />
             )}
 
-            {/* Reset Photos Confirm Modal */}
             {showResetPhotosConfirm && (
-                <Modal visible transparent animationType="fade" onRequestClose={() => setShowResetPhotosConfirm(false)}>
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
-                    <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
-                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 10, textAlign: 'center' }}>
-                            {t('settings_reset_photos')}
-                        </Text>
-                        <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 20, textAlign: 'center', lineHeight: 20 }}>
-                            {t('settings_reset_photos_desc')}
-                        </Text>
-                        <View style={{ flexDirection: 'row', gap: 10 }}>
-                            <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F0F0F0', alignItems: 'center' }}
-                                onPress={() => setShowResetPhotosConfirm(false)}
-                            >
-                                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
-                            </Pressable>
-                            <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.dangerBackground, alignItems: 'center', opacity: isConfirmingDeletion ? 0.5 : 1 }}
-                                onPress={() => {
-                                    resetPhotoProgress();
-                                    setShowResetPhotosConfirm(false);
-                                }}
-                                disabled={isConfirmingDeletion}
-                            >
-                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('settings_confirm_reset')}</Text>
-                            </Pressable>
-                        </View>
-                    </View>
-                </View>
-                </Modal>
+                <ConfirmationSheet
+                    title={t('settings_reset_photos')}
+                    message={t('settings_reset_photos_desc')}
+                    confirmLabel={t('settings_confirm_reset')}
+                    destructive
+                    confirmDisabled={isConfirmingDeletion}
+                    onCancel={() => setShowResetPhotosConfirm(false)}
+                    onConfirm={() => {
+                        resetPhotoProgress();
+                        setShowResetPhotosConfirm(false);
+                    }}
+                />
             )}
 
-            {/* Reset Videos Confirm Modal */}
             {showResetVideosConfirm && (
-                <Modal visible transparent animationType="fade" onRequestClose={() => setShowResetVideosConfirm(false)}>
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }]}>
-                    <View style={{ width: '80%', backgroundColor: colors.surface, borderRadius: 20, padding: 20, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5 }}>
-                        <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 10, textAlign: 'center' }}>
-                            {t('settings_reset_videos')}
-                        </Text>
-                        <Text style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 20, textAlign: 'center', lineHeight: 20 }}>
-                            {t('settings_reset_videos_desc')}
-                        </Text>
-                        <View style={{ flexDirection: 'row', gap: 10 }}>
-                            <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : '#F0F0F0', alignItems: 'center' }}
-                                onPress={() => setShowResetVideosConfirm(false)}
-                            >
-                                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('cancel')}</Text>
-                            </Pressable>
-                            <Pressable
-                                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: colors.dangerBackground, alignItems: 'center', opacity: isConfirmingVideoTrash ? 0.5 : 1 }}
-                                onPress={() => {
-                                    resetVideoProgress();
-                                    setShowResetVideosConfirm(false);
-                                }}
-                                disabled={isConfirmingVideoTrash}
-                            >
-                                <Text style={{ color: colors.dangerForeground, fontWeight: '600' }}>{t('settings_confirm_reset')}</Text>
-                            </Pressable>
-                        </View>
-                    </View>
-                </View>
-                </Modal>
+                <ConfirmationSheet
+                    title={t('settings_reset_videos')}
+                    message={t('settings_reset_videos_desc')}
+                    confirmLabel={t('settings_confirm_reset')}
+                    destructive
+                    confirmDisabled={isConfirmingVideoTrash}
+                    onCancel={() => setShowResetVideosConfirm(false)}
+                    onConfirm={() => {
+                        resetVideoProgress();
+                        setShowResetVideosConfirm(false);
+                    }}
+                />
             )}
         </View>
     );

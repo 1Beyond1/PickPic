@@ -8,6 +8,7 @@ const mockSettings = {
   hasHydrated: true, setGroupSize: jest.fn(), setDisplayOrder: jest.fn(),
   setTheme: jest.fn(), setLanguage: jest.fn(), setSelectedAlbums: jest.fn(),
   setEnableAIClassification: jest.fn(), toggleDevOptions: jest.fn(),
+  dismissAnnouncement: jest.fn(), dismissAIGuide: jest.fn(),
 };
 const mockMedia = {
   photoProcessedIds: ['photo'], videoProcessedIds: ['video'],
@@ -69,7 +70,7 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
-  Object.assign(mockSettings, { theme: 'light', language: 'zh', displayOrder: 'random', hasHydrated: true, enableAIClassification: false });
+  Object.assign(mockSettings, { theme: 'light', language: 'zh', displayOrder: 'random', hasHydrated: true, enableAIClassification: false, showDevOptions: false });
   Object.assign(mockMedia, { isConfirmingDeletion: false, isConfirmingVideoTrash: false });
   Object.assign(mockScanner, { isRunning: false, isFinalizing: false });
   jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
@@ -166,6 +167,23 @@ it('retains deletion-in-progress guards on reset entries', async () => {
   expectNoReset();
 });
 
+it.each([
+  [zh.settings_reset_photos, 'isConfirmingDeletion'],
+  [zh.settings_reset_videos, 'isConfirmingVideoTrash'],
+] as const)('keeps %s cancellable if deletion starts while its confirmation is open', async (label, lock) => {
+  const view = render(<SettingsScreen />);
+  await waitFor(() => expect(mockMedia.getVisibleProcessedCounts).toHaveBeenCalled());
+  openData();
+  fireEvent.press(screen.getByRole('button', { name: label }));
+  mockMedia[lock] = true;
+  view.rerender(<SettingsScreen />);
+  fireEvent.press(screen.getByText(zh.settings_confirm_reset));
+  expectNoReset();
+  fireEvent(visibleModal(), 'requestClose');
+  expect(screen.queryByText(zh.settings_confirm_reset)).toBeNull();
+  expectNoReset();
+});
+
 it('reports scanner reset failure instead of treating it as a successful reset', async () => {
   mockScanner.resetScan.mockRejectedValueOnce(new Error('busy'));
   const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
@@ -193,6 +211,32 @@ it('requires classification consent and does not alter it when the consent is di
   fireEvent(toggle, 'valueChange', true);
   fireEvent.press(screen.getByText(zh.ai_classification_warning_confirm));
   expect(mockSettings.setEnableAIClassification).toHaveBeenCalledWith(true);
+});
+
+it('resets only onboarding read flags and shows success in the same modal before auto-closing', async () => {
+  mockSettings.showDevOptions = true;
+  render(<SettingsScreen />);
+  await waitFor(() => expect(mockMedia.getVisibleProcessedCounts).toHaveBeenCalled());
+  fireEvent.press(screen.getByText('重置弹窗已读状态'));
+  fireEvent(visibleModal(), 'requestClose');
+  expect(mockSettings.dismissAnnouncement).not.toHaveBeenCalled();
+  expect(mockSettings.dismissAIGuide).not.toHaveBeenCalled();
+  fireEvent.press(screen.getByText('重置弹窗已读状态'));
+  const modal = visibleModal();
+  jest.useFakeTimers();
+  try {
+    fireEvent.press(screen.getByText(zh.confirm));
+    expect(mockSettings.dismissAnnouncement).toHaveBeenCalledWith(null);
+    expect(mockSettings.dismissAIGuide).toHaveBeenCalledWith(null);
+    expectNoReset();
+    expect(screen.getByRole('header', { name: '重置成功' })).toBeTruthy();
+    expect(visibleModal()).toBe(modal);
+    expect(screen.queryByText(zh.confirm)).toBeNull();
+    act(() => jest.advanceTimersByTime(1500));
+    expect(screen.queryByText('重置成功')).toBeNull();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 it.each(['isRunning', 'isFinalizing'] as const)('disables classification while the scanner %s', async flag => {
