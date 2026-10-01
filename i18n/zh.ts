@@ -194,6 +194,7 @@ export default {
     scan_photo_unavailable: '暂时无法打开这张照片，请重试或返回查看其他照片。',
     retry: '重试',
     close: '关闭',
+    scan_close_category: '关闭分类',
 
     // AI Categories
     ai_category_people: '人物',

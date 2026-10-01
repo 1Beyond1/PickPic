@@ -194,6 +194,7 @@ export default {
     scan_photo_unavailable: 'This photo could not be opened. Try again or return to other photos.',
     retry: 'Retry',
     close: 'Close',
+    scan_close_category: 'Close category',
 
     // AI Categories
     ai_category_people: 'People',

@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Alert, FlatList, StyleSheet } from 'react-native';
+import { Alert, FlatList, Modal, StyleSheet } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 
 let mockBottomInset = 24;
@@ -54,6 +54,34 @@ it.each([0, 24])('reserves the dock and safe area at the end of the grid (bottom
   // The absolute-positioned dock occupies 65dp plus its bottom safe area;
   // leave additional breathing room for the final photo/selection control.
   expect(padding).toBeGreaterThanOrEqual(65 + bottom + 16);
+});
+
+it('names the group close and selected-delete icon controls and provides reachable touch targets', async () => {
+  render(<SimilarGroupDetailOverlay {...props} />);
+  await waitFor(() => expect(screen.UNSAFE_getByType(FlatList).props.data).toHaveLength(2));
+  const close = screen.getByRole('button', { name: 'close' });
+  expect(StyleSheet.flatten(close.props.style)).toMatchObject({ minWidth: 44, minHeight: 44 });
+  const firstPhoto = screen.UNSAFE_root.findAll((node: { props: any }) => typeof node.props.onLongPress === 'function')[0];
+  fireEvent(firstPhoto!, 'longPress');
+  const deleteButton = screen.getByRole('button', { name: 'similar_delete_selected' });
+  expect(StyleSheet.flatten(deleteButton.props.style)).toMatchObject({ minWidth: 44, minHeight: 44 });
+  fireEvent.press(close);
+  expect(props.onClose).toHaveBeenCalledTimes(1);
+  expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+});
+
+it('names preview actions and allows closing without deleting or losing the group', async () => {
+  render(<SimilarGroupDetailOverlay {...props} />);
+  await waitFor(() => expect(screen.UNSAFE_getByType(FlatList).props.data).toHaveLength(2));
+  const firstPhoto = screen.UNSAFE_root.findAll((node: { props: any }) => typeof node.props.onLongPress === 'function')[0];
+  fireEvent.press(firstPhoto!);
+  const close = screen.getAllByRole('button', { name: 'close' }).find(button => StyleSheet.flatten(button.props.style).position === 'absolute')!;
+  expect(StyleSheet.flatten(close.props.style)).toMatchObject({ minWidth: 44, minHeight: 44 });
+  expect(screen.getByRole('button', { name: 'delete' }).props.accessibilityState).toMatchObject({ disabled: false, busy: false });
+  fireEvent.press(close);
+  expect(screen.UNSAFE_queryByType(Modal)).toBeNull();
+  expect(screen.UNSAFE_getByType(FlatList).props.data).toHaveLength(2);
+  expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
 });
 
 it('discards a delayed old group lookup after closing and opening a different group', async () => {

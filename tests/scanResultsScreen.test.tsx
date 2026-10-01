@@ -155,6 +155,35 @@ describe('scan result deletion safety', () => {
     expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
     expect(deleteButton.props.accessibilityState.disabled).toBe(false);
   });
+
+  it('keeps a successful native deletion successful even if best-effort index cleanup fails', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    (AssetRepository.removeAssetAndDerivedData as jest.Mock).mockRejectedValueOnce(new Error('SQLite busy'));
+    render(<ScanResultsScreen />);
+    fireEvent.press(await screen.findByRole('button', { name: 'scan_delete_blurry_title' }));
+    (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
+    await act(async () => { await alert.mock.calls[0][2]![1].onPress!(); });
+    await screen.findByText('scan_no_blurry');
+    expect(mockMediaState.removeDeletedAssets).toHaveBeenCalledWith(['blurred']);
+    expect(MediaLibrary.deleteAssetsAsync).toHaveBeenCalledTimes(1);
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'scan_delete_blurry_title' })).toBeNull();
+  });
+
+  it('does not republish a delayed full-access result after the visible media selection changes', async () => {
+    const staleRead = deferred<{ asset_id: string; blur_score: number; mean_luma: number }[]>();
+    (AssetRepository.getBlurryAssets as jest.Mock).mockReturnValueOnce(staleRead.promise).mockResolvedValue([]);
+    const view = render(<ScanResultsScreen />);
+    await waitFor(() => expect(AssetRepository.getBlurryAssets).toHaveBeenCalledTimes(1));
+    mockMediaState.mediaLibraryRefreshVersion += 1;
+    view.rerender(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    await act(async () => { staleRead.resolve([{ asset_id: 'old-hidden', blur_score: 5, mean_luma: 90 }]); });
+    expect(screen.queryByText('scan_blur_score')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'scan_delete_blurry_title' })).toBeNull();
+    expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
+  });
 });
 
 describe('category photo viewing', () => {
@@ -162,6 +191,19 @@ describe('category photo viewing', () => {
     mockMediaState.mediaLibraryRefreshVersion = 0;
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
     (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));
+  });
+
+  it('provides a named and reachable category close control without changing media', async () => {
+    render(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
+    await act(async () => { fireEvent.press(screen.getByText('Cat')); });
+    const close = screen.getByRole('button', { name: 'scan_close_category' });
+    expect(StyleSheet.flatten(close.props.style)).toMatchObject({ minWidth: 44, minHeight: 44 });
+    fireEvent.press(close);
+    expect(screen.UNSAFE_getAllByType(Modal).find(modal => modal.props.presentationStyle === 'pageSheet')?.props.visible).toBe(false);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
   });
 
   it('replaces a rejected media lookup with visible feedback and allows retry without closing the viewer', async () => {

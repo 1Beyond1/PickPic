@@ -593,6 +593,8 @@ export default function ScanResultsScreen() {
                         <Pressable
                             style={styles.closeButton}
                             onPress={() => setSelectedCategory(null)}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('scan_close_category')}
                         >
                             <Ionicons name="close-circle" size={30} color={colors.textSecondary} />
                         </Pressable>
@@ -942,6 +944,10 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
     },
     closeButton: {
+        minWidth: 44,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
         padding: 4,
     },
     gridContent: {

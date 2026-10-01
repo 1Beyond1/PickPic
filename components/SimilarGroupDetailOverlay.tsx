@@ -370,6 +370,9 @@ export function SimilarGroupDetailOverlay({
                     style={[styles.closeButton, isDeleting && { opacity: 0.5 }]}
                     onPress={handleClose}
                     disabled={isDeleting}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('close')}
+                    accessibilityState={{ disabled: isDeleting }}
                 >
                     <Ionicons name="close" size={28} color={colors.text} />
                 </Pressable>
@@ -379,6 +382,9 @@ export function SimilarGroupDetailOverlay({
                         style={[styles.deleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
                         onPress={handleDeleteSelected}
                         disabled={isDeleting}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('similar_delete_selected')}
+                        accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
                     >
                         <Ionicons name="trash" size={20} color={colors.dangerForeground} />
                     </Pressable>
@@ -421,6 +427,9 @@ export function SimilarGroupDetailOverlay({
                             style={[styles.previewClose, isDeleting && { opacity: 0.5 }]}
                             onPress={handleClosePreview}
                             disabled={isDeleting}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('close')}
+                            accessibilityState={{ disabled: isDeleting }}
                         >
                             <Ionicons name="close" size={32} color="#FFF" />
                         </Pressable>
@@ -428,6 +437,9 @@ export function SimilarGroupDetailOverlay({
                             style={[styles.previewDeleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
                             onPress={handleDeleteFromPreview}
                             disabled={isDeleting}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('delete')}
+                            accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
                         >
                             <Ionicons name="trash" size={24} color={colors.dangerForeground} />
                         </Pressable>
@@ -455,6 +467,10 @@ const styles = StyleSheet.create({
         // No border for cleaner look in overlay
     },
     closeButton: {
+        minWidth: 44,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
         padding: 4,
         backgroundColor: 'rgba(0,0,0,0.1)', // Subtle background for visibility
         borderRadius: 20,
@@ -466,6 +482,10 @@ const styles = StyleSheet.create({
         marginLeft: 12,
     },
     deleteButton: {
+        minWidth: 44,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
         padding: 10,
         borderRadius: 12,
     },
@@ -499,6 +519,10 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     previewClose: {
+        minWidth: 44,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
         position: 'absolute',
         top: 50,
         left: 20,
