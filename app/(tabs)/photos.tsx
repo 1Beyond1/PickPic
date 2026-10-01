@@ -49,6 +49,7 @@ export default function PhotosScreen() {
     const [showHome, setShowHome] = useState(true);
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [reviewPage, setReviewPage] = useState(0);
+    const [deckSize, setDeckSize] = useState({ width: 0, height: 0 });
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
@@ -508,7 +509,13 @@ export default function PhotosScreen() {
     }
 
     return (
-        <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
+        <View testID="photos-deck" style={[styles.container, {
+            paddingTop: insets.top,
+            paddingBottom: UI_METRICS.dockHeight + insets.bottom,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+            backgroundColor: colors.background,
+        }]}>
             <View style={styles.header}>
                 <View style={styles.deckHeaderRow}>
                     <Text style={[styles.headerTitle, { color: colors.text }]}>{t('photos_header')}</Text>
@@ -524,8 +531,12 @@ export default function PhotosScreen() {
                 </View>
             </View>
 
-            <View style={styles.deckContainer}>
-                {visiblePhotos.slice(0, 2).reverse().map((photo, index) => {
+            <View testID="photos-deck-viewport" style={styles.deckContainer} onLayout={({ nativeEvent }) => {
+                const { width: measuredWidth, height: measuredHeight } = nativeEvent.layout;
+                setDeckSize(current => current.width === measuredWidth && current.height === measuredHeight
+                    ? current : { width: measuredWidth, height: measuredHeight });
+            }}>
+                {deckSize.width > 40 && deckSize.height > 16 && visiblePhotos.slice(0, 2).reverse().map((photo, index) => {
                     const realIndex = visiblePhotos.indexOf(photo);
                     return (
                         <PhotoCard
@@ -533,6 +544,8 @@ export default function PhotosScreen() {
                             photo={photo}
                             index={realIndex}
                             total={visiblePhotos.length}
+                            maxWidth={Math.min(deckSize.width, width - insets.left - insets.right) - UI_METRICS.pageInset * 2}
+                            maxHeight={deckSize.height - 16}
                             onSwipeUp={() => handleSwipeUp(photo)}
                             onSwipeDown={(zoneId) => handleSwipeDown(photo, zoneId)}
                             onTap={() => handleTap(photo)}
@@ -544,15 +557,18 @@ export default function PhotosScreen() {
             </View>
 
             {/* Footer hints - collections disabled for v0.1.1 */}
-            <View style={styles.footerHints}>
-                <View style={styles.hintItem}>
-                    <Ionicons name="trash-outline" size={24} color={colors.danger} />
-                    <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('hint_swipe_up')}</Text>
+            <View style={styles.deckFooter}>
+                <View style={styles.footerHints}>
+                    <View style={styles.hintItem}>
+                        <Ionicons name="arrow-up-outline" size={20} color={colors.danger} />
+                        <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('hint_swipe_up')}</Text>
+                    </View>
+                    <View style={styles.hintItem}>
+                        <Ionicons name="arrow-down-outline" size={20} color={colors.textSecondary} />
+                        <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('hint_swipe_down')}</Text>
+                    </View>
                 </View>
-                <View style={styles.hintItem}>
-                    <Ionicons name="arrow-undo-outline" size={24} color={colors.textSecondary} />
-                    <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('hint_swipe_down')}</Text>
-                </View>
+                <Text style={[styles.queueHint, { color: colors.textSecondary }]}>{t('photos_queue_review_hint')}</Text>
             </View>
 
             {showNewAlbumModal && (
@@ -720,26 +736,29 @@ const styles = StyleSheet.create({
         paddingTop: 40,
     },
     header: {
-        paddingHorizontal: 24,
-        paddingTop: 26,
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingTop: 12,
         paddingBottom: 10,
     },
     headerTitle: {
-        fontSize: 24,
-        fontWeight: '600',
+        ...TYPOGRAPHY.pageTitle,
+        flex: 1,
+        minWidth: 0,
     },
     deckHeaderRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'baseline',
+        alignItems: 'center',
+        gap: 16,
     },
     deckCounter: {
-        fontSize: 13,
+        ...TYPOGRAPHY.secondary,
+        flexShrink: 0,
         fontVariant: ['tabular-nums'],
     },
     deckProgressTrack: {
         height: 2,
-        marginTop: 18,
+        marginTop: 12,
         borderRadius: 1,
         overflow: 'hidden',
     },
@@ -756,7 +775,17 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         justifyContent: 'space-around',
         width: '100%',
-        paddingBottom: 140,
+        gap: 16,
+    },
+    deckFooter: {
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingTop: 12,
+        paddingBottom: 16,
+        gap: 12,
+    },
+    queueHint: {
+        ...TYPOGRAPHY.caption,
+        textAlign: 'center',
     },
     dropZoneContainer: {
         flexDirection: 'row',
@@ -784,11 +813,13 @@ const styles = StyleSheet.create({
     },
     hintItem: {
         alignItems: 'center',
-        opacity: 0.6
+        flex: 1,
+        minWidth: 0,
     },
     hintText: {
         marginTop: 4,
-        fontSize: 12
+        ...TYPOGRAPHY.secondary,
+        textAlign: 'center',
     },
     emptyText: {
         fontSize: 20,

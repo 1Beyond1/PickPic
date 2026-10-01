@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import React, { useEffect, useState } from 'react';
-import { Dimensions, Image as RNImage, StyleSheet } from 'react-native';
+import { Image as RNImage, StyleSheet, useWindowDimensions } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Extrapolation,
@@ -11,16 +11,10 @@ import Animated, {
     withSpring,
     withTiming,
 } from 'react-native-reanimated';
-import { BORDER_RADIUS, SPACING } from '../constants/theme';
+import { BORDER_RADIUS } from '../constants/theme';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { PhotoAsset } from '../stores/useMediaStore';
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-// Card padding around the image
-const CARD_PADDING = SPACING.xs;
-const MAX_CARD_WIDTH = SCREEN_WIDTH * 0.88;
-const MAX_CARD_HEIGHT = SCREEN_HEIGHT * 0.58;
 const SWIPE_THRESHOLD = 120;
 
 interface DropZone {
@@ -39,6 +33,8 @@ interface PhotoCardProps {
     onHoverZone?: (zoneId: string | null) => void;
     enableCollections: boolean;
     dropZones: DropZone[];
+    maxWidth: number;
+    maxHeight: number;
 }
 
 export const PhotoCard: React.FC<PhotoCardProps> = ({
@@ -51,40 +47,35 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     onHoverZone,
     enableCollections,
     dropZones,
+    maxWidth,
+    maxHeight,
 }) => {
     const { colors } = useThemeColor();
-    const [cardWidth, setCardWidth] = useState(MAX_CARD_WIDTH);
-    const [cardHeight, setCardHeight] = useState(MAX_CARD_HEIGHT * 0.7);
+    const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = useWindowDimensions();
+    const [aspectRatio, setAspectRatio] = useState(1);
+    const cardWidth = Math.min(maxWidth, maxHeight * aspectRatio);
+    const cardHeight = cardWidth / aspectRatio;
 
-    // Load image dimensions and calculate card size to fit image
+    // The parent measures space left by the header, hints and Dock. Derive the
+    // fit on every resize; do not retain a window-sized card inside that space.
     useEffect(() => {
+        let active = true;
+        setAspectRatio(1);
         if (photo.uri) {
             RNImage.getSize(
                 photo.uri,
                 (imgWidth, imgHeight) => {
-                    const ratio = imgWidth / imgHeight;
-
-                    // Calculate dimensions to fit image within max bounds
-                    let width = MAX_CARD_WIDTH;
-                    let height = width / ratio;
-
-                    // If height exceeds max, scale down
-                    if (height > MAX_CARD_HEIGHT) {
-                        height = MAX_CARD_HEIGHT;
-                        width = height * ratio;
+                    if (active && imgWidth > 0 && imgHeight > 0 && Number.isFinite(imgWidth / imgHeight)) {
+                        setAspectRatio(imgWidth / imgHeight);
                     }
-
-                    // Add padding for card border
-                    setCardWidth(width + CARD_PADDING * 2);
-                    setCardHeight(height + CARD_PADDING * 2);
                 },
                 (error) => {
                     console.log('Failed to get image size:', error);
-                    setCardWidth(MAX_CARD_WIDTH);
-                    setCardHeight(MAX_CARD_HEIGHT * 0.7);
+                    if (active) setAspectRatio(1);
                 }
             );
         }
+        return () => { active = false; };
     }, [photo.uri]);
 
     const translateX = useSharedValue(0);
@@ -204,13 +195,11 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                     width: cardWidth,
                     height: cardHeight,
                     backgroundColor: colors.surface,
-                    borderColor: colors.border,
                 }
             ]}>
-                {/* Image fills card with small padding */}
                 <Image
                     source={{ uri: photo.uri }}
-                    style={[styles.image, { margin: CARD_PADDING }]}
+                    style={styles.image}
                     contentFit="contain"
                     transition={150}
                 />
@@ -222,18 +211,10 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
 const styles = StyleSheet.create({
     cardContainer: {
         position: 'absolute',
-        borderRadius: BORDER_RADIUS.xl,
+        borderRadius: BORDER_RADIUS.m,
         overflow: 'hidden',
-        borderWidth: 1,
-        // Subtle shadow
-        elevation: 1,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.04,
-        shadowRadius: 8,
     },
     image: {
         flex: 1,
-        borderRadius: BORDER_RADIUS.l,
     },
 });

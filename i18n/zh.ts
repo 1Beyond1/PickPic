@@ -41,8 +41,9 @@ export default {
     photos_delete_failed: '删除失败，请重试',
     album_name_placeholder: '名称',
 
-    hint_swipe_up: '上滑删除',
+    hint_swipe_up: '上滑待删除',
     hint_swipe_down: '下滑保留',
+    photos_queue_review_hint: '待删除照片会在组末复核',
     hint_drop_new: '新建',
 
     video_delete: '删除',

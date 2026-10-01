@@ -41,8 +41,9 @@ export default {
     photos_delete_failed: 'Delete failed. Please try again.',
     album_name_placeholder: 'Name',
 
-    hint_swipe_up: 'Swipe Up to Delete',
-    hint_swipe_down: 'Swipe Down to Keep',
+    hint_swipe_up: 'Swipe up to queue',
+    hint_swipe_down: 'Swipe down to keep',
+    photos_queue_review_hint: 'Review before deleting',
     hint_drop_new: 'New',
 
     video_delete: 'Delete',

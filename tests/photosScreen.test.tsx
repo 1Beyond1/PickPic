@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-
 import { Image, Modal, ScrollView, StyleSheet } from 'react-native';
 
 let mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+const mockCardSizes = new Map<string, { maxWidth: number; maxHeight: number }>();
 
 const mockLoadPhotos = jest.fn().mockResolvedValue(undefined);
 const mockLoadAlbums = jest.fn().mockResolvedValue(undefined);
@@ -58,7 +59,8 @@ jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null, Feather: () => nu
 jest.mock('../components/AlbumSelector', () => ({ AlbumSelector: () => null }));
 jest.mock('../components/GlassContainer', () => ({ GlassContainer: ({ children }: { children: React.ReactNode }) => children }));
 jest.mock('../components/PhotoCard', () => ({
-  PhotoCard: ({ photo }: { photo: { id: string } }) => {
+  PhotoCard: ({ photo, maxWidth, maxHeight }: { photo: { id: string }; maxWidth: number; maxHeight: number }) => {
+    mockCardSizes.set(photo.id, { maxWidth, maxHeight });
     const ReactModule = require('react');
     const { Text } = require('react-native');
     return ReactModule.createElement(Text, null, `card:${photo.id}`);
@@ -95,6 +97,7 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.permissionScope = 'full';
     mockMediaState.isConfirmingDeletion = false;
     jest.clearAllMocks();
+    mockCardSizes.clear();
   });
 
   it('shows the real current batch count, then opens the existing photo deck', () => {
@@ -102,6 +105,7 @@ describe('PhotosScreen visual entry', () => {
     render(<PhotosScreen />);
     expect(screen.getByText('2')).toBeTruthy();
     fireEvent.press(screen.getByText('photos_home_start'));
+    fireEvent(screen.getByTestId('photos-deck-viewport'), 'layout', { nativeEvent: { layout: { width: 390, height: 500 } } });
     expect(screen.getByText('card:one')).toBeTruthy();
   });
 
@@ -124,6 +128,45 @@ describe('PhotosScreen visual entry', () => {
     expect(mockSettingsState.setSelectedAlbums).not.toHaveBeenCalled();
     expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
     expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+  });
+
+  it('reserves the Dock and safe areas before measuring space for media', () => {
+    mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByText('photos_home_start'));
+    expect(screen.getByTestId('photos-deck')).toHaveStyle({ paddingTop: 32, paddingBottom: 89, paddingLeft: 4, paddingRight: 8 });
+    expect(screen.queryByText('card:one')).toBeNull();
+    fireEvent(screen.getByTestId('photos-deck-viewport'), 'layout', { nativeEvent: { layout: { width: 308, height: 400 } } });
+    expect(mockCardSizes.get('one')).toEqual({ maxWidth: 268, maxHeight: 384 });
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+  });
+
+  it('updates all card bounds when the viewport changes without changing batch or filters', () => {
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByText('photos_home_start'));
+    fireEvent(screen.getByTestId('photos-deck-viewport'), 'layout', { nativeEvent: { layout: { width: 320, height: 360 } } });
+    expect(mockCardSizes.get('one')).toEqual({ maxWidth: 280, maxHeight: 344 });
+    fireEvent(screen.getByTestId('photos-deck-viewport'), 'layout', { nativeEvent: { layout: { width: 280, height: 240 } } });
+    expect(mockCardSizes.get('one')).toEqual({ maxWidth: 240, maxHeight: 224 });
+    expect(mockCardSizes.get('two')).toEqual({ maxWidth: 240, maxHeight: 224 });
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+    expect(mockSettingsState.setSelectedAlbums).not.toHaveBeenCalled();
+  });
+
+  it('keeps readable, wrapping gesture directions distinct from the later deletion review', () => {
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByText('photos_home_start'));
+    const hint = screen.getByText('hint_swipe_up');
+    expect(hint.props.numberOfLines).toBeUndefined();
+    let ancestor: typeof hint | null = hint;
+    while (ancestor) {
+      expect(StyleSheet.flatten(ancestor.props.style)?.opacity).toBeUndefined();
+      ancestor = ancestor.parent;
+    }
+    expect(screen.getByText('photos_queue_review_hint')).toBeTruthy();
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
   });
 
   it('lets a limited-access user change the selection from a nonempty home without organizing photos first', async () => {
@@ -185,6 +228,7 @@ describe('PhotosScreen visual entry', () => {
   it('keeps the deck open as an in-memory batch is processed', () => {
     const view = render(<PhotosScreen />);
     fireEvent.press(screen.getByText('photos_home_start'));
+    fireEvent(screen.getByTestId('photos-deck-viewport'), 'layout', { nativeEvent: { layout: { width: 390, height: 500 } } });
     mockMediaState.photoProcessedIds = ['one'];
     view.rerender(<PhotosScreen />);
     expect(screen.queryByText('photos_home_start')).toBeNull();
