@@ -42,3 +42,36 @@ it('categorizes saved scans without weaker priors and keeps uncertainty in the u
   expect(result.current.uncategorizedGroup?.assets.map(asset => asset.asset_id)).toEqual(['ambiguous']);
   expect(result.current.isLoading).toBe(false);
 });
+
+it('reports a failed category read and clears the error after a successful explicit retry', async () => {
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  (AssetRepository.getAllDoneAssets as jest.Mock).mockRejectedValueOnce(new Error('SQLite busy')).mockResolvedValue([]);
+  const { result } = renderHook(() => useAICategories());
+  await act(async () => { await result.current.refresh(); });
+  expect(result.current).toMatchObject({ hasError: true, isLoading: false, peopleGroups: [], objectGroups: [], uncategorizedGroup: null });
+  await act(async () => { await result.current.refresh(); });
+  expect(result.current).toMatchObject({ hasError: false, completedCount: 0, isLoading: false });
+});
+
+it('does not publish an old request failure over a newer successful snapshot', async () => {
+  jest.spyOn(console, 'error').mockImplementation(() => {});
+  let fail!: (error: Error) => void;
+  const stale = new Promise<never>((_resolve, reject) => { fail = reject; });
+  (AssetRepository.getAllDoneAssets as jest.Mock).mockReturnValueOnce(stale).mockResolvedValue([photo('new', [['tabby', 0.9]])]);
+  const { result } = renderHook(() => useAICategories());
+  let first!: Promise<void>;
+  await act(async () => { first = result.current.refresh(); });
+  await act(async () => { await result.current.refresh(); });
+  await act(async () => { fail(new Error('Old read failed')); await first; });
+  expect(result.current).toMatchObject({ hasError: false, completedCount: 1, isLoading: false });
+  expect(result.current.objectGroups.flatMap(group => group.assets.map(asset => asset.asset_id))).toEqual(['new']);
+});
+
+it('keeps pending work visible without misrepresenting it as completed classification', async () => {
+  (AssetRepository.getAllDoneAssets as jest.Mock).mockResolvedValue([]);
+  (AssetRepository.getStatusCounts as jest.Mock).mockResolvedValueOnce({ pending: 3, done: 0, error: 0 });
+  const { result } = renderHook(() => useAICategories());
+  await act(async () => { await result.current.refresh(); });
+  expect(result.current.completedCount).toBe(0);
+  expect(result.current.uncategorizedGroup).toMatchObject({ count: 3, coverAsset: null, assets: [] });
+});

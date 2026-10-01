@@ -55,6 +55,8 @@ export interface AICategoriesState {
     objectGroups: CategoryGroup[];
     uncategorizedGroup: CategoryGroup | null;
     isLoading: boolean;
+    hasError: boolean;
+    completedCount: number | null;
     refresh: () => Promise<void>;
 }
 
@@ -64,11 +66,15 @@ export function useAICategories(enabled = true): AICategoriesState {
     const [objectGroups, setObjectGroups] = useState<CategoryGroup[]>([]);
     const [uncategorizedGroup, setUncategorizedGroup] = useState<CategoryGroup | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [hasError, setHasError] = useState(false);
+    const [completedCount, setCompletedCount] = useState<number | null>(null);
     const loadRequestIdRef = useRef(0);
 
     const loadCategories = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
         setIsLoading(true);
+        setHasError(false);
+        setCompletedCount(null);
         // Do not keep rendering a category snapshot while its permission
         // scope is being revalidated. A scope change can make every asset in
         // the previous snapshot inaccessible.
@@ -209,6 +215,7 @@ export function useAICategories(enabled = true): AICategoriesState {
 
             if (requestId !== loadRequestIdRef.current) return;
 
+            setCompletedCount(labeledAssets.length);
             setPeopleGroups(finalPeopleGroups);
             setObjectGroups(objectResult);
 
@@ -226,6 +233,7 @@ export function useAICategories(enabled = true): AICategoriesState {
 
         } catch (error) {
             console.error('Failed to load AI categories:', error);
+            if (requestId === loadRequestIdRef.current) setHasError(true);
         } finally {
             if (requestId === loadRequestIdRef.current) {
                 setIsLoading(false);
@@ -239,6 +247,8 @@ export function useAICategories(enabled = true): AICategoriesState {
             setPeopleGroups([]);
             setObjectGroups([]);
             setUncategorizedGroup(null);
+            setHasError(false);
+            setCompletedCount(null);
             setIsLoading(false);
             return;
         }
@@ -254,6 +264,8 @@ export function useAICategories(enabled = true): AICategoriesState {
         objectGroups,
         uncategorizedGroup,
         isLoading,
+        hasError,
+        completedCount,
         refresh: loadCategories,
     };
 }

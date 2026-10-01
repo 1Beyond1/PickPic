@@ -4,9 +4,9 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SimilarGroupCard } from '../../components/SimilarGroupCard';
@@ -70,6 +70,7 @@ async function getVisiblePhotoIdsForResults(): Promise<ReadonlySet<string> | und
 }
 
 export default function ScanResultsScreen() {
+    const router = useRouter();
     const insets = useSafeAreaInsets();
     const { colors } = useThemeColor();
     const { t } = useI18n();
@@ -82,6 +83,8 @@ export default function ScanResultsScreen() {
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
     const [similarGroups, setSimilarGroups] = useState<SimilarGroup[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
+    const [completedCount, setCompletedCount] = useState<number | null>(null);
     const loadRequestIdRef = useRef(0);
     const [isDeletingBlurry, setIsDeletingBlurry] = useState(false);
     const isDeletingBlurryRef = useRef(false);
@@ -99,7 +102,7 @@ export default function ScanResultsScreen() {
     // until the user opens the AI tab instead of blocking every visit to the
     // scan-results screen when classification is merely enabled.
     const shouldLoadAICategories = enableAIClassification && activeTab === 'ai';
-    const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, refresh: refreshAI } = useAICategories(shouldLoadAICategories);
+    const { peopleGroups, objectGroups, uncategorizedGroup, isLoading: aiLoading, hasError: aiError, completedCount: aiCompletedCount, refresh: refreshAI } = useAICategories(shouldLoadAICategories);
 
     useEffect(() => {
         if (!enableAIClassification && activeTab === 'ai') {
@@ -111,9 +114,14 @@ export default function ScanResultsScreen() {
         const requestId = ++loadRequestIdRef.current;
         // ... (existing loadResults code) ...
         setLoading(true);
+        setLoadError(false);
+        setCompletedCount(null);
         try {
             // Load blurry photos (blur_score < 100)
             const visiblePhotoIds = await getVisiblePhotoIdsForResults();
+            const statusCounts = await AssetRepository.getStatusCounts(
+                visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds),
+            );
             const blurryAssets = await AssetRepository.getBlurryAssets(
                 visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds),
                 50,
@@ -181,6 +189,7 @@ export default function ScanResultsScreen() {
             );
 
             if (requestId !== loadRequestIdRef.current) return;
+            setCompletedCount(statusCounts.done);
             setSimilarGroups(groupsWithCount.filter((group): group is NonNullable<typeof group> => (
                 group !== null && group.memberCount > 1
             )));
@@ -193,6 +202,7 @@ export default function ScanResultsScreen() {
                 setBlurryPhotos([]);
                 setSimilarGroups([]);
                 setSelectedSimilarGroup(null);
+                setLoadError(true);
             }
         } finally {
             if (requestId === loadRequestIdRef.current) {
@@ -390,6 +400,41 @@ export default function ScanResultsScreen() {
         );
     };
 
+    // A successful empty query, no completed scans, and an unavailable query
+    // must not look identical. These actions only retry reads or open the
+    // existing settings screen; they never start a scan or change its scope.
+    const renderResultState = (failed: boolean, noMatchKey?: 'scan_no_blurry' | 'scan_no_similar') => {
+        const title = t(failed ? 'scan_results_load_failed' : noMatchKey ?? 'scan_results_not_ready');
+        const action = t(failed ? 'retry' : 'scan_open_settings');
+        const content = (
+            <View style={[styles.resultState, noMatchKey && { paddingVertical: 32 }]}>
+                <Text accessibilityRole={failed ? 'alert' : 'header'} accessibilityLiveRegion="polite" style={[styles.resultStateTitle, { color: colors.text }]}>{title}</Text>
+                <Text style={[styles.resultStateBody, { color: colors.textSecondary }]}>
+                    {t(failed ? 'scan_results_retry_desc' : noMatchKey ? 'scan_results_scope_desc' : 'scan_results_not_ready_desc')}
+                </Text>
+                {!noMatchKey && (
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={action}
+                        style={({ pressed }) => [styles.resultStateButton, { backgroundColor: colors.actionBackground, opacity: pressed ? 0.8 : 1 }]}
+                        onPress={() => {
+                            if (failed) {
+                                void (activeTab === 'ai' ? refreshAI() : loadResults());
+                            } else {
+                                router.navigate('/(tabs)/settings');
+                            }
+                        }}
+                    >
+                        <Text style={[styles.resultStateButtonText, { color: colors.actionForeground }]}>{action}</Text>
+                    </Pressable>
+                )}
+            </View>
+        );
+        // Empty FlatLists already own scrolling and horizontal page padding.
+        // Avoid a nested scroll surface and duplicated insets there.
+        return noMatchKey ? content : <ScrollView contentContainerStyle={styles.resultStateContent}>{content}</ScrollView>;
+    };
+
     return (
         <View testID="scan-results" style={[styles.container, {
             paddingTop: insets.top,
@@ -465,7 +510,7 @@ export default function ScanResultsScreen() {
                                 <ActivityIndicator size="large" color={colors.primary} />
                                 <Text style={{ color: colors.textSecondary, marginTop: 10 }}>{t('scan_organizing')}</Text>
                             </View>
-                        ) : (
+                        ) : aiError ? renderResultState(true) : aiCompletedCount === 0 && !uncategorizedGroup ? renderResultState(false) : (
                             <FlatList
                                 data={[]} // Main list is empty, utilizing ListHeaderComponent
                                 contentContainerStyle={styles.categoryContent}
@@ -534,19 +579,14 @@ export default function ScanResultsScreen() {
                     <View style={styles.loadingContainer}>
                         <ActivityIndicator size="large" color={colors.primary} />
                     </View>
-                ) : activeTab === 'blur' ? (
+                ) : loadError ? renderResultState(true) : completedCount === 0 && blurryPhotos.length === 0 && similarGroups.length === 0 ? renderResultState(false) : activeTab === 'blur' ? (
                     <FlatList<BlurryPhoto>
                         data={blurryPhotos}
                         renderItem={renderBlurryItem}
                         keyExtractor={(item) => item.assetId}
                         contentContainerStyle={styles.listContent}
                         ListEmptyComponent={
-                            <View style={styles.emptyContainer}>
-                                <Ionicons name="checkmark-circle" size={64} color={colors.textSecondary} />
-                                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                                    {t('scan_no_blurry')}
-                                </Text>
-                            </View>
+                            renderResultState(false, 'scan_no_blurry')
                         }
                     />
                 ) : (
@@ -556,12 +596,7 @@ export default function ScanResultsScreen() {
                         keyExtractor={(item) => item.groupId}
                         contentContainerStyle={styles.listContent}
                         ListEmptyComponent={
-                            <View style={styles.emptyContainer}>
-                                <Ionicons name="checkmark-circle" size={64} color={colors.textSecondary} />
-                                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                                    {t('scan_no_similar')}
-                                </Text>
-                            </View>
+                            renderResultState(false, 'scan_no_similar')
                         }
                     />
                 )}
@@ -916,15 +951,12 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    emptyContainer: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 60,
-    },
-    emptyText: {
-        fontSize: 16,
-        marginTop: SPACING.m,
-    },
+    resultStateContent: { flexGrow: 1, paddingHorizontal: UI_METRICS.pageInset, paddingVertical: 32 },
+    resultState: { width: '100%', maxWidth: 480, alignSelf: 'center' },
+    resultStateTitle: { ...TYPOGRAPHY.sectionTitle, marginBottom: 8 },
+    resultStateBody: { ...TYPOGRAPHY.body, marginBottom: 24 },
+    resultStateButton: { minHeight: UI_METRICS.buttonHeight, borderRadius: UI_METRICS.buttonRadius, paddingHorizontal: 16, paddingVertical: 14, justifyContent: 'center' },
+    resultStateButtonText: { ...TYPOGRAPHY.button, textAlign: 'center' },
     modalContainer: {
         flex: 1,
     },
