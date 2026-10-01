@@ -465,6 +465,20 @@ export default function PhotosScreen() {
                         <Feather name={visiblePhotos.length > 0 ? 'arrow-right' : 'refresh-cw'} size={19} color={colors.actionForeground} />
                     </Pressable>
 
+                    {permissionScope === 'limited' && previewPhotos.length > 0 && (
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityState={{ disabled: managingPhotoAccess, busy: managingPhotoAccess }}
+                            onPress={handleManagePhotoAccess}
+                            disabled={managingPhotoAccess}
+                            style={[styles.homeAccessButton, { opacity: managingPhotoAccess ? 0.6 : 1 }]}
+                        >
+                            <Text style={{ color: colors.textSecondary, fontSize: 15 }}>
+                                {t(managingPhotoAccess ? 'permission_requesting' : 'photos_manage_access')}
+                            </Text>
+                        </Pressable>
+                    )}
+
                     <Pressable
                         onPress={() => setShowAlbumSelector(true)}
                         accessibilityRole="button"
@@ -568,6 +582,13 @@ export default function PhotosScreen() {
 }
 
 const styles = StyleSheet.create({
+    homeAccessButton: {
+        minHeight: 44,
+        marginTop: SPACING.s,
+        paddingHorizontal: SPACING.m,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     homeContent: {
         flexGrow: 1,
         paddingHorizontal: 24,

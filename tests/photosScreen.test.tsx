@@ -25,6 +25,10 @@ const mockMediaState = {
   permissionScope: 'full',
   hiddenPhotoQueuedAssetIds: null,
   mediaLibraryRefreshVersion: 0,
+  setPermissionScope: jest.fn(),
+  refreshQueuedAssetVisibility: jest.fn(),
+  pruneUnavailableQueuedAssets: jest.fn(),
+  notifyPermissionRefresh: jest.fn(),
 };
 const mockSettingsState = {
   groupSize: 10,
@@ -76,6 +80,7 @@ jest.mock('../stores/useMediaStore', () => ({
 jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: () => mockSettingsState }));
 
 import PhotosScreen from '../app/(tabs)/photos';
+import * as MediaLibrary from 'expo-media-library';
 
 describe('PhotosScreen visual entry', () => {
   afterEach(() => jest.useRealTimers());
@@ -102,6 +107,51 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.getByText('PickPic')).toBeTruthy();
     expect(screen.queryByLabelText('tab_settings')).toBeNull();
     expect(screen.getByRole('button', { name: 'photos_home_album' })).toBeTruthy();
+    expect(screen.queryByText('photos_manage_access')).toBeNull();
+  });
+
+  it('lets a limited-access user change the selection from a nonempty home without organizing photos first', async () => {
+    mockMediaState.permissionScope = 'limited';
+    (MediaLibrary.presentPermissionsPickerAsync as jest.Mock).mockResolvedValue(undefined);
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'limited' });
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_manage_access' }));
+    await waitFor(() => expect(mockMediaState.notifyPermissionRefresh).toHaveBeenCalledTimes(1));
+    expect(MediaLibrary.presentPermissionsPickerAsync).toHaveBeenCalledWith(['photo']);
+    expect(mockMediaState.refreshQueuedAssetVisibility).toHaveBeenCalledWith('limited', 'photo');
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
+    expect(screen.getByText('photos_home_start')).toBeTruthy();
+  });
+
+  it('disables the limited-access entry while its picker is pending without starting another request', async () => {
+    mockMediaState.permissionScope = 'limited';
+    let finishPicker!: () => void;
+    (MediaLibrary.presentPermissionsPickerAsync as jest.Mock).mockReturnValueOnce(new Promise<void>(resolve => { finishPicker = resolve; }));
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'limited' });
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_manage_access' }));
+    const busyEntry = screen.getByRole('button', { name: 'permission_requesting' });
+    expect(busyEntry.props.accessibilityState).toMatchObject({ disabled: true, busy: true });
+    fireEvent.press(busyEntry);
+    expect(MediaLibrary.presentPermissionsPickerAsync).toHaveBeenCalledTimes(1);
+    await act(async () => { finishPicker(); });
+    expect(screen.getByRole('button', { name: 'photos_manage_access' }).props.accessibilityState.disabled).toBe(false);
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
+  });
+
+  it('recovers the limited-access entry after a picker failure without changing organizing decisions', async () => {
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockMediaState.permissionScope = 'limited';
+    (MediaLibrary.presentPermissionsPickerAsync as jest.Mock).mockRejectedValueOnce(new Error('Picker unavailable'));
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_manage_access' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'photos_manage_access' }).props.accessibilityState.disabled).toBe(false));
+    expect(mockMediaState.notifyPermissionRefresh).not.toHaveBeenCalled();
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
   });
 
   it.each([1, 2, 3, 30])('previews at most three real photos from a %s-photo batch without reordering it', count => {
