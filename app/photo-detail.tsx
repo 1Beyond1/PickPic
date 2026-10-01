@@ -1,13 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
-import { ScalablePressable } from '../components/ScalablePressable'; // Import ScalablePressable
-import { BORDER_RADIUS, SPACING } from '../constants/theme';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
+import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { useMediaStore } from '../stores/useMediaStore';
 
@@ -27,7 +27,9 @@ export default function PhotoDetailScreen() {
     const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion);
     const previousPermissionRefreshVersionRef = useRef(permissionRefreshVersion);
     const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
-    const { colors, isDark } = useThemeColor();
+    const { colors } = useThemeColor();
+    const { t } = useI18n();
+    const insets = useSafeAreaInsets();
 
     useEffect(() => {
         if (permissionRefreshVersion === previousPermissionRefreshVersionRef.current) return;
@@ -111,36 +113,44 @@ export default function PhotoDetailScreen() {
     };
 
     return (
-        <View style={[styles.container, { backgroundColor: colors.background }]}>
-            <Image
-                source={{ uri }}
-                style={styles.image}
-                contentFit="contain"
-            />
-
-            {/* Top Bar with Back Button */}
-            <View style={styles.topBar}>
-                <ScalablePressable
-                    style={styles.iconButton}
+        <View testID="photo-detail" style={[styles.container, {
+            backgroundColor: colors.background,
+            paddingTop: insets.top + 8,
+            paddingBottom: insets.bottom,
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+        }]}>
+            <View style={styles.toolbar}>
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={t('photo_detail_back')}
+                    style={({ pressed }) => [styles.iconButton, {
+                        backgroundColor: pressed ? colors.surfaceHover : 'transparent',
+                    }]}
                     onPress={() => router.back()}
                 >
-                    <BlurView intensity={30} tint={isDark ? "dark" : "light"} style={styles.blurButton}>
-                        <Ionicons name="chevron-back" size={28} color={colors.text} />
-                    </BlurView>
-                </ScalablePressable>
-            </View>
-
-            {/* Bottom Bar with Share Button */}
-            <View style={styles.bottomBar}>
-                <View style={{ flex: 1 }} />
-                <ScalablePressable
-                    style={styles.iconButton}
+                    <Ionicons name="chevron-back" size={24} color={colors.text} />
+                </Pressable>
+                <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>
+                    {t('photo_detail_title')}
+                </Text>
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={t('photo_detail_share')}
+                    style={({ pressed }) => [styles.iconButton, {
+                        backgroundColor: pressed ? colors.surfaceHover : 'transparent',
+                    }]}
                     onPress={handleShare}
                 >
-                    <BlurView intensity={30} tint={isDark ? "dark" : "light"} style={styles.blurButton}>
-                        <Ionicons name="share-outline" size={24} color={colors.text} />
-                    </BlurView>
-                </ScalablePressable>
+                    <Ionicons name="share-outline" size={22} color={colors.text} />
+                </Pressable>
+            </View>
+            <View testID="photo-detail-media" style={styles.media}>
+                <Image
+                    source={{ uri }}
+                    style={styles.image}
+                    contentFit="contain"
+                />
             </View>
         </View>
     );
@@ -154,27 +164,29 @@ const styles = StyleSheet.create({
         width: '100%',
         height: '100%',
     },
-    topBar: {
-        position: 'absolute',
-        top: 50,
-        left: SPACING.m,
-        zIndex: 10
-    },
-    bottomBar: {
-        position: 'absolute',
-        bottom: 40,
-        right: SPACING.m,
+    toolbar: {
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingBottom: 12,
         flexDirection: 'row',
-        zIndex: 10
+        alignItems: 'center',
+        gap: 12,
+    },
+    title: {
+        ...TYPOGRAPHY.sectionTitle,
+        flex: 1,
+        minWidth: 0,
+        textAlign: 'center',
+    },
+    media: {
+        flex: 1,
+        minHeight: 0,
     },
     iconButton: {
-        borderRadius: BORDER_RADIUS.full,
-        overflow: 'hidden',
-    },
-    blurButton: {
-        padding: SPACING.s + 4,
-        borderRadius: BORDER_RADIUS.full,
+        width: UI_METRICS.touchTarget,
+        height: UI_METRICS.touchTarget,
+        flexShrink: 0,
+        borderRadius: UI_METRICS.buttonRadius,
         alignItems: 'center',
-        justifyContent: 'center'
-    }
+        justifyContent: 'center',
+    },
 });
