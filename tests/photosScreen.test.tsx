@@ -2,6 +2,8 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Image, Modal, ScrollView, StyleSheet } from 'react-native';
 
+let mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+
 const mockLoadPhotos = jest.fn().mockResolvedValue(undefined);
 const mockLoadAlbums = jest.fn().mockResolvedValue(undefined);
 const mockPhoto = (id: string) => ({ id, uri: `file:///${id}.jpg`, filename: `${id}.jpg`, creationTime: 1 });
@@ -50,7 +52,7 @@ jest.mock('expo-router', () => ({
   },
 }));
 jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+  useSafeAreaInsets: () => mockInsets,
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null, Feather: () => null }));
 jest.mock('../components/AlbumSelector', () => ({ AlbumSelector: () => null }));
@@ -86,6 +88,7 @@ describe('PhotosScreen visual entry', () => {
   afterEach(() => jest.useRealTimers());
 
   beforeEach(() => {
+    mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
     mockMediaState.photos = [mockPhoto('one'), mockPhoto('two'), mockPhoto('three')];
     mockMediaState.photoProcessedIds = [];
     mockMediaState.deleteQueue = [];
@@ -108,6 +111,19 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.queryByLabelText('tab_settings')).toBeNull();
     expect(screen.getByRole('button', { name: 'photos_home_album' })).toBeTruthy();
     expect(screen.queryByText('photos_manage_access')).toBeNull();
+  });
+
+  it('keeps the system top inset outside the scrollable home without changing the batch or filter', () => {
+    mockInsets = { top: 32, bottom: 24, left: 0, right: 0 };
+    const view = render(<PhotosScreen />);
+    expect(screen.getByTestId('photos-home')).toHaveStyle({ paddingTop: 32 });
+    const scrollContent = StyleSheet.flatten(view.UNSAFE_getByType(ScrollView).props.contentContainerStyle);
+    expect(scrollContent.paddingTop).toBe(16);
+    expect(scrollContent.paddingBottom).toBe(24 + 65 + 24);
+    expect(screen.getByText('3')).toBeTruthy();
+    expect(mockSettingsState.setSelectedAlbums).not.toHaveBeenCalled();
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
   });
 
   it('lets a limited-access user change the selection from a nonempty home without organizing photos first', async () => {

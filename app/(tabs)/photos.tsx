@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { PhotoCard } from '../../components/PhotoCard';
-import { BORDER_RADIUS, SPACING } from '../../constants/theme';
+import { BORDER_RADIUS, SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
@@ -398,9 +398,9 @@ export default function PhotosScreen() {
     if (showHome && visiblePhotos.length === photos.length) {
         const previewPhotos = visiblePhotos.slice(0, 3);
         return (
-            <View style={[styles.container, { backgroundColor: colors.background }]}>
+            <View testID="photos-home" style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
                 <ScrollView
-                    contentContainerStyle={[styles.homeContent, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 89 }]}
+                    contentContainerStyle={[styles.homeContent, { paddingTop: 16, paddingBottom: insets.bottom + UI_METRICS.dockHeight + 24 }]}
                     showsVerticalScrollIndicator={false}
                 >
                     <View style={styles.homeBrandRow}>
@@ -484,7 +484,7 @@ export default function PhotosScreen() {
                         accessibilityRole="button"
                         style={({ pressed }) => [styles.homeAlbumRow, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
                     >
-                        <View style={[styles.homeAlbumIcon, { backgroundColor: colors.surfaceHover }]}>
+                        <View style={styles.homeAlbumIcon}>
                             <Feather name="folder" size={20} color={colors.textSecondary} />
                         </View>
                         <View style={styles.homeAlbumCopy}>
@@ -591,7 +591,7 @@ const styles = StyleSheet.create({
     },
     homeContent: {
         flexGrow: 1,
-        paddingHorizontal: 24,
+        paddingHorizontal: UI_METRICS.pageInset,
     },
     homeBrandRow: {
         minHeight: 36,
@@ -605,20 +605,16 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     homeBrandText: {
-        fontSize: 20,
-        fontWeight: '600',
-        letterSpacing: -0.4,
+        ...TYPOGRAPHY.sectionTitle,
     },
     homeHero: {
-        marginTop: 28,
+        marginTop: 24,
     },
     homeTitle: {
-        fontSize: 30,
-        lineHeight: 40,
-        fontWeight: '400',
+        ...TYPOGRAPHY.pageTitle,
     },
     homeScope: {
-        fontSize: 13,
+        ...TYPOGRAPHY.secondary,
     },
     homeCountRow: {
         flexDirection: 'row',
@@ -637,7 +633,7 @@ const styles = StyleSheet.create({
         flexShrink: 1,
     },
     homeCountLabel: {
-        fontSize: 12,
+        ...TYPOGRAPHY.caption,
     },
     homeStart: {
         minHeight: 54,
@@ -651,8 +647,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     homeStartLabel: {
-        fontSize: 15,
-        fontWeight: '500',
+        ...TYPOGRAPHY.button,
+        flexShrink: 1,
+        textAlign: 'center',
     },
     homePreviewSection: {
         marginTop: 20,
@@ -691,9 +688,8 @@ const styles = StyleSheet.create({
         minHeight: 72,
     },
     homeAlbumIcon: {
-        width: 40,
-        height: 40,
-        borderRadius: 12,
+        width: 24,
+        height: UI_METRICS.touchTarget,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -702,11 +698,11 @@ const styles = StyleSheet.create({
         gap: 4,
     },
     homeAlbumTitle: {
-        fontSize: 14,
+        ...TYPOGRAPHY.body,
         fontWeight: '500',
     },
     homeAlbumHint: {
-        fontSize: 12,
+        ...TYPOGRAPHY.secondary,
     },
     container: {
         flex: 1,
