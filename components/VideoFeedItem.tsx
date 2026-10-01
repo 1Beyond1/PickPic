@@ -5,7 +5,6 @@ import * as Sharing from 'expo-sharing';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    Dimensions,
     Modal,
     Platform,
     Pressable,
@@ -16,9 +15,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
 import { PhotoAsset } from '../stores/useMediaStore';
-import { ScalablePressable } from './ScalablePressable'; // Import ScalablePressable
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 interface AndroidFullscreenVideoProps {
     uri: string;
@@ -108,12 +104,15 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     itemHeight
 }) => {
     const videoRef = useRef<VideoView>(null);
-    const insets = useSafeAreaInsets(); // Add safe area insets
     const needsLocalUri = /^(ph|assets-library):\/\//.test(video.uri);
     const [playbackSource, setPlaybackSource] = useState<{ assetId: string; uri: string } | null>(() => (
         needsLocalUri ? null : { assetId: video.id, uri: video.uri }
     ));
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [isPaused, setIsPaused] = useState(false);
+    useEffect(() => {
+        setIsPaused(false);
+    }, [video.id]);
     const player = useVideoPlayer(playbackSource?.uri ?? null, (videoPlayer) => {
         videoPlayer.loop = true;
         videoPlayer.muted = isMuted;
@@ -161,7 +160,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     // Android uses a second player inside the custom fullscreen modal, so the
     // feed player must pause there. iOS and Web fullscreen reuse this player;
     // keep it playing while the native/browser fullscreen surface is visible.
-    const baseShouldPlay = shouldPlay && !(Platform.OS === 'android' && isFullscreen);
+    const baseShouldPlay = shouldPlay && isActive && !isPaused && !(Platform.OS === 'android' && isFullscreen);
 
     useEffect(() => {
         player.muted = isMuted;
@@ -238,13 +237,26 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
 
     const date = new Date(video.creationTime);
     const dateString = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const duration = Math.max(0, Math.round(video.duration ?? 0));
+    const durationString = `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')}`;
+    const compact = itemHeight < 360;
+    const actions = [
+        { icon: isMuted ? 'volume-mute-outline' : 'volume-high-outline', label: t(isMuted ? 'video_muted' : 'video_sound'), onPress: toggleMute },
+        { icon: 'star-outline', label: t('video_favorite'), onPress: onFavorite },
+        { icon: 'share-outline', label: t('video_share'), onPress: handleShare },
+        { icon: 'trash-outline', label: t('video_queue_delete'), onPress: onDelete, destructive: true },
+    ] as const;
 
     return (
-        <View style={[styles.container, { backgroundColor: '#000', height: itemHeight }]}>
-            <ScalablePressable
+        <View style={[styles.container, { backgroundColor: colors.background, height: itemHeight }]}>
+            <Pressable
                 onLongPress={handleLongPress}
-                scaleTo={1}
-                style={styles.videoWrapper}
+                style={[styles.videoWrapper, { backgroundColor: colors.background }]}
+                accessibilityRole="button"
+                accessibilityLabel={t(isPaused ? 'video_resume' : 'video_pause')}
+                accessibilityHint={t('video_player_hint')}
+                onPress={() => setIsPaused(prev => !prev)}
+                disabled={!playbackUri}
             >
                 {playbackUri ? (
                     <VideoView
@@ -269,51 +281,43 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                         <ActivityIndicator size="large" color={COLORS.white} />
                     </View>
                 )}
-            </ScalablePressable>
+                {isPaused && <View pointerEvents="none" style={styles.pauseOverlay}>
+                    <View style={styles.pauseIcon}><Ionicons name="play" size={32} color={COLORS.white} /></View>
+                </View>}
+            </Pressable>
+            <Pressable
+                style={styles.fullscreenHint}
+                accessibilityRole="button"
+                accessibilityLabel={t('video_fullscreen')}
+                onPress={handleLongPress}
+                disabled={!playbackUri}
+            >
+                <Ionicons name="expand-outline" size={20} color={COLORS.white} />
+            </Pressable>
 
-            <View style={[styles.overlayContainer, { bottom: 100 + insets.bottom }]}>
-                <View style={styles.metadata}>
-                    <View style={styles.locationTag}>
-                        <Ionicons name="location-sharp" size={14} color={COLORS.white} />
-                        <Text style={styles.locationText}>{t('video_location_unknown')}</Text>
-                    </View>
-                    <Text style={styles.timeText}>{dateString}</Text>
-                </View>
+            <View pointerEvents="none" style={[styles.metadata, { backgroundColor: colors.surface }]}>
+                <Text style={[styles.timeText, { color: colors.textSecondary }]}>{dateString}</Text>
+                {duration > 0 && <Text style={[styles.timeText, { color: colors.textSecondary }]}>{durationString}</Text>}
             </View>
 
-            <View style={[styles.sidebar, { bottom: 130 + insets.bottom }]}>
-                {/* Mute Button Moved Here */}
-                <ScalablePressable style={styles.actionButton} onPress={toggleMute}>
-                    <View style={styles.blurCircle}>
-                        <Ionicons
-                            name={isMuted ? "volume-mute" : "volume-high"}
-                            size={24}
-                            color={isMuted ? COLORS.danger : COLORS.white}
-                        />
-                    </View>
-                    <Text style={styles.actionText}>{isMuted ? t('video_muted') : t('video_sound')}</Text>
-                </ScalablePressable>
-
-                <ScalablePressable style={styles.actionButton} onPress={onFavorite}>
-                    <View style={styles.blurCircle}>
-                        <Ionicons name="star" size={28} color={COLORS.white} />
-                    </View>
-                    <Text style={styles.actionText}>{t('video_favorite')}</Text>
-                </ScalablePressable>
-
-                <ScalablePressable style={styles.actionButton} onPress={handleShare}>
-                    <View style={styles.blurCircle}>
-                        <Ionicons name="share-social" size={28} color={COLORS.white} />
-                    </View>
-                    <Text style={styles.actionText}>{t('video_share')}</Text>
-                </ScalablePressable>
-
-                <ScalablePressable style={styles.actionButton} onPress={onDelete}>
-                    <View style={styles.blurCircle}>
-                        <Ionicons name="trash" size={28} color={COLORS.white} />
-                    </View>
-                    <Text style={styles.actionText}>{t('video_delete')}</Text>
-                </ScalablePressable>
+            <View style={[styles.actions, compact && styles.compactActions]}>
+                {actions.map(action => (
+                    <Pressable
+                        key={action.label}
+                        accessibilityRole="button"
+                        accessibilityLabel={action.label}
+                        accessibilityHint={'destructive' in action ? t('video_queue_delete_hint') : undefined}
+                        onPress={action.onPress}
+                        style={({ pressed }) => [styles.actionButton, {
+                            opacity: pressed ? 0.6 : 1,
+                        }]}
+                    >
+                        <View style={[styles.actionIcon, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                            <Ionicons name={action.icon} size={24} color={'destructive' in action ? colors.danger : colors.text} />
+                        </View>
+                        {!compact && <Text style={[styles.actionText, { backgroundColor: colors.surface, color: 'destructive' in action ? colors.danger : colors.text }]}>{action.label}</Text>}
+                    </Pressable>
+                ))}
             </View>
 
             {Platform.OS === 'android' && isFullscreen && playbackUri && (
@@ -331,14 +335,10 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
 
 const styles = StyleSheet.create({
     container: {
-        width: SCREEN_WIDTH,
-        // height: FEED_HEIGHT, // Removed hardcoded height
-        backgroundColor: '#000', // Ensure black background
-        justifyContent: 'center',
+        width: '100%',
     },
     videoWrapper: {
-        width: '100%',
-        height: '100%',
+        flex: 1,
     },
     video: {
         width: '100%',
@@ -369,61 +369,68 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         backgroundColor: 'rgba(0,0,0,0.55)',
     },
-    overlayContainer: {
-        position: 'absolute',
-        left: 20,
-        right: 80,
-    },
     metadata: {
-        marginBottom: 10
-    },
-    locationTag: {
+        position: 'absolute',
+        left: 16,
+        bottom: 16,
+        maxWidth: '75%',
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 4,
-        alignSelf: 'flex-start',
-        marginBottom: 4
-    },
-    locationText: {
-        color: COLORS.white,
-        fontSize: 12,
-        marginLeft: 4
+        gap: 12,
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderRadius: 10,
     },
     timeText: {
-        color: COLORS.white,
         fontSize: 12,
-        textShadowColor: 'rgba(0,0,0,0.5)',
-        textShadowRadius: 2
+        flexShrink: 1,
+        fontVariant: ['tabular-nums'],
     },
-    blurCircle: {
-        width: 50,
-        height: 50,
-        borderRadius: 25,
+    fullscreenHint: {
+        position: 'absolute',
+        bottom: 12,
+        right: 12,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
-        overflow: 'hidden',
-        backgroundColor: 'rgba(0,0,0,0.4)', // Added background since BlurView is removed
+        backgroundColor: 'rgba(0,0,0,0.55)',
     },
-    sidebar: {
+    pauseOverlay: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+    pauseIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)' },
+    actions: {
         position: 'absolute',
-        right: 10,
-        // bottom set dynamically
-        alignItems: 'center',
-        gap: 10 // Space between buttons
+        right: 12,
+        bottom: 76,
+        gap: 12,
+    },
+    compactActions: {
+        flexDirection: 'row',
+        bottom: 60,
+        gap: 8,
     },
     actionButton: {
-        marginBottom: 15, // Gap handled by gap prop but marginBottom works for safety
-        alignItems: 'center'
+        minWidth: 56,
+        minHeight: 48,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 5,
+    },
+    actionIcon: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     actionText: {
-        color: COLORS.white,
-        fontSize: 10,
-        marginTop: 4,
-        fontWeight: '600',
-        textShadowColor: 'rgba(0,0,0,0.7)',
-        textShadowRadius: 3
+        fontSize: 12,
+        fontWeight: '500',
+        textAlign: 'center',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 6,
     }
 });

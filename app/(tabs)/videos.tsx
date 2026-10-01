@@ -5,7 +5,7 @@ import * as MediaLibrary from 'expo-media-library';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, BackHandler, Dimensions, FlatList, Image, Linking, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
+import { ActivityIndicator, Alert, AppState, FlatList, Image, Linking, Modal, NativeScrollEvent, NativeSyntheticEvent, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { GlassContainer } from '../../components/GlassContainer';
@@ -16,13 +16,11 @@ import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-
 export default function VideosScreen() {
     const insets = useSafeAreaInsets();
     const isFocused = useIsFocused();
     const { t, language } = useI18n();
-    const { colors, isDark } = useThemeColor();
+    const { colors } = useThemeColor();
 
     const {
         videos, loadVideos, isLoading, hasHydrated,
@@ -52,6 +50,8 @@ export default function VideosScreen() {
     const isFocusedRef = useRef(isFocused);
     isFocusedRef.current = isFocused;
     const lastActiveIdRef = useRef<string | null>(null);
+    const visibleIdRef = useRef<string | null>(null);
+    const feedRef = useRef<FlatList>(null);
     const videosRef = useRef(videos);
     videosRef.current = videos;
     const hiddenQueueIds = new Set(hiddenVideoQueuedAssetIds ?? []);
@@ -105,6 +105,7 @@ export default function VideosScreen() {
     useLayoutEffect(() => {
         if (!isLoading) return;
         lastActiveIdRef.current = null;
+        visibleIdRef.current = null;
         setActiveId(null);
     }, [isLoading]);
 
@@ -144,8 +145,13 @@ export default function VideosScreen() {
         refreshVideoPermission,
     ]);
 
-    // Dynamic height state
-    const [feedHeight, setFeedHeight] = useState(SCREEN_HEIGHT); // Full screen height
+    // Measure only the feed viewport, excluding header, hints and the dock.
+    const [feedHeight, setFeedHeight] = useState(0);
+    useLayoutEffect(() => {
+        if (!feedHeight) return;
+        const index = videosRef.current.findIndex(video => video.id === visibleIdRef.current);
+        if (index > 0) feedRef.current?.scrollToOffset({ offset: index * feedHeight, animated: false });
+    }, [feedHeight]);
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
@@ -194,24 +200,17 @@ export default function VideosScreen() {
         refreshVideoPermission,
     ]);
 
-    useFocusEffect(useCallback(() => {
-        if (!showTrash) return;
-
-        const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-            setShowTrash(false);
-            return true;
-        });
-
-        return () => subscription.remove();
-    }, [showTrash]));
-
     useFocusEffect(
         useCallback(() => {
             setIsScreenFocused(true);
             setActiveId(null);
             lastActiveIdRef.current = null;
+            visibleIdRef.current = null;
             return () => {
                 setIsScreenFocused(false);
+                setShowTrash(false);
+                setShowAlbumSelector(false);
+                setSelectedVideoForCollection(null);
 
                 // Leaving the tab is not a review action. Keep the current
                 // video unprocessed so an accidental tab switch does not
@@ -224,17 +223,23 @@ export default function VideosScreen() {
     const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
         const newActiveId = viewableItems[0]?.key;
         if (!newActiveId) return;
-
+        visibleIdRef.current = newActiveId;
         setActiveId(newActiveId);
-        const currentVideos = videosRef.current;
+        // Visibility drives playback, not review progress: a half-finished
+        // drag can reveal the next video and then snap back to this one.
+        if (!lastActiveIdRef.current) lastActiveIdRef.current = newActiveId;
+    }, []);
 
-        // Mark previous video as processed when swiping to next. Keep the
-        // callback identity stable because FlatList does not support changing
-        // onViewableItemsChanged after it has mounted.
+    const onMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+        if (!feedHeight || !isFocusedRef.current) return;
+        const currentVideos = videosRef.current;
+        const newIndex = Math.round(event.nativeEvent.contentOffset.y / feedHeight);
+        const nextVideo = currentVideos[newIndex];
+        if (!nextVideo) return;
+        const newActiveId = nextVideo.id;
         const previousActiveId = lastActiveIdRef.current;
         if (previousActiveId && previousActiveId !== newActiveId) {
             const previousIndex = currentVideos.findIndex(video => video.id === previousActiveId);
-            const newIndex = currentVideos.findIndex(video => video.id === newActiveId);
             const isAdvancing = previousIndex >= 0 && newIndex > previousIndex;
 
             if (isAdvancing) {
@@ -245,7 +250,9 @@ export default function VideosScreen() {
             }
         }
         lastActiveIdRef.current = newActiveId;
-    }, [markVideoAsProcessed]);
+        visibleIdRef.current = newActiveId;
+        setActiveId(newActiveId);
+    }, [feedHeight, markVideoAsProcessed]);
 
     // View config ref
     const viewabilityConfig = useRef({
@@ -283,7 +290,7 @@ export default function VideosScreen() {
 
     const onLayout = (event: any) => {
         const { height } = event.nativeEvent.layout;
-        if (Math.abs(height - feedHeight) > 10) {
+        if (height > 0 && Math.abs(height - feedHeight) > 1) {
             setFeedHeight(height);
         }
     };
@@ -407,14 +414,37 @@ export default function VideosScreen() {
     }
 
     return (
-        <View style={[styles.container, { backgroundColor: colors.background }]} onLayout={onLayout}>
+        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: 65 + insets.bottom }]}>
+            <View style={styles.pageHeader}>
+                <View style={styles.heading}>
+                    <Text style={[styles.pageTitle, { color: colors.text }]}>{t('video_organize')}</Text>
+                    {videos.length > 0 && !isLoading && (
+                        <Text style={[styles.pageCount, { color: colors.textSecondary }]}>
+                            {Math.max(1, videos.findIndex(video => video.id === activeId) + 1)} / {videos.length}
+                        </Text>
+                    )}
+                </View>
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t('video_trash_title')} · ${visibleVideoTrashBin.length}`}
+                    onPress={() => setShowTrash(true)}
+                    style={({ pressed }) => [styles.trashIcon, { backgroundColor: colors.surface, borderColor: colors.border, opacity: pressed ? 0.6 : 1 }]}
+                >
+                    <Ionicons name="trash-bin-outline" size={20} color={colors.text} />
+                    <Text style={[styles.trashCount, { color: visibleVideoTrashBin.length ? colors.danger : colors.textSecondary }]}>
+                        {visibleVideoTrashBin.length > 99 ? '99+' : visibleVideoTrashBin.length}
+                    </Text>
+                </Pressable>
+            </View>
+            <View style={styles.feedViewport} onLayout={onLayout} testID="video-feed-viewport">
             {/* Feed */}
             {isLoading ? (
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                     <ActivityIndicator size="large" color={colors.primary} />
                 </View>
-            ) : videos.length > 0 ? (
+            ) : videos.length > 0 && feedHeight > 0 ? (
                 <FlatList
+                    ref={feedRef}
                     data={videos}
                     keyExtractor={item => item.id}
                     renderItem={({ item }) => (
@@ -422,7 +452,7 @@ export default function VideosScreen() {
                             video={item}
                             isActive={item.id === activeId}
                             isScreenFocused={isScreenFocused}
-                            shouldPlay={item.id === activeId && isScreenFocused}
+                            shouldPlay={item.id === activeId && isScreenFocused && !showTrash && !showAlbumSelector}
                             isMuted={isMuted}
                             toggleMute={() => setIsMuted(prev => !prev)}
                             onDelete={() => markVideoForTrash(item)}
@@ -435,23 +465,28 @@ export default function VideosScreen() {
                     pagingEnabled
                     showsVerticalScrollIndicator={false}
                     onViewableItemsChanged={onViewableItemsChanged}
+                    onMomentumScrollEnd={onMomentumScrollEnd}
                     viewabilityConfig={viewabilityConfig}
                     snapToInterval={feedHeight}
                     snapToAlignment="start"
                     decelerationRate="fast"
                     disableIntervalMomentum={true}
                     overScrollMode="never"
+                    bounces={false}
                     getItemLayout={(data, index) => ({
                         length: feedHeight,
                         offset: feedHeight * index,
                         index,
                     })}
                 />
-            ) : (
+            ) : videos.length === 0 ? (
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                     <Text style={[styles.emptyText, { color: colors.text }]}>
                         {hasLimitedVideoAccess ? t('video_permission_desc') : t('video_empty')}
                     </Text>
+                    {selectedAlbumIds.length > 0 && (
+                        <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('video_filtered_empty_hint')}</Text>
+                    )}
                     {hasLimitedVideoAccess && (
                         <Pressable
                             onPress={handleManageVideoAccess}
@@ -471,35 +506,34 @@ export default function VideosScreen() {
                         <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('photos_reload')}</Text>
                     </Pressable>
                 </View>
-            )}
-
-            {/* Trash Bin Icon (Top Right) */}
-            <Pressable
-                style={[styles.trashIcon, { top: insets.top + 10 }]}
-                onPress={() => setShowTrash(true)}
-            >
-                <View style={[styles.blurIcon, { backgroundColor: isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.8)' }]}>
-                    <Ionicons name="trash-bin-outline" size={24} color={colors.text} />
-                    {visibleVideoTrashBin.length > 0 && (
-                        <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{visibleVideoTrashBin.length}</Text>
-                        </View>
-                    )}
+            ) : null}
+            </View>
+            {videos.length > 0 && !isLoading && (
+                <View style={styles.feedHint} pointerEvents="none">
+                    <Text style={[styles.feedHintText, { color: isAtEnd ? colors.text : colors.textSecondary }]}>
+                        {isAtEnd ? t('video_last_item') : t('video_swipe_hint')}
+                    </Text>
+                    <Text style={[styles.feedHintText, { color: colors.textSecondary }]}>
+                        {isAtEnd && videos.length > 1 ? t('video_swipe_back_hint') : t('video_fullscreen_hint')}
+                    </Text>
                 </View>
-            </Pressable>
+            )}
 
             {/* Trash Bin Modal */}
             {showTrash && (
+                <Modal visible={isFocused} transparent animationType="slide" onRequestClose={() => setShowTrash(false)}>
+                <View style={[styles.trashBackdrop, { backgroundColor: colors.overlay, paddingBottom: insets.bottom + 12, paddingTop: insets.top + 12 }]}>
+                <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowTrash(false)} accessibilityRole="button" accessibilityLabel={t('cancel')} />
                 <GlassContainer style={styles.trashModal}>
                     <View style={styles.trashHeader}>
                         <Text style={[styles.trashTitle, { color: colors.text }]}>{t('video_trash_title')}</Text>
-                        <Pressable onPress={() => setShowTrash(false)}>
+                        <Pressable style={styles.closeButton} onPress={() => setShowTrash(false)} accessibilityRole="button" accessibilityLabel={t('cancel')}>
                             <Ionicons name="close" size={24} color={colors.textSecondary} />
                         </Pressable>
                     </View>
 
                     {visibleVideoTrashBin.length === 0 ? (
-                        <Text style={[styles.emptyTextSmall, { color: colors.textSecondary }]}>{t('video_empty')}</Text>
+                        <Text style={[styles.emptyTextSmall, { color: colors.textSecondary }]}>{t('video_trash_empty')}</Text>
                     ) : (
                         <FlatList
                             data={visibleVideoTrashBin}
@@ -517,11 +551,13 @@ export default function VideosScreen() {
                                         <Ionicons name="videocam" size={20} color="white" />
                                     </View>
                                     <Pressable
-                                        style={[styles.restoreBtn, isConfirmingVideoTrash && { opacity: 0.5 }]}
+                                        style={[styles.restoreBtn, { backgroundColor: colors.selectionBackground }, isConfirmingVideoTrash && { opacity: 0.5 }]}
                                         onPress={() => handleRestoreFromTrash(item.id)}
                                         disabled={isConfirmingVideoTrash}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`${t('video_restore')} · ${item.filename || item.id}`}
                                     >
-                                        <Text style={styles.restoreText}>{t('video_restore')}</Text>
+                                        <Text style={[styles.restoreText, { color: colors.text }]}>{t('video_restore')}</Text>
                                     </Pressable>
                                 </View>
                             )}
@@ -530,7 +566,8 @@ export default function VideosScreen() {
 
                     {visibleVideoTrashBin.length > 0 && (
                         <Pressable
-                            style={[styles.confirmDeleteBtn, isConfirmingVideoTrash && { opacity: 0.6 }]}
+                            style={[styles.confirmDeleteBtn, { backgroundColor: colors.dangerBackground }, isConfirmingVideoTrash && { opacity: 0.6 }]}
+                            accessibilityRole="button"
                             onPress={async () => {
                             try {
                                 const requestedIds = visibleVideoTrashBin.map(video => video.id);
@@ -559,10 +596,12 @@ export default function VideosScreen() {
                         }}
                             disabled={isConfirmingVideoTrash}
                         >
-                            <Text style={styles.confirmDeleteText}>{t('video_confirm_delete')}</Text>
+                            <Text style={[styles.confirmDeleteText, { color: colors.dangerForeground }]}>{t('video_confirm_delete')}</Text>
                         </Pressable>
                     )}
                 </GlassContainer>
+                </View>
+                </Modal>
             )}
 
             {/* Album Selector Modal */}
@@ -573,14 +612,6 @@ export default function VideosScreen() {
                 editableOnly
             />
 
-            {isAtEnd && (
-                <View pointerEvents="none" style={[styles.endNoticeContainer, { bottom: insets.bottom + 80 }]}>
-                    <View style={[styles.endNotice, { backgroundColor: isDark ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)' }]}>
-                        <Ionicons name="information-circle-outline" size={20} color={colors.primary} />
-                        <Text style={[styles.endNoticeText, { color: colors.text }]}>{t('video_last_item')}</Text>
-                    </View>
-                </View>
-            )}
         </View>
     );
 }
@@ -589,6 +620,21 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
+    pageHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+    },
+    heading: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: 12 },
+    pageTitle: { fontSize: 24, fontWeight: '600', flexShrink: 1 },
+    pageCount: { fontSize: 13, fontVariant: ['tabular-nums'] },
+    feedViewport: { flex: 1 },
+    feedHint: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 10, gap: 4, minHeight: 44 },
+    feedHintText: { fontSize: 12, textAlign: 'center' },
+    scopeHint: { fontSize: 13, lineHeight: 20, textAlign: 'center', marginHorizontal: 32, marginBottom: 20 },
     centerContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -608,42 +654,29 @@ const styles = StyleSheet.create({
         fontWeight: 'bold'
     },
     trashIcon: {
-        position: 'absolute',
-        right: SPACING.m,
-    },
-    blurIcon: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+        minWidth: 72,
+        minHeight: 44,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 16,
+        borderWidth: StyleSheet.hairlineWidth,
+        flexDirection: 'row',
+        gap: 8,
         alignItems: 'center',
         justifyContent: 'center',
-        overflow: 'hidden'
     },
-    badge: {
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        backgroundColor: COLORS.danger,
-        width: 16,
-        height: 16,
-        borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center'
+    trashCount: {
+        fontSize: 13,
+        fontWeight: '600',
+        fontVariant: ['tabular-nums'],
     },
-    badgeText: {
-        color: COLORS.white,
-        fontSize: 10,
-        fontWeight: 'bold'
-    },
+    trashBackdrop: { flex: 1, justifyContent: 'flex-end', paddingHorizontal: 16 },
     trashModal: {
-        position: 'absolute',
-        top: 100,
-        left: 20,
-        right: 20,
-        height: 300,
+        maxHeight: '100%',
         padding: SPACING.m,
         justifyContent: 'space-between'
     },
+    closeButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
     trashHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -655,11 +688,11 @@ const styles = StyleSheet.create({
     },
     emptyTextSmall: {
         textAlign: 'center',
-        marginTop: 50
+        paddingVertical: 40,
     },
     trashCard: {
         width: 100,
-        height: 140,
+        height: 164,
         borderRadius: BORDER_RADIUS.m,
         overflow: 'hidden',
     },
@@ -677,9 +710,10 @@ const styles = StyleSheet.create({
     },
     restoreBtn: {
         width: '100%',
-        padding: 8,
-        backgroundColor: COLORS.success,
-        alignItems: 'center'
+        padding: 10,
+        minHeight: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     restoreText: {
         color: COLORS.white,
@@ -695,24 +729,4 @@ const styles = StyleSheet.create({
         color: COLORS.white,
         fontWeight: 'bold'
     },
-    endNoticeContainer: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        alignItems: 'center',
-        zIndex: 20,
-    },
-    endNotice: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        maxWidth: '90%',
-        paddingHorizontal: SPACING.m,
-        paddingVertical: SPACING.s,
-        borderRadius: BORDER_RADIUS.full,
-    },
-    endNoticeText: {
-        marginLeft: SPACING.s,
-        fontSize: 14,
-        fontWeight: '600',
-    }
 });

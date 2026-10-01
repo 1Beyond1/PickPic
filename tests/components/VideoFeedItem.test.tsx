@@ -116,10 +116,10 @@ describe('VideoFeedItem with expo-video', () => {
   });
 
   it('uses the new fullscreen API without pausing the shared native player', async () => {
-    const { getAllByTestId } = renderVideo();
+    const { getByRole } = renderVideo();
 
     await waitFor(() => expect(mockVideoViewProps.current).not.toBeNull());
-    fireEvent(getAllByTestId('scalable-pressable')[0], 'longPress');
+    fireEvent(getByRole('button', { name: 'video_pause' }), 'longPress');
     await waitFor(() => expect(mockEnterFullscreen).toHaveBeenCalled());
     expect(mockPlayer.pause).not.toHaveBeenCalled();
 
@@ -152,8 +152,8 @@ describe('VideoFeedItem with expo-video', () => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
 
     try {
-      const { getAllByTestId } = renderVideo();
-      fireEvent(getAllByTestId('scalable-pressable')[0], 'longPress');
+      const { getByRole } = renderVideo();
+      fireEvent(getByRole('button', { name: 'video_pause' }), 'longPress');
 
       await waitFor(() => expect(mockPlayer.pause).toHaveBeenCalled());
       expect(mockEnterFullscreen).not.toHaveBeenCalled();
@@ -166,5 +166,30 @@ describe('VideoFeedItem with expo-video', () => {
         Object.defineProperty(Platform, 'OS', platformDescriptor);
       }
     }
+  });
+
+  it('exposes readable actions, queues deletion only on explicit action, and does not invent a location', () => {
+    const onDelete = jest.fn();
+    const onFavorite = jest.fn();
+    const toggleMute = jest.fn();
+    const screen = renderVideo({ onDelete, onFavorite, toggleMute, isMuted: true });
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.queryByText('video_location_unknown')).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: 'video_muted' }));
+    fireEvent.press(screen.getByRole('button', { name: 'video_favorite' }));
+    fireEvent.press(screen.getByRole('button', { name: 'video_queue_delete' }));
+    expect(toggleMute).toHaveBeenCalledTimes(1);
+    expect(onFavorite).toHaveBeenCalledTimes(1);
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+
+  it('toggles playback on tap and exposes a separate fullscreen action', async () => {
+    const screen = renderVideo();
+    fireEvent.press(screen.getByRole('button', { name: 'video_pause' }));
+    expect(mockPlayer.pause).toHaveBeenCalledTimes(1);
+    fireEvent.press(screen.getByRole('button', { name: 'video_resume' }));
+    expect(mockPlayer.play).toHaveBeenCalledTimes(2);
+    fireEvent.press(screen.getByRole('button', { name: 'video_fullscreen' }));
+    await waitFor(() => expect(mockEnterFullscreen).toHaveBeenCalledTimes(1));
   });
 });
