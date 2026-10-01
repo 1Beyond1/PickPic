@@ -217,6 +217,7 @@ export default {
     retry: '重试',
     close: '关闭',
     scan_close_category: '关闭分类',
+    scan_open_category_photo: '查看第 {index} 张照片',
 
     // AI Categories
     ai_category_people: '人物',

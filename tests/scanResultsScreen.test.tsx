@@ -291,6 +291,58 @@ describe('category photo viewing', () => {
     expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
   });
 
+  it('dismisses a readable preview with the visible close button and keeps its category open', async () => {
+    await openPhoto();
+    await waitFor(() => expect(screen.UNSAFE_getAllByType(Image).some(image => (
+      image.props.source.uri === 'file:///category-photo.jpg' && image.props.style?.resizeMode === 'contain'
+    ))).toBe(true));
+    fireEvent.press(screen.getByRole('button', { name: 'close' }));
+    expect(screen.UNSAFE_getAllByType(Modal).find(modal => modal.props.transparent)?.props.visible).toBe(false);
+    expect(screen.UNSAFE_getAllByType(Modal).find(modal => modal.props.presentationStyle === 'pageSheet')?.props.visible).toBe(true);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
+  });
+
+  it('gives each category photo a named open action rather than an unnamed image target', async () => {
+    const view = render(<ScanResultsScreen />);
+    await screen.findByText('scan_no_blurry');
+    await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
+    await act(async () => { fireEvent.press(screen.getByText('Cat')); });
+    const photo = screen.getByRole('button', { name: 'scan_open_category_photo' });
+    await act(async () => { fireEvent.press(photo); });
+    expect(screen.getByRole('button', { name: 'close' })).toBeTruthy();
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it('keeps long category headings flexible while reserving a non-shrinking close target', async () => {
+    const originalTitle = mockCategory.title;
+    mockCategory.title = 'A category with a long translated title';
+    try {
+      render(<ScanResultsScreen />);
+      await screen.findByText('scan_no_blurry');
+      await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
+      await act(async () => { fireEvent.press(screen.getByRole('button', { name: `${mockCategory.title}, scan_photo_count` })); });
+      const title = screen.getByRole('header', { name: mockCategory.title });
+      expect(title.props.numberOfLines).toBeUndefined();
+      expect(screen.getByTestId('category-heading')).toHaveStyle({ flex: 1, minWidth: 0 });
+      expect(screen.getByRole('button', { name: 'scan_close_category' })).toHaveStyle({ flexShrink: 0, minWidth: 44, minHeight: 44 });
+      expect(screen.getByTestId('category-detail')).toHaveStyle({ paddingTop: 68, paddingBottom: 24 });
+    } finally {
+      mockCategory.title = originalTitle;
+    }
+  });
+
+  it('keeps a partially populated grid row at three-column widths and the preview outside the toolbar', async () => {
+    await openPhoto();
+    expect(screen.getByRole('button', { name: 'scan_open_category_photo', includeHiddenElements: true })).toHaveStyle({ width: '33.333333%', aspectRatio: 1 });
+    expect(screen.getByTestId('category-photo-preview')).toHaveStyle({ paddingTop: 68, paddingBottom: 24 });
+    const close = screen.getByRole('button', { name: 'close' });
+    expect(close).toHaveStyle({ flexShrink: 0, minWidth: 44, minHeight: 44 });
+    expect(StyleSheet.flatten(close.props.style).position).not.toBe('absolute');
+    expect(screen.getByRole('image', { name: 'photo_detail_title' })).toBeTruthy();
+  });
+
   it('replaces a rejected media lookup with visible feedback and allows retry without closing the viewer', async () => {
     await openPhoto(() => {
       (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValueOnce(new Error('Native media unavailable'));
@@ -337,7 +389,8 @@ describe('category photo viewing', () => {
     await screen.findByText('scan_photo_unavailable');
     const close = screen.getByRole('button', { name: 'close' });
     const controlStyle = StyleSheet.flatten(close.props.style);
-    expect(controlStyle.backgroundColor).toBe('rgba(0,0,0,0.65)');
+    expect(screen.getByTestId('category-photo-preview')).toHaveStyle({ backgroundColor: '#111' });
+    expect(controlStyle.flexShrink).toBe(0);
     expect(controlStyle.minWidth).toBeGreaterThanOrEqual(44);
     expect(controlStyle.minHeight).toBeGreaterThanOrEqual(44);
     fireEvent.press(close);

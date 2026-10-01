@@ -587,21 +587,36 @@ export default function ScanResultsScreen() {
                 visible={!!selectedCategory}
                 animationType="slide"
                 presentationStyle="pageSheet"
+                statusBarTranslucent
+                navigationBarTranslucent
                 onRequestClose={() => setSelectedCategory(null)}
             >
-                <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+                <View accessibilityViewIsModal testID="category-detail" style={[styles.modalContainer, {
+                    backgroundColor: colors.background,
+                    paddingTop: insets.top + 8,
+                    paddingBottom: insets.bottom,
+                    paddingLeft: insets.left,
+                    paddingRight: insets.right,
+                }]}>
                     {/* Header */}
                     <View style={styles.modalHeader}>
-                        <Text style={[styles.modalTitle, { color: colors.text }]}>
-                            {selectedCategory ? getCategoryDisplayTitle(selectedCategory.title) : ''}
-                        </Text>
+                        <View testID="category-heading" style={styles.modalHeading}>
+                            <Text accessibilityRole="header" style={[styles.modalTitle, { color: colors.text }]}>
+                                {selectedCategory ? getCategoryDisplayTitle(selectedCategory.title) : ''}
+                            </Text>
+                            {selectedCategory && (
+                                <Text style={[styles.categoryCount, { color: colors.textSecondary }]}>
+                                    {t('scan_category_total', { count: selectedCategory.count })}
+                                </Text>
+                            )}
+                        </View>
                         <Pressable
-                            style={styles.closeButton}
+                            style={({ pressed }) => [styles.closeButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
                             onPress={() => setSelectedCategory(null)}
                             accessibilityRole="button"
                             accessibilityLabel={t('scan_close_category')}
                         >
-                            <Ionicons name="close-circle" size={30} color={colors.textSecondary} />
+                            <Ionicons name="close-outline" size={24} color={colors.text} />
                         </Pressable>
                     </View>
 
@@ -611,20 +626,18 @@ export default function ScanResultsScreen() {
                             data={selectedCategory.assets}
                             keyExtractor={(item) => item.asset_id}
                             numColumns={3}
+                            style={styles.grid}
                             contentContainerStyle={styles.gridContent}
-                            renderItem={({ item }) => (
+                            renderItem={({ item, index }) => (
                                 <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('scan_open_category_photo', { index: index + 1 })}
                                     style={styles.gridItem}
                                     onPress={() => setSelectedPhoto(item.asset_id)}
                                 >
                                     <CategoryThumbnail assetId={item.asset_id} />
                                 </Pressable>
                             )}
-                            ListHeaderComponent={
-                                <Text style={{ color: colors.textSecondary, marginBottom: 10, textAlign: 'center' }}>
-                                    {t('scan_category_total', { count: selectedCategory.count })}
-                                </Text>
-                            }
                         />
                     )}
                 </View>
@@ -635,19 +648,31 @@ export default function ScanResultsScreen() {
                 visible={!!selectedPhoto}
                 transparent={true}
                 animationType="fade"
+                statusBarTranslucent
+                navigationBarTranslucent
                 onRequestClose={() => setSelectedPhoto(null)}
             >
-                <View style={{ flex: 1, backgroundColor: 'black', justifyContent: 'center' }}>
-                    <Pressable
-                        style={styles.viewerClose}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('close')}
-                        onPress={() => setSelectedPhoto(null)}
-                    >
-                        <Ionicons name="close-circle" size={40} color="white" />
-                    </Pressable>
-
-                    {selectedPhoto && <FullPhotoViewer assetId={selectedPhoto} />}
+                <View accessibilityViewIsModal testID="category-photo-preview" style={[styles.modalContainer, {
+                    backgroundColor: colors.background,
+                    paddingTop: insets.top + 8,
+                    paddingBottom: insets.bottom,
+                    paddingLeft: insets.left,
+                    paddingRight: insets.right,
+                }]}>
+                    <View style={styles.modalHeader}>
+                        <Text accessibilityRole="header" style={[styles.viewerTitle, { color: colors.text }]}>{t('photo_detail_title')}</Text>
+                        <Pressable
+                            style={({ pressed }) => [styles.closeButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('close')}
+                            onPress={() => setSelectedPhoto(null)}
+                        >
+                            <Ionicons name="close-outline" size={24} color={colors.text} />
+                        </Pressable>
+                    </View>
+                    <View style={styles.viewerMedia}>
+                        {selectedPhoto && <FullPhotoViewer assetId={selectedPhoto} />}
+                    </View>
                 </View>
             </Modal>
         </View>
@@ -656,6 +681,7 @@ export default function ScanResultsScreen() {
 
 // Helper component to load image for category
 function CategoryThumbnail({ assetId }: { assetId?: string }) {
+    const { colors } = useThemeColor();
     const [image, setImage] = useState<{ assetId: string; uri: string } | null>(null);
 
     useEffect(() => {
@@ -676,13 +702,14 @@ function CategoryThumbnail({ assetId }: { assetId?: string }) {
     }, [assetId]);
 
     const uri = image && image.assetId === assetId ? image.uri : null;
-    if (!uri) return <View style={[styles.categoryThumbnail, { backgroundColor: '#333' }]} />;
+    if (!uri) return <View style={[styles.categoryThumbnail, { backgroundColor: colors.surfaceHover }]} />;
     return <Image source={{ uri }} style={styles.categoryThumbnail} />;
 }
 
 // Full Screen Viewer Helper
 function FullPhotoViewer({ assetId }: { assetId: string }) {
     const { t } = useI18n();
+    const { colors } = useThemeColor();
     const [attempt, setAttempt] = useState(0);
     const [image, setImage] = useState<{ assetId: string; uri: string | null; failed: boolean } | null>(null);
 
@@ -705,24 +732,27 @@ function FullPhotoViewer({ assetId }: { assetId: string }) {
     if (currentImage?.failed) {
         return (
             <View style={styles.viewerError}>
-                <Text style={styles.viewerErrorText} accessibilityLiveRegion="polite">
+                <Text style={[styles.viewerErrorText, { color: colors.textSecondary }]} accessibilityLiveRegion="polite">
                     {t('scan_photo_unavailable')}
                 </Text>
                 <Pressable
-                    style={styles.viewerRetry}
+                    style={({ pressed }) => [styles.viewerRetry, { backgroundColor: colors.actionBackground, opacity: pressed ? 0.8 : 1 }]}
                     accessibilityRole="button"
                     accessibilityLabel={t('retry')}
                     onPress={() => setAttempt(value => value + 1)}
                 >
-                    <Text style={styles.viewerRetryText}>{t('retry')}</Text>
+                    <Text style={[styles.viewerRetryText, { color: colors.actionForeground }]}>{t('retry')}</Text>
                 </Pressable>
             </View>
         );
     }
     const uri = currentImage?.uri;
-    if (!uri) return <ActivityIndicator size="large" color="white" />;
+    if (!uri) return <ActivityIndicator size="large" color={colors.primary} />;
     return (
         <Image
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel={t('photo_detail_title')}
             source={{ uri }}
             style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
             onError={() => setImage(previous => (
@@ -894,71 +924,56 @@ const styles = StyleSheet.create({
     },
     modalContainer: {
         flex: 1,
-        paddingTop: 20,
     },
+    viewerMedia: { flex: 1, minHeight: 0, justifyContent: 'center' },
     viewerError: {
         alignItems: 'center',
-        paddingHorizontal: SPACING.l,
+        paddingHorizontal: UI_METRICS.pageInset,
         gap: SPACING.m,
     },
-    viewerClose: {
-        position: 'absolute',
-        top: 50,
-        right: 20,
-        zIndex: 10,
-        minWidth: 48,
-        minHeight: 48,
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderRadius: 24,
-        backgroundColor: 'rgba(0,0,0,0.65)',
-    },
     viewerErrorText: {
-        color: '#FFF',
-        fontSize: 16,
+        ...TYPOGRAPHY.body,
         textAlign: 'center',
     },
     viewerRetry: {
-        minHeight: 44,
+        minHeight: UI_METRICS.buttonHeight,
         minWidth: 88,
-        paddingHorizontal: SPACING.l,
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingVertical: 12,
         justifyContent: 'center',
-        borderRadius: 12,
-        backgroundColor: '#FFF',
+        borderRadius: UI_METRICS.buttonRadius,
     },
     viewerRetryText: {
-        color: '#181B18',
-        fontSize: 16,
-        fontWeight: '600',
+        ...TYPOGRAPHY.button,
         textAlign: 'center',
     },
     modalHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: SPACING.l,
-        paddingVertical: SPACING.m,
-        borderBottomWidth: 1,
-        borderBottomColor: 'rgba(0,0,0,0.1)',
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingBottom: 16,
+        gap: 12,
     },
+    modalHeading: { flex: 1, minWidth: 0, gap: 4 },
     modalTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
+        ...TYPOGRAPHY.pageTitle,
     },
+    viewerTitle: { ...TYPOGRAPHY.sectionTitle, flex: 1, minWidth: 0 },
     closeButton: {
         minWidth: 44,
         minHeight: 44,
+        flexShrink: 0,
+        borderRadius: UI_METRICS.buttonRadius,
         alignItems: 'center',
         justifyContent: 'center',
         padding: 4,
     },
-    gridContent: {
-        padding: 2,
-    },
+    grid: { flex: 1 },
+    gridContent: { paddingHorizontal: 2, paddingBottom: 20 },
     gridItem: {
-        flex: 1,
+        width: '33.333333%',
         aspectRatio: 1,
-        margin: 1,
-        backgroundColor: '#eee',
+        padding: 2,
     },
 });

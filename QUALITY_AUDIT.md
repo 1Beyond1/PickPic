@@ -242,7 +242,7 @@
 | 视频整理 / 大图 | 权限不足、加载、空库 / 筛选无结果、播放暂停 / 静音 / 分享 / 收藏、全屏 / 返回 | 既有右侧竖排保留；本轮全状态审计待做 |
 | 视频前进 / 回看 / 待删 | 停稳才处理、取消不处理、离开不处理、回看不撤销、末项、移入待删、复核 / 恢复 / 失败 | 原有回归保留，本轮交叉验证待做 |
 | AI 结果首页 | 模糊 / 相似 / 分类、分类关闭、加载、空结果 / 未扫描、权限变化 | 第八批共享层级/分类卡片/Tab重叠已修，深浅正常及320dp/1.4已查；未扫描、错误引导和相似卡片本轮仍待做 |
-| AI 结果详情 | 相似组选择 / 取消 / 删除确认、最佳项、大图 / 关闭 / 读取失败 / 重试、分类详情 | 历史安全证据保留，本轮视觉审计待做 |
+| AI 结果详情 | 相似组选择 / 取消 / 删除确认、最佳项、大图 / 关闭 / 读取失败 / 重试、分类详情 | 第九批分类详情/大图统一并实测双主题/窄屏，读取失败和重试保持已有自动回归；相似详情及原生错误状态仍待做 |
 | 设置首页 | 偏好、范围、排序、主题 / 语言、分类开关忙碌、扫描 / 数据 / 帮助 / 开发者入口 | 共享层级已接入，正常深浅色与窄屏英文已查；开发区和危险弹窗待统一 |
 | 设置选择弹层 | 当前项、切换 / 持久化、取消、长文本、窄屏大字体 | 第一批已提交：主题/语言及窄屏实测；排序等入口联动待做 |
 | 扫描管理 / 批次弹窗 | 待扫 / 完成 / 失败、启动 / 停止 / 收尾、按数量 / 相册、返回不启动 | 批次及管理双主题/窄屏/取消返回已实测；扫描中/收尾/错误视觉原生补查待做 |
@@ -276,6 +276,7 @@
 | UX-10 | 已复现布局：`before-deck-portrait-320.png` 中后方竖图压到进度线和下方提示，父层未裁切/限尺寸；卡片用整窗口启动常量 .58 高度，而不是实际剩余空间 | 第六批按 deck onLayout 测量尺寸缩放两张卡片，Dock 与安全区放在外层；两种比例均不再压到文字 |
 | UX-11 | 原生复核缩略图只有图标字形名称，大图预览没有可见关闭入口；旧整屏点击/系统返回已经能关闭，不能称为无法退出 | 第七批添加编号撤销名称和固定44dp关闭；复核三列/固定最终操作为设计优化，不称旧按钮不可到达 |
 | UX-12 | `before-results-narrow-dark-en.png` / `before-results-categories-narrow-dark-en.png` 中分类图标溢出本Tab并压入Similar文字；Objects & Scenes和1 categories间无间隔且后者贴屏边 | 第八批去重复图标、完整文字Tab/名称/选中状态；分组标题flex/minWidth0、计数可换行并保留12dp间隔。列表与分类卡片外观收敛是审美改进 |
+| UX-13 | 分类详情缩略图原Pressable没有操作名称/角色，原生树仅显示关闭和计数，不能辨别每张图的动作；原照片仍能点击查看，不是打不开 | 第九批提供编号“查看第N张照片”按钮名称；无障碍实际朗读仍待验证。详情工具栏/等宽末排/主题占位属于一致性设计，不称旧关闭失效 |
 
 ### 证据保存与接续
 
@@ -387,8 +388,26 @@
 
 新增两项导航行为先在旧实现通过：三种结果切换不删媒体、不处理组，分类系统返回仍停留分类Tab。测试最初立即读取正在加载的结果导致失败，补正确await/act后旧13项均通过，而新增角色/名称两项旧实现确实失败；不把测试调度错误当应用Bug。新实现加安全区/Dock和关闭分类开关两项，结果页17项；完整29组251项、类型/lint均通过。原有失败/重试/权限刷新/删除失败及原生取消保护测试均未被改成迎合新样式。
 
-已查看正常 `after-results-blurry-dark-en.png`、`after-results-categories-dark-en.png`、`after-results-blurry-light-zh.png`、`after-results-categories-light-zh.png`；正常分类名称和张数在图片外且页尾未分类卡片完整位于Dock上方。320dp/1.4深色英文 `after-results-categories-320-large-dark-en.png` 的三个Tab完整，不再压字；`after-results-blurry-320-large-dark-en.png` 为最后标签精修前但结果行已更新的中间证据。浅色中文 `after-results-blurry-320-large-light-zh.png`、`after-results-categories-320-large-light-zh.png`、`after-results-categories-320-large-light-zh-scrolled.png` 及深色滚动截图均已查看，分组长英文自然两行、计数不相撞，最后卡片可滚到Dock上方。`after-results-blurry-dark-en-end.png` 和窄屏中文end截图保存列表滚到底的完整末行（部分进入视口的首行正常裁切，不作遮挡Bug）。
+已查看正常 `after-results-blurry-dark-en.png`、`after-results-categories-dark-en.png`、`after-results-blurry-light-zh.png`、`after-results-categories-light-zh.png`；正常分类名称和张数在图片外且页尾未分类卡片完整位于Dock上方。320dp/1.4深色英文 `after-results-categories-320-large-dark-en.png` 的三个Tab完整，不再压字；`after-results-blurry-320-large-dark-en.png` 为最后标签精修前但结果行已更新的中间证据。浅色中文分类 `after-results-categories-320-large-light-zh.png`、`after-results-categories-320-large-light-zh-scrolled.png` 及深色滚动截图均已查看，分组长英文自然两行、计数不相撞，最后卡片可滚到Dock上方。`after-results-blurry-dark-en-end.png` 和 `after-results-blurry-320-large-light-zh-end.png` 保存列表滚到底的完整末行（部分进入视口的首行正常裁切，不作遮挡Bug）。接续复核发现 `after-results-blurry-320-large-light-zh.png` 实际拍到了热重载后的照片首页，上一版误列为通过，现明确剔除，不能用它证明模糊结果初始布局。
 
 实际三Tab切换、分类40张卡片打开后系统返回仍回分类、模糊行删除入口打开原Android确认后点Cancel取消（`after-results-delete-confirm-dark-en.png`），没有点Delete；分类数据仍40+20、照片整理60/待删0、视频33/32/85/待删0、相册范围空。素材纯黑导致分数0属于已有测试输入，桌面被分类为沙漏是历史模型误判，不改标签或声称识别改进。热刷新曾在截图输入中途重载回首页，该首份浅色窄屏分类截图无效，已重新采集真实节点和截图后才算通过。
 
 本批没有扫描、媒体删除、记录重置、相册范围修改、模型/依赖升级或push；结束显示配置恢复字体1.0/物理密度420无覆盖/休眠60000ms。全Goal仍未完成：AI未扫描/空态/读取错误引导、相似卡片与详情/分类详情/大图、视频跨状态、设置危险弹窗、首次使用/权限和最终交叉复审继续。不能用本批有数据主页通过代替其他状态验证。
+
+### 第九批：分类详情与只读大图
+
+第八批本地提交 `aa3cccd`。接续先纠正上一批证据：`after-results-blurry-320-large-light-zh.png` 实为热重载首页，不能计入结果页验证；重新采集并实际查看 `verified-blurry-320-large-light-zh.png`（真实模糊列表和Tab）。不修改应用来掩盖截图调度错误。
+
+修改前实际查看 `before-category-detail-320-large-dark-en.png`、`before-category-viewer-320-large-dark-en.png`、`before-category-detail-last-row-320-dark-en.png`。Uncategorized标题和原44dp关闭没有裁切，原大图48dp具名关闭/系统返回也已正确，因此不编造关闭缺陷。确认缩略图没有具名打开操作；末排两张会拉宽为半屏，是呈现方式而非数据错误。旧黑色媒体背景合理，本次跟随主题是统一设计的选择，不能把黑色称作原bug。
+
+详情采用22号标题/13号计数，同置固定页头，20dp边距、可收缩完整标题和不收缩44dp线性X；真实安全区与底部导航区在外层。三列缩略图保持相同宽度，包括最后不足三张，整格是具名编号打开动作。占位颜色用主题surfaceHover，不再将共享占位改成透明而暴露旧浅底；这不是新增读取失败反馈。大图采用17号工具栏、44dp具名关闭、媒体在工具栏下contain完整显示，浅深主题共用结构；图片本身不调色。只读大图没有添加删除/分享或图片点击退出语义，原双Modal关系/pageSheet/系统返回保留。
+
+原FullPhotoViewer已处理查询拒绝、缺少URI、解码失败、重试与卸载取消，本批只调整这些状态的语义颜色/字号/50dp重试按钮，不重复“修复”已有机制。所有分类分组、读取Effect、请求代次、取消保护、关闭/权限刷新/预览ID及结果删除函数保持不变，没有引入依赖、模型或评分变化。
+
+先在旧实现新增可见X返回分类行为通过（旧18项通过），具名缩略图新测试旧实现失败；新实现再加两项长标题/安全区/等宽网格/媒体工具栏约束，共21项通过。新增约束是设计回归而非原生几何证明。首次新增标题父级断言误拿Text复合节点、Image默认没有accessible属性，测试/原生角色按实际结构修正后重跑无act警告；未改读取和业务来迁就测试。完整29组255项、lint、typecheck均通过，原错误重试/删除锁/权限刷新测试保持。
+
+已实际查看正常深色英文 `after-category-detail-normal-dark-en.png`、`after-category-viewer-normal-dark-en.png`，正常浅色中文 `after-category-detail-normal-light-zh.png`、`after-category-viewer-normal-light-zh.png`；320dp/字体1.4深色英文 `after-category-detail-320-large-dark-en.png`、`after-category-viewer-320-large-dark-en.png`、`after-category-uncat-320-large-dark-en.png`、`after-category-last-row-320-large-dark-en.png`，浅色中文 `after-category-detail-320-large-light-zh.png`、`after-category-viewer-320-large-light-zh.png`。页头/X/完整大图在安全区内，末排两格不扩宽且可全部滚到系统导航区上方；native编号名称真实插值，不用t-mock证明语言朗读。分类名“沙漏”是旧模型误判桌面测试图，没有改分类以改善截图。
+
+实际点图打开、点X返回同一分类、系统返回大图后仍在分类（`category-system-back-normal-check.png` 原生节点确认），再关闭分类回原Tab。第一轮连发Back因设备休眠/Modal过渡没有到预期页，不作功能故障或有效验证；唤醒、分步观察后重新执行。浅色中文首次语言选择没生效，截图为英文，已检查持久化、真实打开语言选择再重采并查看同名中文截图，不以文件名代替内容。
+
+只在隔离用户10操作：照片60已整理/0待删、视频33/32/85已整理/0待删、相册范围空仍保持；无媒体删除、扫描、重置或数据库写入。结束恢复深色英文、物理密度420无覆盖/字体1.0/休眠60000ms。截图/测试素材/数据库在仓库外，不push。原生读取失败/占位区分、iOS嵌套pageSheet安全区与TalkBack未验证，不声称通过；相似详情、结果空态/错误引导、视频跨状态、权限/设置危险确认和最终全范围复审仍待继续。

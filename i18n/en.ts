@@ -217,6 +217,7 @@ export default {
     retry: 'Retry',
     close: 'Close',
     scan_close_category: 'Close category',
+    scan_open_category_photo: 'Open photo {index}',
 
     // AI Categories
     ai_category_people: 'People',
