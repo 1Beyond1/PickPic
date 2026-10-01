@@ -2,13 +2,14 @@ import * as MediaLibrary from 'expo-media-library';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import { GlassContainer } from '../components/GlassContainer';
-import { BORDER_RADIUS, SPACING } from '../constants/theme';
+import { ActivityIndicator, AppState, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 
 export default function Index() {
+    const insets = useSafeAreaInsets();
     const router = useRouter();
     const [permissionResponse, requestPermission, getPermission] = MediaLibrary.usePermissions({
         // Photo organizing and AI scanning are the app's required core path.
@@ -18,6 +19,7 @@ export default function Index() {
     });
     const [checking, setChecking] = useState(true);
     const [requesting, setRequesting] = useState(false);
+    const [actionError, setActionError] = useState<'permission_request_failed' | 'permission_settings_failed' | null>(null);
     const { t } = useI18n();
     const { colors, isDark } = useThemeColor();
 
@@ -53,11 +55,13 @@ export default function Index() {
     }, [getPermission]);
 
     const handleRequestPermission = async () => {
+        setActionError(null);
         if (permissionResponse?.canAskAgain === false) {
             try {
                 await Linking.openSettings();
             } catch (error) {
                 console.error('Failed to open system settings', error);
+                setActionError('permission_settings_failed');
             }
             return;
         }
@@ -70,16 +74,20 @@ export default function Index() {
             }
         } catch (error) {
             console.error('Failed to request media permission', error);
+            setActionError('permission_request_failed');
         } finally {
             setRequesting(false);
         }
     };
 
     const canAskAgain = permissionResponse?.canAskAgain !== false;
+    const buttonLabel = requesting
+        ? t('permission_requesting')
+        : canAskAgain ? t('permission_btn') : t('permission_open_settings');
 
     if (checking || !permissionResponse) {
         return (
-            <View style={[styles.container, { backgroundColor: colors.background }]}>
+            <View style={[styles.container, styles.loading, { backgroundColor: colors.background }]}>
                 <StatusBar style={isDark ? 'light' : 'dark'} />
                 <ActivityIndicator size="large" color={colors.primary} />
             </View>
@@ -89,30 +97,44 @@ export default function Index() {
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <StatusBar style={isDark ? 'light' : 'dark'} />
-            <GlassContainer style={styles.card}>
-                <Text style={[styles.title, { color: colors.text }]}>{t('permission_title')}</Text>
-                <Text style={[styles.description, { color: colors.textSecondary }]}>
-                    {canAskAgain
-                        ? t('permission_desc')
-                        : t('permission_denied_desc')}
-                </Text>
-                <Pressable
-                    style={({ pressed }) => [
-                        styles.button,
-                        { opacity: pressed || requesting ? 0.8 : 1, backgroundColor: colors.actionBackground },
-                    ]}
-                    onPress={handleRequestPermission}
-                    disabled={requesting}
-                >
-                    <Text style={[styles.buttonText, { color: colors.actionForeground }]}>
-                        {requesting
-                            ? t('permission_requesting')
-                            : canAskAgain
-                                ? t('permission_btn')
-                                : t('permission_open_settings')}
+            <ScrollView
+                contentContainerStyle={[styles.scrollContent, {
+                    paddingTop: insets.top + 24,
+                    paddingBottom: insets.bottom + 24,
+                    paddingLeft: UI_METRICS.pageInset + insets.left,
+                    paddingRight: UI_METRICS.pageInset + insets.right,
+                }]}
+            >
+                <View style={styles.content}>
+                    <Text style={[styles.brand, { color: colors.textSecondary }]}>PickPic</Text>
+                    <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>{t('permission_title')}</Text>
+                    <Text style={[styles.description, { color: colors.textSecondary }]}>
+                        {canAskAgain
+                            ? t('permission_desc')
+                            : t('permission_denied_desc')}
                     </Text>
-                </Pressable>
-            </GlassContainer>
+                    {actionError && (
+                        <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.error, { color: colors.danger }]}>
+                            {t(actionError)}
+                        </Text>
+                    )}
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={buttonLabel}
+                        accessibilityState={{ disabled: requesting, busy: requesting }}
+                        style={({ pressed }) => [
+                            styles.button,
+                            { opacity: pressed || requesting ? 0.8 : 1, backgroundColor: colors.actionBackground },
+                        ]}
+                        onPress={handleRequestPermission}
+                        disabled={requesting}
+                    >
+                        <Text style={[styles.buttonText, { color: colors.actionForeground }]}>
+                            {buttonLabel}
+                        </Text>
+                    </Pressable>
+                </View>
+            </ScrollView>
         </View>
     );
 }
@@ -120,35 +142,40 @@ export default function Index() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+    },
+    loading: {
         justifyContent: 'center',
         alignItems: 'center',
-        padding: SPACING.l,
     },
-    card: {
-        padding: SPACING.xl,
-        width: '100%',
+    scrollContent: {
+        flexGrow: 1,
+        justifyContent: 'center',
         alignItems: 'center',
     },
+    content: {
+        width: '100%',
+        maxWidth: 480,
+    },
+    brand: { ...TYPOGRAPHY.secondary, marginBottom: 16 },
     title: {
-        fontSize: 24,
-        fontWeight: 'bold',
-        marginBottom: SPACING.m,
+        ...TYPOGRAPHY.pageTitle,
+        marginBottom: 12,
     },
     description: {
-        fontSize: 16,
-        textAlign: 'center',
-        marginBottom: SPACING.xl,
-        lineHeight: 24,
+        ...TYPOGRAPHY.body,
+        marginBottom: 24,
     },
+    error: { ...TYPOGRAPHY.secondary, marginBottom: 16 },
     button: {
-        paddingVertical: SPACING.m,
-        paddingHorizontal: SPACING.xl,
-        borderRadius: BORDER_RADIUS.full,
+        minHeight: UI_METRICS.buttonHeight,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderRadius: UI_METRICS.buttonRadius,
         width: '100%',
         alignItems: 'center',
     },
     buttonText: {
-        fontSize: 16,
-        fontWeight: '600',
+        ...TYPOGRAPHY.button,
+        textAlign: 'center',
     },
 });

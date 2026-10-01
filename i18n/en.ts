@@ -10,6 +10,8 @@ export default {
     permission_denied_desc: 'Photo access was denied. Re-enable it in system settings.',
     permission_requesting: 'Requesting…',
     permission_open_settings: 'Open System Settings',
+    permission_request_failed: 'Photo access could not be requested. Try again.',
+    permission_settings_failed: 'System settings could not be opened. Try again, or open PickPic permissions in your device settings.',
 
     photos_header: 'Organizing',
     photos_home_scope: 'Current batch',

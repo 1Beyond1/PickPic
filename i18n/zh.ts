@@ -10,6 +10,8 @@ export default {
     permission_denied_desc: '照片权限已被系统拒绝，请在系统设置中重新开启。',
     permission_requesting: '请求中…',
     permission_open_settings: '打开系统设置',
+    permission_request_failed: '暂时无法申请照片访问权限，请重试。',
+    permission_settings_failed: '暂时无法打开系统设置，请重试，或在手机设置中打开 PickPic 的权限。',
 
     photos_header: '整理中',
     photos_home_scope: '本组照片',
