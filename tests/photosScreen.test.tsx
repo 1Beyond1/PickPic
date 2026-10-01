@@ -26,7 +26,7 @@ const mockMediaState = {
   createAlbum: jest.fn(),
   addAssetToAlbum: jest.fn(),
   permissionScope: 'full',
-  hiddenPhotoQueuedAssetIds: null,
+  hiddenPhotoQueuedAssetIds: null as string[] | null,
   mediaLibraryRefreshVersion: 0,
   setPermissionScope: jest.fn(),
   refreshQueuedAssetVisibility: jest.fn(),
@@ -96,6 +96,8 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.deleteQueue = [];
     mockMediaState.permissionScope = 'full';
     mockMediaState.isConfirmingDeletion = false;
+    mockMediaState.hiddenPhotoQueuedAssetIds = null;
+    mockMediaState.mediaLibraryRefreshVersion = 0;
     jest.clearAllMocks();
     mockCardSizes.clear();
   });
@@ -313,6 +315,132 @@ describe('PhotosScreen visual entry', () => {
     await waitFor(() => expect(mockMediaState.confirmDeletion).toHaveBeenCalledWith(
       mockMediaState.deleteQueue.map(photo => photo.id)
     ));
+  });
+
+  it('closes a preview by tapping its media without undoing or confirming a decision', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one')];
+    render(<PhotosScreen />);
+    const thumbnail = screen.UNSAFE_getAllByType(Image)[0];
+    fireEvent(thumbnail, 'longPress');
+    const preview = screen.UNSAFE_getAllByType(Image).find(image => image.props.resizeMode === 'contain')!;
+    fireEvent.press(preview);
+    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+  });
+
+  it('names thumbnail undo actions and disables all review actions while deletion is pending', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one')];
+    mockMediaState.isConfirmingDeletion = true;
+    render(<PhotosScreen />);
+    expect(screen.getByRole('button', { name: 'photos_review_undo' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'photos_confirm' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'photos_skip' })).toBeDisabled();
+  });
+
+  it('provides a visible named close action for the long-press preview without changing the queue', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one')];
+    render(<PhotosScreen />);
+    fireEvent(screen.UNSAFE_getAllByType(Image)[0], 'longPress');
+    fireEvent.press(screen.getByRole('button', { name: 'close' }));
+    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+  });
+
+  it('fits nine thumbnails in the inset-aware width and keeps final actions outside the scrolling grid', () => {
+    jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({ width: 320, height: 719, scale: 1, fontScale: 1.4 });
+    mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = Array.from({ length: 9 }, (_, i) => mockPhoto(`queued-${i}`));
+    render(<PhotosScreen />);
+    expect(screen.getByTestId('photo-review')).toHaveStyle({ paddingTop: 32, paddingBottom: 89, paddingLeft: 4, paddingRight: 8 });
+    for (const image of screen.UNSAFE_getAllByType(Image)) {
+      expect(StyleSheet.flatten(image.props.style)).toMatchObject({ width: 84, height: 84 });
+    }
+    const scroll = screen.UNSAFE_getByType(ScrollView);
+    expect(scroll.findAll((node: { props: { testID?: string } }) => node.props.testID === 'photo-review-actions')).toHaveLength(0);
+    expect(screen.getByTestId('photo-review-actions')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'photos_confirm' })).toHaveStyle({ minHeight: 50 });
+  });
+
+  it('keeps preview safe areas and closing controls independent of the image', () => {
+    mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one')];
+    render(<PhotosScreen />);
+    fireEvent(screen.UNSAFE_getAllByType(Image)[0], 'longPress');
+    expect(screen.getByTestId('photo-preview')).toHaveStyle({ paddingTop: 40, paddingBottom: 24, paddingLeft: 4, paddingRight: 8 });
+    expect(screen.getByRole('button', { name: 'close' })).toHaveStyle({ width: 44, height: 44, flexShrink: 0 });
+    expect(screen.getByTestId('photo-preview-touch-area')).toHaveStyle({ flex: 1, minHeight: 0 });
+    expect(screen.UNSAFE_getByType(Modal).props).toMatchObject({ statusBarTranslucent: true, navigationBarTranslucent: true });
+  });
+
+  it('dismisses a stale preview on a library refresh without changing pending decisions', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one')];
+    const view = render(<PhotosScreen />);
+    fireEvent(screen.UNSAFE_getAllByType(Image)[0], 'longPress');
+    mockMediaState.mediaLibraryRefreshVersion++;
+    view.rerender(<PhotosScreen />);
+    expect(screen.UNSAFE_getByType(Modal).props.visible).toBe(false);
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
+  });
+
+  it('shows a wrapping complete state with a reachable continue action and no dangerous confirmation', () => {
+    mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
+    render(<PhotosScreen />);
+    expect(screen.getByRole('header', { name: 'photos_finished' }).props.numberOfLines).toBeUndefined();
+    expect(screen.getByRole('button', { name: 'continue_next_batch' })).toHaveStyle({ minHeight: 50 });
+    expect(screen.queryByText('photos_confirm')).toBeNull();
+  });
+
+  it('skips the whole visible queue without deleting media or undoing processed records', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
+    mockLoadPhotos.mockClear();
+    fireEvent.press(screen.getByText('photos_skip'));
+    expect(mockMediaState.resetBatch).toHaveBeenCalledWith(mockMediaState.deleteQueue.map(photo => photo.id));
+    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', []);
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+  });
+
+  it('clears only confirmed deleted IDs rather than losing failed visibility checks', async () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one'), mockPhoto('two')];
+    mockMediaState.confirmDeletion.mockResolvedValueOnce(['one']);
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByText('photos_confirm'));
+    await waitFor(() => expect(mockMediaState.resetBatch).toHaveBeenCalledWith(['one']));
+    expect(mockMediaState.confirmDeletion).toHaveBeenCalledWith(['one', 'two']);
+  });
+
+  it('does not include hidden limited-grant queue entries in review or confirmation', async () => {
+    mockMediaState.permissionScope = 'limited';
+    mockMediaState.hiddenPhotoQueuedAssetIds = ['two'];
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('one'), mockPhoto('two')];
+    mockMediaState.confirmDeletion.mockResolvedValueOnce([]);
+    render(<PhotosScreen />);
+    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
+    fireEvent.press(screen.getByText('photos_confirm'));
+    await waitFor(() => expect(mockMediaState.confirmDeletion).toHaveBeenCalledWith(['one']));
+  });
+
+  it('continues a no-deletion batch with the original filter without calling native deletion', () => {
+    mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
+    render(<PhotosScreen />);
+    fireEvent.press(screen.getByText('continue_next_batch'));
+    expect(mockMediaState.resetBatch).toHaveBeenCalledWith([]);
+    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', []);
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
   });
 
   it.each(['finished batch', 'restored queue'])('shows native deletion failure in %s review without clearing decisions', async source => {
