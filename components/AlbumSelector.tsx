@@ -1,10 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, AppState, FlatList, Linking, Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { BORDER_RADIUS, COLORS, SPACING } from '../constants/theme';
+import { ActivityIndicator, AppState, FlatList, Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { hasFullPhotoLibraryAccess, useMediaStore } from '../stores/useMediaStore';
+import { BottomSheet } from './BottomSheet';
 
 const EMPTY_SELECTION: string[] = [];
 
@@ -32,6 +33,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     const [albumAccess, setAlbumAccess] = useState<'checking' | 'available' | 'unavailable'>('checking');
     const { t } = useI18n();
     const { colors } = useThemeColor();
+    const { height } = useWindowDimensions();
 
     useEffect(() => {
         if (!visible) return;
@@ -98,185 +100,146 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
         : albums;
 
     return (
-        <Modal
-            visible={visible}
-            transparent
-            animationType="slide"
-            onRequestClose={onClose}
-        >
-            <View style={[styles.modalContainer, { backgroundColor: colors.overlay }]}>
-                <View style={[styles.contentContainer, { backgroundColor: colors.background, borderTopColor: colors.border }]}>
-                    <View style={styles.header}>
-                        <Text style={[styles.title, { color: colors.text }]}>{t(titleKey as any)}</Text>
-                        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel={t('cancel')} style={[styles.closeButton, { backgroundColor: colors.surfaceHover }]}>
-                            <Ionicons name="close" size={20} color={colors.textSecondary} />
-                        </Pressable>
-                    </View>
+        <BottomSheet visible={visible} title={t(titleKey as any)} onClose={onClose} footer={
+            <Pressable
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.confirmButton, { backgroundColor: colors.actionBackground, opacity: pressed ? 0.75 : 1 }]}
+                onPress={() => onConfirm(selectedIds)}
+            >
+                <Text style={[styles.confirmButtonText, { color: colors.actionForeground }]}>{t('confirm')}</Text>
+            </Pressable>
+        }>
 
-                    {/* Clear selection button */}
-                    {selectedIds.length > 0 && (
-                        <Pressable style={styles.clearButton} onPress={handleClearAll}>
-                            <Text style={[styles.clearButtonText, { color: colors.textSecondary }]}>
-                                {t('album_filter_all' as any)}
-                            </Text>
-                        </Pressable>
-                    )}
+            {/* Clear selection button */}
+            {selectedIds.length > 0 && (
+                <Pressable accessibilityRole="button" style={styles.clearButton} onPress={handleClearAll}>
+                    <Text style={[styles.clearButtonText, { color: colors.textSecondary }]}>
+                        {t('album_filter_all' as any)}
+                    </Text>
+                </Pressable>
+            )}
 
-                    {albumAccess === 'checking' ? (
-                        <View style={styles.accessState}>
-                            <ActivityIndicator color={colors.primary} />
-                        </View>
-                    ) : albumAccess === 'unavailable' ? (
-                        <View style={styles.accessState}>
-                            <Ionicons name="lock-closed-outline" size={28} color={colors.textSecondary} />
-                            <Text style={[styles.accessMessage, { color: colors.textSecondary }]}>
-                                {t('album_full_access_required' as any)}
-                            </Text>
-                            <Pressable
-                                style={[styles.settingsButton, { borderColor: colors.primary }]}
-                                onPress={handleOpenSettings}
-                            >
-                                <Text style={[styles.settingsButtonText, { color: colors.primary }]}>
-                                    {t('album_open_settings' as any)}
-                                </Text>
-                            </Pressable>
-                        </View>
-                    ) : (
-                        <FlatList
-                            data={visibleAlbums}
-                            keyExtractor={(item) => item.id}
-                            contentContainerStyle={styles.listContent}
-                            renderItem={({ item }) => {
-                                const isSelected = selectedIds.includes(item.id);
-                                const isDisabled = !!(maxSelection && selectedIds.length >= maxSelection && !isSelected);
-                                return (
-                                    <Pressable
-                                        style={[
-                                            styles.item,
-                                            { backgroundColor: colors.surface },
-                                            isSelected && { backgroundColor: colors.selectionBackground },
-                                            isDisabled && styles.itemDisabled
-                                        ]}
-                                        onPress={() => toggleSelection(item.id)}
-                                        accessibilityRole="checkbox"
-                                        accessibilityLabel={item.title}
-                                        accessibilityState={{ checked: isSelected, disabled: isDisabled }}
-                                        disabled={isDisabled ? true : false}
-                                    >
-                                        <Text style={[styles.itemText, { color: colors.textSecondary }, isSelected && { color: colors.text, fontWeight: '500' }]}>
-                                            {item.title}
-                                        </Text>
-                                        <Text style={[styles.itemCount, { color: colors.textSecondary }]}>{item.assetCount}</Text>
-                                        <Ionicons name={isSelected ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={isSelected ? colors.text : colors.textTertiary} />
-                                    </Pressable>
-                                );
-                            }}
-                        />
-                    )}
-
+            {albumAccess === 'checking' ? (
+                <View style={styles.accessState}>
+                    <ActivityIndicator color={colors.primary} />
+                </View>
+            ) : albumAccess === 'unavailable' ? (
+                <View style={styles.accessState}>
+                    <Ionicons name="lock-closed-outline" size={28} color={colors.textSecondary} />
+                    <Text style={[styles.accessMessage, { color: colors.textSecondary }]}>
+                        {t('album_full_access_required' as any)}
+                    </Text>
                     <Pressable
-                        style={[styles.confirmButton, { backgroundColor: colors.actionBackground }]}
-                        onPress={() => onConfirm(selectedIds)}
+                        accessibilityRole="button"
+                        style={[styles.settingsButton, { backgroundColor: colors.actionBackground }]}
+                        onPress={handleOpenSettings}
                     >
-                        <Text style={[styles.confirmButtonText, { color: colors.actionForeground }]}>{t('confirm')}</Text>
+                        <Text style={[styles.settingsButtonText, { color: colors.actionForeground }]}>
+                            {t('album_open_settings' as any)}
+                        </Text>
                     </Pressable>
                 </View>
-            </View>
-        </Modal>
+            ) : (
+                <FlatList
+                    style={[styles.list, { maxHeight: height * 0.55 }]}
+                    data={visibleAlbums}
+                    keyExtractor={(item) => item.id}
+                    contentContainerStyle={styles.listContent}
+                    ListEmptyComponent={<Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('album_selector_empty')}</Text>}
+                    renderItem={({ item }) => {
+                        const isSelected = selectedIds.includes(item.id);
+                        const isDisabled = !!(maxSelection && selectedIds.length >= maxSelection && !isSelected);
+                        return (
+                            <Pressable
+                                style={({ pressed }) => [
+                                    styles.item,
+                                    { backgroundColor: pressed || isSelected ? colors.selectionBackground : 'transparent' },
+                                    isDisabled && styles.itemDisabled
+                                ]}
+                                onPress={() => toggleSelection(item.id)}
+                                accessibilityRole="checkbox"
+                                accessibilityLabel={item.title}
+                                accessibilityState={{ checked: isSelected, disabled: isDisabled }}
+                                disabled={isDisabled ? true : false}
+                            >
+                                <Text style={[styles.itemText, { color: colors.text }, isSelected && { fontWeight: '500' }]}>
+                                    {item.title}
+                                </Text>
+                                <Text style={[styles.itemCount, { color: colors.textSecondary }]}>{item.assetCount}</Text>
+                                <Ionicons name={isSelected ? 'checkmark' : 'ellipse-outline'} size={20} color={isSelected ? colors.text : colors.textTertiary} />
+                            </Pressable>
+                        );
+                    }}
+                />
+            )}
+
+        </BottomSheet>
     );
 };
 
 const styles = StyleSheet.create({
-    modalContainer: {
-        flex: 1,
-        justifyContent: 'flex-end',
-    },
-    contentContainer: {
-        height: '70%',
-        borderTopLeftRadius: BORDER_RADIUS.xl,
-        borderTopRightRadius: BORDER_RADIUS.xl,
-        padding: SPACING.l,
-        overflow: 'hidden'
-    },
-    header: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: SPACING.m,
-        paddingHorizontal: SPACING.s,
-    },
-    title: {
-        fontSize: 20,
-        fontWeight: '500',
-    },
-    closeButton: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
     clearButton: {
-        paddingVertical: SPACING.s,
-        paddingHorizontal: SPACING.m,
-        marginBottom: SPACING.s,
+        minHeight: UI_METRICS.touchTarget,
+        paddingHorizontal: 12,
+        justifyContent: 'center',
+        alignSelf: 'flex-start',
+        marginBottom: 4,
     },
     clearButtonText: {
-        fontSize: 14,
+        ...TYPOGRAPHY.secondary,
     },
-    listContent: {
-        paddingBottom: SPACING.xl,
-    },
+    list: { flexGrow: 0, flexShrink: 1 },
+    listContent: { paddingBottom: 4 },
+    emptyText: { ...TYPOGRAPHY.body, paddingVertical: 24, paddingHorizontal: 12 },
     accessState: {
-        flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        paddingHorizontal: SPACING.l,
-        gap: SPACING.m,
+        paddingVertical: 24,
+        paddingHorizontal: 12,
+        gap: 16,
     },
     accessMessage: {
-        fontSize: 15,
-        lineHeight: 22,
+        ...TYPOGRAPHY.body,
         textAlign: 'center',
     },
     settingsButton: {
-        borderWidth: 1,
-        borderRadius: BORDER_RADIUS.full,
-        paddingHorizontal: SPACING.l,
-        paddingVertical: SPACING.s,
+        minHeight: UI_METRICS.touchTarget,
+        borderRadius: UI_METRICS.buttonRadius,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
     },
     settingsButtonText: {
-        fontSize: 14,
-        fontWeight: '600',
+        ...TYPOGRAPHY.button,
     },
     item: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: SPACING.m,
-        marginBottom: SPACING.s,
-        borderRadius: BORDER_RADIUS.m,
+        minHeight: UI_METRICS.rowHeight,
+        paddingVertical: 14,
+        paddingHorizontal: 12,
+        gap: 12,
+        borderRadius: 8,
     },
     itemDisabled: {
         opacity: 0.5
     },
     itemText: {
         flex: 1,
-        fontSize: 16,
+        ...TYPOGRAPHY.body,
+        minWidth: 0,
     },
     itemCount: {
-        marginRight: SPACING.m,
-        fontSize: 14,
+        ...TYPOGRAPHY.secondary,
+        fontVariant: ['tabular-nums'],
     },
     confirmButton: {
-        backgroundColor: COLORS.primary,
-        padding: SPACING.m,
-        borderRadius: BORDER_RADIUS.full,
+        minHeight: UI_METRICS.buttonHeight,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        borderRadius: UI_METRICS.buttonRadius,
         alignItems: 'center',
-        marginTop: SPACING.m,
-        marginBottom: SPACING.l,
     },
     confirmButtonText: {
-        fontSize: 15,
-        fontWeight: '500',
+        ...TYPOGRAPHY.button,
     },
 });

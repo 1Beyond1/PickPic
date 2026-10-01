@@ -139,6 +139,7 @@ export default {
     album_filter_all: '全部相册',
     album_filter_selected: '已选 {count} 个相册',
     album_selector_title: '选择要整理的相册',
+    album_selector_empty: '没有可用相册',
     album_full_access_required: 'iOS 需要“所有照片”权限才能浏览或筛选相册，请前往系统设置修改。',
     album_open_settings: '打开系统设置',
     thumbnail_tap_undo: '点击撤销，长按查看',

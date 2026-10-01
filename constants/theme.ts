@@ -73,3 +73,24 @@ export const BORDER_RADIUS = {
 };
 
 export const SCREEN_PADDING = SPACING.m;
+
+// Native UI hierarchy: system fonts, natural line wrapping, no fixed text heights.
+export const TYPOGRAPHY = {
+  pageTitle: { fontSize: 22, lineHeight: 30, fontWeight: '500' as const },
+  sectionTitle: { fontSize: 17, lineHeight: 24, fontWeight: '500' as const },
+  sheetTitle: { fontSize: 18, lineHeight: 26, fontWeight: '500' as const },
+  body: { fontSize: 15, lineHeight: 22 },
+  secondary: { fontSize: 13, lineHeight: 20 },
+  caption: { fontSize: 12, lineHeight: 18 },
+  button: { fontSize: 15, lineHeight: 22, fontWeight: '500' as const },
+};
+
+export const UI_METRICS = {
+  pageInset: 20,
+  touchTarget: 44,
+  rowHeight: 56,
+  buttonHeight: 50,
+  buttonRadius: 12,
+  sheetRadius: 20,
+  dockHeight: 65,
+};

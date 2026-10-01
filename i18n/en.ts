@@ -139,6 +139,7 @@ export default {
     album_filter_all: 'All Albums',
     album_filter_selected: '{count} Albums Selected',
     album_selector_title: 'Select Albums to Organize',
+    album_selector_empty: 'No albums available.',
     album_full_access_required: 'Browsing and filtering albums on iOS requires full photo-library access. You can change this in system settings.',
     album_open_settings: 'Open System Settings',
     thumbnail_tap_undo: 'Tap to undo, Long press to preview',
