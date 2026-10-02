@@ -4,6 +4,8 @@ const [babelTransformer, babelOptions] = expoPreset.transform['\\.[jt]sx?$'];
 /** @type {import('jest').Config} */
 module.exports = {
   preset: 'jest-expo',
+  modulePathIgnorePatterns: ['<rootDir>/build-artifacts/'],
+  transformIgnorePatterns: expoPreset.transformIgnorePatterns.map(pattern => pattern.replace('(?!', '(?!@noble/|')),
   transform: {
     ...expoPreset.transform,
     '\\.[jt]sx?$': [babelTransformer, {

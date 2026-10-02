@@ -8,6 +8,8 @@ import { useCallback, useEffect, useRef } from 'react';
 import { getDatabase } from '../database';
 import {
     getStatus,
+    getClassificationStatus,
+    startClassification as startClassificationScanner,
     isScanning as isScannerRunning,
     resumeOnce as resumeOnceScanner,
     ScanBatchOptions,
@@ -18,8 +20,12 @@ import {
 } from '../services/scanner';
 import { useMediaStore } from '../stores/useMediaStore';
 import { useScannerStore } from '../stores/useScannerStore';
+import { useSettingsStore } from '../stores/useSettingsStore';
+import type { AIProgress } from '../database/repositories/AIAnalysisRepository';
 
 export interface UseAIScannerResult {
+    classificationProgress: AIProgress;
+    startClassification: (errorsOnly?: boolean) => Promise<void>;
     // State
     progress: ScanProgress;
     isRunning: boolean;
@@ -40,15 +46,26 @@ export interface UseAIScannerResult {
 export function useAIScanner(): UseAIScannerResult {
     // Select from global store
     const progress = useScannerStore(state => state.progress);
+    const classificationProgress = useScannerStore(state => state.classificationProgress);
     const isRunning = useScannerStore(state => state.isRunning);
     const isFinalizing = useScannerStore(state => state.isFinalizing);
     const lastError = useScannerStore(state => state.lastError);
     const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion);
+    const selectedAlbums = useSettingsStore(state => state.selectedAlbumIds);
 
     // Actions from store
     const setProgress = useScannerStore(state => state.setProgress);
     const setLastError = useScannerStore(state => state.setLastError);
     const statusRequestId = useRef(0);
+
+    useEffect(() => {
+        let active = true;
+        if (isScannerRunning()) return;
+        void getClassificationStatus().then(value => {
+            if (active && !isScannerRunning()) useScannerStore.getState().setClassificationProgress(value);
+        }).catch(() => { if (active) useScannerStore.getState().setClassificationProgress({ pending: 0, done: 0, error: 0 }); });
+        return () => { active = false; };
+    }, [mediaLibraryRefreshVersion, selectedAlbums, isRunning, isFinalizing]);
 
     // Initialize database and fetch initial status
     useEffect(() => {
@@ -134,6 +151,11 @@ export function useAIScanner(): UseAIScannerResult {
     }, [refreshStatus, setLastError]);
 
     return {
+        classificationProgress,
+        startClassification: async (errorsOnly = false) => {
+            statusRequestId.current++;
+            await startClassificationScanner(errorsOnly);
+        },
         progress,
         isRunning,
         isFinalizing,

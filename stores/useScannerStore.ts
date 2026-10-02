@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 import { ScanProgress } from '../services/scanner/AIScanner';
+import type { AIProgress } from '../database/repositories/AIAnalysisRepository';
 
 interface ScannerState {
+    task: 'scan' | 'classification';
+    classificationProgress: AIProgress;
+    setTask: (task: 'scan' | 'classification') => void;
+    setClassificationProgress: (progress: AIProgress) => void;
     progress: ScanProgress;
     isRunning: boolean;
     isFinalizing: boolean;
@@ -15,6 +20,10 @@ interface ScannerState {
 }
 
 export const useScannerStore = create<ScannerState>((set) => ({
+    task: 'scan',
+    classificationProgress: { pending: 0, done: 0, error: 0 },
+    setTask: task => set({ task }),
+    setClassificationProgress: classificationProgress => set({ classificationProgress }),
     progress: {
         totalPending: 0,
         totalDone: 0,

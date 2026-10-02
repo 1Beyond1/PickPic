@@ -16,9 +16,11 @@ import {
     SQL_CREATE_FACE_INSTANCES,
     SQL_CREATE_FACE_INSTANCES_INDEXES,
     SQL_CREATE_META,
+    SQL_CREATE_AI_ANALYSIS,
+    AI_ALGO_VERSION,
 } from './schema';
 
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 
 /**
  * Run all migrations to bring database to current version
@@ -43,6 +45,19 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
 
     if (schemaVersion < 3) {
         await migrateToV3(db);
+    }
+    if (schemaVersion < 4) {
+        await db.withTransactionAsync(async () => {
+            await db.execAsync(SQL_CREATE_AI_ANALYSIS);
+            // An empty label array is a completed AI result, not missing work.
+            // Legacy failures/null results stay eligible for explicit backfill.
+            await db.runAsync(`INSERT OR IGNORE INTO ai_analysis
+                (asset_id, version, status, source_updated_at, source_signature, source_phash, updated_at)
+                SELECT asset_id, ?, 1, updated_at, file_signature, phash, COALESCE(updated_at, 0)
+                FROM assets WHERE status = 1 AND labels_json IS NOT NULL
+                AND CASE WHEN json_valid(labels_json) THEN json_type(labels_json) = 'array' ELSE 0 END`, [AI_ALGO_VERSION]);
+            await setSchemaVersion(db, 4);
+        });
     }
 }
 

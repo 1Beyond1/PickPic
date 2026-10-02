@@ -174,7 +174,7 @@ export default {
     settings_dev_options: 'Developer Options',
     settings_dev_options_hint: 'Tap to expand/collapse',
     settings_enable_ai_classification: 'Enable AI Classification',
-    settings_enable_ai_classification_hint: 'Classify images during scan (slower)',
+    settings_enable_ai_classification_hint: 'Classify during scans or fill missing classifications separately',
 
     // AI Scanner labels
     ai_scanner_failed: 'Failed',
@@ -264,7 +264,13 @@ export default {
     ai_scan_empty_dismiss_version: 'Don\'t Show for This Version',
 
     ai_classification_warning_title: 'Enable AI Classification',
-    ai_classification_warning_message: 'Enabling classification makes scanning slower.\n\nExisting scans are not classified automatically. To analyze them again, reset scan records in Data management and rescan. This clears existing analysis results but does not delete photos.',
+    ai_classification_warning_message: 'Classification makes scanning slower.\n\nExisting base analysis is preserved. Use “Fill missing classifications” in Scan management without resetting scan records. Enabling this switch does not start a scan.',
+    classification_title: 'Image classification',
+    classification_counts: 'Classified {done} · Missing {pending} · Failed {error}',
+    classification_backfill: 'Fill missing classifications',
+    classification_retry: 'Retry failed classifications',
+    classification_hint: 'Only missing or failed classifications are analyzed. Sharpness and similar-photo results are preserved. Uses the current album filter.',
+    classification_running: 'Filling image classifications…',
     ai_classification_warning_confirm: 'Enable',
     ai_classification_warning_cancel: 'Cancel',
 

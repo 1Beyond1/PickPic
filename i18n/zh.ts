@@ -174,7 +174,7 @@ export default {
     settings_dev_options: '开发者选项',
     settings_dev_options_hint: '点击展开/收起',
     settings_enable_ai_classification: '启用 AI 图片分类',
-    settings_enable_ai_classification_hint: '开启后扫描时进行智能分类（较慢）',
+    settings_enable_ai_classification_hint: '扫描时分类，也可单独补充已有照片的分类',
 
     // AI Scanner labels
     ai_scanner_failed: '失败',
@@ -264,7 +264,13 @@ export default {
     ai_scan_empty_dismiss_version: '此版本不再提示',
 
     ai_classification_warning_title: '开启 AI 智能分类',
-    ai_classification_warning_message: '开启后扫描时会进行图片分类，扫描速度会变慢。\n\n已扫描的照片不会自动补充分类。若要重新分析，请在“数据管理”中重置扫描记录后重新扫描；此操作会清空现有分析结果，不会删除照片。',
+    ai_classification_warning_message: '开启后扫描时会进行图片分类，速度会变慢。\n\n已有基础分析会保留。在“扫描管理”中选择“补充缺失分类”即可补扫，不必重置扫描记录。开启开关不会自动开始扫描。',
+    classification_title: '图片分类',
+    classification_counts: '已分类 {done} · 待补充 {pending} · 失败 {error}',
+    classification_backfill: '补充缺失分类',
+    classification_retry: '重试失败分类',
+    classification_hint: '只分析缺失或失败的分类，不清空清晰度和相似照片结果。范围与当前相册筛选一致。',
+    classification_running: '正在补充图片分类…',
     ai_classification_warning_confirm: '开启',
     ai_classification_warning_cancel: '取消',
 

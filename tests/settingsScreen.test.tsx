@@ -18,6 +18,7 @@ const mockMedia = {
   mediaLibraryRefreshVersion: 0, isConfirmingDeletion: false, isConfirmingVideoTrash: false,
 };
 const mockScanner = {
+  classificationProgress: { pending: 2, done: 4, error: 1 }, startClassification: jest.fn(),
   progress: { totalPending: 0, totalDone: 7, totalError: 0, currentBatch: 0 },
   isRunning: false, isFinalizing: false, lastError: null,
   start: jest.fn(), stop: jest.fn(), resumeOnce: jest.fn(), resetScan: jest.fn().mockResolvedValue(undefined),

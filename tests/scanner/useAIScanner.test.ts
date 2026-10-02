@@ -4,6 +4,8 @@ jest.mock('../../database', () => ({
 
 jest.mock('../../services/scanner', () => ({
   getStatus: jest.fn(),
+  getClassificationStatus: jest.fn().mockResolvedValue({ pending: 0, done: 0, error: 0 }),
+  startClassification: jest.fn(),
   isScanning: jest.fn(),
   start: jest.fn(),
   stop: jest.fn(),
@@ -13,6 +15,9 @@ jest.mock('../../services/scanner', () => ({
 }));
 
 jest.mock('../../services/scanner/AIScanner', () => ({}));
+jest.mock('../../stores/useSettingsStore', () => ({
+  useSettingsStore: (selector: (state: { selectedAlbumIds: string[] }) => unknown) => selector({ selectedAlbumIds: [] }),
+}));
 jest.mock('../../stores/useMediaStore', () => ({
   useMediaStore: (selector: (state: { mediaLibraryRefreshVersion: number }) => unknown) => (
     selector({ mediaLibraryRefreshVersion: 0 })

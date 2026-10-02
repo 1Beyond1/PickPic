@@ -6,6 +6,21 @@
 export const DB_NAME = 'pickpic_scanner.db';
 
 export const GLOBAL_ALGO_VERSION = 4;
+export const AI_ALGO_VERSION = 1;
+
+// AI completion is independent from the base analysis / duplicate groups.
+export const SQL_CREATE_AI_ANALYSIS = `
+  CREATE TABLE IF NOT EXISTS ai_analysis (
+    asset_id TEXT PRIMARY KEY REFERENCES assets(asset_id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    status INTEGER NOT NULL,
+    source_updated_at INTEGER,
+    source_signature TEXT,
+    source_phash TEXT,
+    error_message TEXT,
+    updated_at INTEGER NOT NULL
+  );
+`;
 
 // Asset status enum
 export const AssetStatus = {

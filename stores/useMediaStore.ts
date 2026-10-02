@@ -1,7 +1,8 @@
 import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { mediaProgressStorage } from '../services/mediaProgressStorage';
+import { isRecordTransferActive } from '../services/recordOperationLock';
 import { Platform } from 'react-native';
 import { AssetRepository } from '../database';
 import { deleteAssetsInBatches } from '../services/mediaDeletion';
@@ -982,6 +983,7 @@ export const useMediaStore = create<MediaState>()(
     },
 
     confirmDeletion: async (assetIds) => {
+        if (isRecordTransferActive()) return [];
         if (get().isConfirmingDeletion) return [];
         const requestedIds = assetIds === undefined ? null : new Set(assetIds);
         if (requestedIds?.size === 0) return [];
@@ -1033,6 +1035,7 @@ export const useMediaStore = create<MediaState>()(
     },
 
     confirmVideoTrash: async (assetIds) => {
+        if (isRecordTransferActive()) return [];
         if (get().isConfirmingVideoTrash) return [];
         const requestedIds = assetIds === undefined ? null : new Set(assetIds);
         if (requestedIds?.size === 0) return [];
@@ -1118,7 +1121,7 @@ export const useMediaStore = create<MediaState>()(
         }),
         {
             name: 'photoapp-media-progress',
-            storage: createJSONStorage(() => AsyncStorage),
+            storage: createJSONStorage(() => mediaProgressStorage),
             partialize: (state) => ({
                 photoProcessedIds: state.photoProcessedIds,
                 videoProcessedIds: state.videoProcessedIds,

@@ -30,7 +30,7 @@ import { AssetRepository, AssetStatus, AssetStatusType, DupGroupRepository, GLOB
 import { getDatabase, withTransaction } from '../../database/db';
 import { getImageOps } from '../../services/imageOps';
 import { MLKitService } from '../../services/ml/MLKitService';
-import { getStatus, isScanning, resumeOnce, start, stop } from '../../services/scanner/AIScanner';
+import { getStatus, getClassificationStatus, startClassification, isScanning, resumeOnce, start, stop } from '../../services/scanner/AIScanner';
 import { hasFullPhotoLibraryAccess } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useScannerStore } from '../../stores/useScannerStore';
@@ -92,7 +92,8 @@ describe('AIScanner engine safety', () => {
     media.getAlbumsAsync.mockResolvedValue([]);
     media.getAssetInfoAsync.mockImplementation(async asset => {
       const id = typeof asset === 'string' ? asset : asset.id;
-      return { ...photo(id), localUri: `file:///${id}.jpg` } as MediaLibrary.AssetInfo;
+      const time = id === 'two' ? 200 : id.startsWith('ml-') ? 100 + Number(id.slice(3)) : 100;
+      return { ...photo(id, time), localUri: `file:///${id}.jpg` } as MediaLibrary.AssetInfo;
     });
     fs.getInfoAsync.mockResolvedValue({ exists: false, uri: '', isDirectory: false });
     fs.deleteAsync.mockResolvedValue(undefined);
@@ -236,13 +237,13 @@ describe('AIScanner engine safety', () => {
       stop();
       await resumeOnce({ mode: 'count', count: 1 });
       expect(isScanning()).toBe(true);
-      expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(1);
+      expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one']);
       expect(onComplete).not.toHaveBeenCalled();
     } finally {
       pendingLabels.resolve([{ text: 'Cat', confidence: 0.9 }]);
       await pendingRun;
     }
-    expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(1);
+    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one', 'one']);
     expect(ml.labelImage).toHaveBeenCalledTimes(1);
     expect(fs.deleteAsync).toHaveBeenCalledWith('file:///test-crop.jpg', { idempotent: true });
     expect(ops.dispose).toHaveBeenCalledTimes(1);
@@ -252,7 +253,7 @@ describe('AIScanner engine safety', () => {
 
     await resumeOnce({ mode: 'count', count: 1 }, { onComplete });
     expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 2, pending: 0, error: 0 });
-    expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(2);
+    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one', 'one', 'two', 'two', 'two']);
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
@@ -271,9 +272,10 @@ describe('AIScanner engine safety', () => {
       pendingLabels.reject(new Error('Native ML timed out'));
       await pendingRun;
     }
-    expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(1);
+    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one']);
     expect(fs.deleteAsync).toHaveBeenCalledTimes(1);
-    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 0, pending: 1, error: 1 });
+    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 1, pending: 1, error: 0 });
+    expect(await database.getFirstAsync('SELECT status FROM ai_analysis WHERE asset_id = ?', ['one'])).toEqual({ status: AssetStatus.ERROR });
     expect(onComplete).not.toHaveBeenCalled();
     expect(isScanning()).toBe(false);
     await resumeOnce({ mode: 'count', count: 2 });
@@ -337,7 +339,33 @@ describe('AIScanner engine safety', () => {
     expect(useScannerStore.getState()).toMatchObject({ isRunning: false, isFinalizing: false });
   });
 
-  it('cleans up a temporary ML crop on failure and stops after four failures rather than publishing base-only success', async () => {
+  it('backfills existing base results once, including empty classifications, without pixel reanalysis', async () => {
+    await seed('one'); await seed('two', AssetStatus.DONE, GLOBAL_ALGO_VERSION, 200);
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true, selectedAlbumIds: [] });
+    const before = await AssetRepository.getById('one');
+    await startClassification();
+    expect(ops.resizeToGray256).not.toHaveBeenCalled();
+    expect(ml.labelImage).toHaveBeenCalledTimes(2);
+    expect(await getClassificationStatus()).toEqual({ done: 2, pending: 0, error: 0 });
+    expect(await AssetRepository.getById('one')).toMatchObject({ blur_score: before!.blur_score, phash: before!.phash, updated_at: before!.updated_at });
+    await startClassification();
+    expect(ml.labelImage).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not publish a classification when access is revoked during inference', async () => {
+    await seed('one');
+    media.getAssetsAsync.mockResolvedValue(page([photo('one')]));
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true });
+    ml.labelImage.mockImplementationOnce(async () => {
+      media.getPermissionsAsync.mockResolvedValue({ granted: false, accessPrivileges: 'none' } as any);
+      return [{ text: 'Cat', confidence: 0.9 }];
+    });
+    await startClassification();
+    expect((await AssetRepository.getById('one'))?.labels_json).toBeNull();
+    expect((await AssetRepository.getById('one'))?.status).toBe(AssetStatus.DONE);
+  });
+
+  it('cleans up a temporary ML crop and stops AI after four failures while preserving committed base results', async () => {
     (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true });
     media.getAssetsAsync.mockResolvedValue(page(Array.from({ length: 5 }, (_, i) => photo(`ml-${i}`, 100 + i))));
     ml.labelImage.mockRejectedValue(new Error('Model unavailable'));
@@ -347,7 +375,8 @@ describe('AIScanner engine safety', () => {
     expect(fs.deleteAsync).toHaveBeenCalledTimes(4);
     expect(fs.deleteAsync).toHaveBeenCalledWith('file:///test-crop.jpg', { idempotent: true });
     expect(ops.dispose).toHaveBeenCalledTimes(4);
-    expect((await AssetRepository.getById('ml-0'))?.status).toBe(AssetStatus.ERROR);
+    expect((await AssetRepository.getById('ml-0'))?.status).toBe(AssetStatus.DONE);
+    expect(await database.getFirstAsync('SELECT COUNT(*) AS count FROM ai_analysis WHERE status = 2')).toEqual({ count: 4 });
     expect((await AssetRepository.getById('ml-4'))?.status).toBe(AssetStatus.PENDING);
     expect(useScannerStore.getState().lastError?.message).toMatch(/repeated failures/);
     expect(onComplete).not.toHaveBeenCalled();

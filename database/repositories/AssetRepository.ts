@@ -112,6 +112,7 @@ async function removeAssetsAndDerivedDataInDatabase(
             batch
         );
         await removeFaceInstancesInDatabase(db, batch);
+        await db.runAsync(`DELETE FROM ai_analysis WHERE asset_id IN (${placeholders})`, batch);
         await db.runAsync(
             `DELETE FROM assets WHERE asset_id IN (${placeholders})`,
             batch
@@ -138,6 +139,7 @@ async function markDoneInDatabase(
     // Remove the old instances before publishing the new DONE result so a
     // later face-group read cannot observe stale detections.
     const removedFaceInstances = await removeFaceInstancesInDatabase(db, [assetId]);
+    await db.runAsync('DELETE FROM ai_analysis WHERE asset_id = ?', [assetId]);
 
     await db.runAsync(
         `UPDATE assets SET
@@ -303,6 +305,7 @@ export const AssetRepository = {
                     batch
                 );
                 await removeFaceInstancesInDatabase(transactionDb, batch);
+                await transactionDb.runAsync(`DELETE FROM ai_analysis WHERE asset_id IN (${placeholders})`, batch);
                 await transactionDb.runAsync(
                     `DELETE FROM assets WHERE asset_id IN (${placeholders})`,
                     batch
@@ -1009,6 +1012,7 @@ export const AssetRepository = {
         await withTransaction(async db => {
             // Keep cursor, derived groups, and asset statuses in one commit so
             // a failed reset cannot leave the scanner in a half-reset state.
+            await db.runAsync('DELETE FROM ai_analysis');
             await db.runAsync('DELETE FROM dup_members');
             await db.runAsync('DELETE FROM dup_groups');
             await db.runAsync('DELETE FROM face_instances');

@@ -10,6 +10,7 @@ import { ScanBatchModal } from '../../components/ScanBatchModal';
 import { SegmentedControl } from '../../components/SegmentedControl';
 import { SettingsRow } from '../../components/SettingsRow';
 import { SettingsChoiceSheet } from '../../components/SettingsChoiceSheet';
+import { RecordBackupPanel } from '../../components/RecordBackupPanel';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 
 import { useAIScanner } from '../../hooks/useAIScanner';
@@ -17,6 +18,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { APP_VERSION, useSettingsStore } from '../../stores/useSettingsStore';
+import { useScannerStore } from '../../stores/useScannerStore';
 
 const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [], colors, isDark, fonts, formatOption = (option: any) => option }: any) => {
     return (
@@ -74,7 +76,8 @@ export default function SettingsScreen() {
     const [choice, setChoice] = useState<'order' | 'theme' | 'language' | null>(null);
 
     // AI Scanner hook
-    const { progress, isRunning, isFinalizing, lastError, start, stop, resumeOnce, resetScan } = useAIScanner();
+    const { progress, classificationProgress, startClassification, isRunning, isFinalizing, lastError, start, stop, resumeOnce, resetScan } = useAIScanner();
+    const scanTask = useScannerStore(state => state.task);
     const scannerBusy = isRunning || isFinalizing;
 
     const handleResetPhotoProgress = () => {
@@ -334,7 +337,7 @@ export default function SettingsScreen() {
                             <Text style={[styles.statusText, { color: colors.primary }]}>
                                 {isFinalizing
                                     ? (language === 'zh' ? '正在完成扫描…' : 'Finishing scan…')
-                                    : t('ai_scanner_scanning_batch', { batch: progress.currentBatch })}
+                                    : scanTask === 'classification' ? t('classification_running') : t('ai_scanner_scanning_batch', { batch: progress.currentBatch })}
                             </Text>
                         </View>
                     )}
@@ -389,11 +392,21 @@ export default function SettingsScreen() {
                     </View>
 
                 </GlassContainer>
+                <GlassContainer style={styles.section} elevated={false}>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('classification_title')}</Text>
+                    <Text style={[styles.progressText, { color: colors.textSecondary }]}>{t('classification_counts', { ...classificationProgress })}</Text>
+                    <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('classification_hint')}</Text>
+                    <SettingsRow label={t('classification_backfill')} onPress={() => { void startClassification(); }} disabled={!enableAIClassification || !aiClassificationAvailable || scannerBusy || isResettingScanner || classificationProgress.pending + classificationProgress.error === 0} />
+                    <SettingsRow label={t('classification_retry')} onPress={() => { void startClassification(true); }} disabled={!enableAIClassification || !aiClassificationAvailable || scannerBusy || isResettingScanner || classificationProgress.error === 0} />
+                </GlassContainer>
                 </>}
 
                 {/* Photo Progress */}
                 {page === 'data' && <>
                 <Text style={[styles.pageHint, { color: colors.textSecondary }]}>{t('settings_data_management_hint')}</Text>
+                <GlassContainer style={styles.section} elevated={false}>
+                    <RecordBackupPanel disabled={scannerBusy || isResettingScanner || isConfirmingDeletion || isConfirmingVideoTrash} />
+                </GlassContainer>
                 <GlassContainer style={styles.section} elevated={false}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings_photo_records')}</Text>
                     <View style={styles.progressRow}>

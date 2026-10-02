@@ -9,6 +9,7 @@ import {
   SQL_CREATE_FACE_INSTANCES,
   SQL_CREATE_FACE_INSTANCES_INDEXES,
   SQL_CREATE_META,
+  SQL_CREATE_AI_ANALYSIS,
 } from '../../database/schema';
 
 type SqlValue = string | number | null;
@@ -35,6 +36,7 @@ export class TestDatabase {
       SQL_CREATE_DUP_MEMBERS,
       SQL_CREATE_FACE_GROUPS,
       SQL_CREATE_FACE_INSTANCES,
+      SQL_CREATE_AI_ANALYSIS,
       ...SQL_CREATE_ASSETS_INDEXES,
       ...SQL_CREATE_DUP_MEMBERS_INDEXES,
       ...SQL_CREATE_FACE_INSTANCES_INDEXES,
@@ -43,6 +45,12 @@ export class TestDatabase {
 
   async execAsync(sql: string): Promise<void> {
     this.database.exec(sql);
+  }
+
+  async withTransactionAsync(callback: () => Promise<void>): Promise<void> {
+    await this.execAsync('BEGIN');
+    try { await callback(); await this.execAsync('COMMIT'); }
+    catch (error) { await this.execAsync('ROLLBACK'); throw error; }
   }
 
   async runAsync(

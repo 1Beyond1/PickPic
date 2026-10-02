@@ -52,6 +52,7 @@ app-example
 # Local APKs, build verification and signing inputs (never source artifacts)
 /build-artifacts/
 credentials.json
+*.pickpic
 
 # ML models are ignored by default to prevent accidental large additions.
 # Required runtime models already tracked in Git remain tracked.
