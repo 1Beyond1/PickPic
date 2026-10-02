@@ -527,40 +527,43 @@ export default function VideosScreen() {
                     title={t('video_trash_title')}
                     onClose={() => { setShowTrash(false); setTrashDeleteFailed(false); }}
                     footer={visibleVideoTrashBin.length > 0 ? (
-                        <Pressable
-                            style={[styles.confirmDeleteBtn, { backgroundColor: colors.dangerBackground }, isConfirmingVideoTrash && { opacity: 0.6 }]}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('video_confirm_delete')}
-                            onPress={async () => {
-                            setTrashDeleteFailed(false);
-                            try {
-                                const requestedIds = visibleVideoTrashBin.map(video => video.id);
-                                await confirmVideoTrash(requestedIds);
-                                if (useMediaStore.getState().isConfirmingVideoTrash) return;
+                        <>
+                            <Text style={[styles.deleteWarning, { color: colors.textSecondary }]}>{t('media_delete_warning')}</Text>
+                            <Pressable
+                                style={[styles.confirmDeleteBtn, { backgroundColor: colors.dangerBackground }, isConfirmingVideoTrash && { opacity: 0.6 }]}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('video_confirm_delete')}
+                                onPress={async () => {
+                                setTrashDeleteFailed(false);
+                                try {
+                                    const requestedIds = visibleVideoTrashBin.map(video => video.id);
+                                    await confirmVideoTrash(requestedIds);
+                                    if (useMediaStore.getState().isConfirmingVideoTrash) return;
 
-                                // The store keeps assets that failed the
-                                // last-moment visibility check. Close only
-                                // when every item that this confirmation
-                                // started with is gone; otherwise leave the
-                                // trash open so the remaining items can be
-                                // retried instead of implying success.
-                                const remainingTrashIds = new Set(
-                                    useMediaStore.getState().videoTrashBin.map(video => video.id)
-                                );
-                                if (requestedIds.every(id => !remainingTrashIds.has(id))) {
-                                    setShowTrash(false);
+                                    // The store keeps assets that failed the
+                                    // last-moment visibility check. Close only
+                                    // when every item that this confirmation
+                                    // started with is gone; otherwise leave the
+                                    // trash open so the remaining items can be
+                                    // retried instead of implying success.
+                                    const remainingTrashIds = new Set(
+                                        useMediaStore.getState().videoTrashBin.map(video => video.id)
+                                    );
+                                    if (requestedIds.every(id => !remainingTrashIds.has(id))) {
+                                        setShowTrash(false);
+                                    }
+                                } catch (error) {
+                                    console.error('Failed to permanently delete videos', error);
+                                    // A native Alert can end up below RN's modal window on
+                                    // Android. Keep recovery feedback inside this sheet.
+                                    setTrashDeleteFailed(true);
                                 }
-                            } catch (error) {
-                                console.error('Failed to permanently delete videos', error);
-                                // A native Alert can end up below RN's modal window on
-                                // Android. Keep recovery feedback inside this sheet.
-                                setTrashDeleteFailed(true);
-                            }
-                        }}
-                            disabled={isConfirmingVideoTrash}
-                        >
-                            <Text style={[styles.confirmDeleteText, { color: colors.dangerForeground }]}>{t('video_confirm_delete')}</Text>
-                        </Pressable>
+                            }}
+                                disabled={isConfirmingVideoTrash}
+                            >
+                                <Text style={[styles.confirmDeleteText, { color: colors.dangerForeground }]}>{t('video_confirm_delete')}</Text>
+                            </Pressable>
+                        </>
                     ) : undefined}
                 >
                     <ScrollView style={styles.trashContent}>
@@ -670,6 +673,7 @@ const styles = StyleSheet.create({
     },
     trashContent: { flexShrink: 1 },
     trashError: { ...TYPOGRAPHY.body, marginBottom: 12 },
+    deleteWarning: { ...TYPOGRAPHY.secondary, marginBottom: 12 },
     emptyTextSmall: {
         textAlign: 'center',
         paddingVertical: 40,

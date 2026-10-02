@@ -383,6 +383,18 @@ describe('VideosScreen processing behavior', () => {
     screen.unmount();
   });
 
+  it('shows deletion and cloud-sync risk next to the final video action, without deleting on open', async () => {
+    mockMediaState.videoTrashBin = [videoOne];
+    const screen = await renderScreen();
+    fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
+    expect(screen.getByText('media_delete_warning')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'video_confirm_delete' })).toBeEnabled();
+    expect(mockMediaState.confirmVideoTrash).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: 'cancel' }));
+    expect(mockMediaState.videoTrashBin).toEqual([videoOne]);
+    screen.unmount();
+  });
+
   it('restores a pending video then re-queries the current album scope without changing review progress', async () => {
     mockMediaState.videoTrashBin = [videoOne];
     mockSettingsState.selectedAlbumIds = ['current-album'];

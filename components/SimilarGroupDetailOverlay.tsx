@@ -164,7 +164,7 @@ export function SimilarGroupDetailOverlay({
         const count = selectedIds.size;
         Alert.alert(
             language === 'zh' ? '确认删除' : 'Confirm Delete',
-            language === 'zh' ? `确定要删除选中的 ${count} 张照片吗？` : `Delete ${count} selected photo(s)?`,
+            `${language === 'zh' ? `确定要删除选中的 ${count} 张照片吗？` : `Delete ${count} selected photo(s)?`}\n\n${t('media_delete_warning')}`,
             [
                 { text: t('cancel'), style: 'cancel' },
                 {
@@ -386,6 +386,7 @@ export function SimilarGroupDetailOverlay({
                                 <Ionicons name="trash-outline" size={20} color={colors.dangerForeground} />
                             </Pressable>
                         </View>
+                        <Text style={[styles.hint, { color: colors.textSecondary }]}>{t('media_delete_warning')}</Text>
                         <View style={styles.previewMedia}>
                             <SimilarPhotoPreview key={`${previewPhoto.assetId}:${previewPhoto.uri}`} photo={previewPhoto} />
                         </View>

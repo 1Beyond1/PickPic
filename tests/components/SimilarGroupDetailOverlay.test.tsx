@@ -152,6 +152,7 @@ it('names preview actions and allows closing without deleting or losing the grou
   const close = within(screen.getByTestId('similar-preview')).getByRole('button', { name: 'close' });
   expect(StyleSheet.flatten(close.props.style)).toMatchObject({ minWidth: 44, minHeight: 44 });
   expect(screen.getByRole('button', { name: 'delete' }).props.accessibilityState).toMatchObject({ disabled: false, busy: false });
+  expect(within(screen.getByTestId('similar-preview')).getByText('media_delete_warning')).toBeTruthy();
   fireEvent.press(close);
   expect(screen.UNSAFE_queryByType(Modal)).toBeNull();
   expect(screen.UNSAFE_getByType(FlatList).props.data).toHaveLength(2);
@@ -233,6 +234,7 @@ it('keeps the selection when the application confirmation is cancelled', async (
   fireEvent(first, 'longPress');
   fireEvent.press(screen.getByRole('button', { name: 'similar_delete_selected' }));
   expect(alert.mock.calls[0][2]![0]).toMatchObject({ text: 'cancel', style: 'cancel' });
+  expect(alert.mock.calls[0][1]).toContain('media_delete_warning');
   expect(first).toBeSelected();
   expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
   expect(mockRemoveDeletedAssets).not.toHaveBeenCalled();

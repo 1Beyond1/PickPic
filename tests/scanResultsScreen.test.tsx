@@ -306,6 +306,17 @@ describe('scan result deletion safety', () => {
     (AssetRepository.removeAssetAndDerivedData as jest.Mock).mockResolvedValue(undefined);
   });
 
+  it('warns about unrecoverable deletion and cloud sync before confirming a blurry photo', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    render(<ScanResultsScreen />);
+    const button = await screen.findByRole('button', { name: 'scan_delete_blurry_title' });
+    fireEvent.press(button);
+    expect(alert.mock.calls[0][1]).toContain('media_delete_warning');
+    expect(alert.mock.calls[0][2]![0]).toMatchObject({ text: 'cancel', style: 'cancel' });
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
+  });
+
   it('allows only one native deletion while a confirmed request is pending, then unlocks on failure', async () => {
     const nativeDelete = deferred<boolean>();
     (MediaLibrary.deleteAssetsAsync as jest.Mock).mockReturnValueOnce(nativeDelete.promise);

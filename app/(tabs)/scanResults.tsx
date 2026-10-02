@@ -224,7 +224,7 @@ export default function ScanResultsScreen() {
         if (isDeletingBlurryRef.current) return;
         Alert.alert(
             t('scan_delete_blurry_title'),
-            t('scan_delete_blurry_message'),
+            `${t('scan_delete_blurry_message')}\n\n${t('media_delete_warning')}`,
             [
                 { text: t('cancel'), style: 'cancel' },
                 {
