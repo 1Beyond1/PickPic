@@ -75,6 +75,45 @@ describe('media visibility checks', () => {
     });
   });
 
+  it('keeps just the selected queued photo processed without changing collection or video decisions', async () => {
+    const kept = { id: 'kept', mediaType: 'photo' } as any;
+    const hidden = { id: 'hidden', mediaType: 'photo' } as any;
+    const collection = { id: 'collection', mediaType: 'photo' } as any;
+    const video = { id: 'video', mediaType: 'video' } as any;
+    useMediaStore.setState({
+      deleteQueue: [kept, hidden], collectionQueue: [collection], videoTrashBin: [video],
+      photoProcessedIds: ['kept', 'hidden', 'collection'], videoProcessedIds: ['video'],
+      permissionScope: 'limited', hiddenPhotoQueuedAssetIds: ['hidden', 'collection'],
+    });
+    expect(useMediaStore.getState().keepPhotoFromDeleteQueue('kept')).toBe(true);
+    expect(useMediaStore.getState()).toMatchObject({
+      deleteQueue: [hidden], collectionQueue: [collection], videoTrashBin: [video],
+      photoProcessedIds: ['kept', 'hidden', 'collection'], videoProcessedIds: ['video'],
+      hiddenPhotoQueuedAssetIds: ['hidden', 'collection'],
+    });
+    const state = useMediaStore.getState();
+    expect(state.keepPhotoFromDeleteQueue('kept')).toBe(false);
+    expect(state.keepPhotoFromDeleteQueue('unknown')).toBe(false);
+    expect(useMediaStore.getState()).toBe(state);
+    expect(deleteAssetsAsync).not.toHaveBeenCalled();
+    expect(getAssetsAsync).not.toHaveBeenCalled();
+    expect(mockRemoveAssetAndDerivedData).not.toHaveBeenCalled();
+    getAssetsAsync.mockResolvedValueOnce({ assets: [kept], hasNextPage: false, endCursor: '', totalCount: 1 });
+    await useMediaStore.getState().loadPhotos(10);
+    expect(useMediaStore.getState().photos).toEqual([]);
+    expect(useMediaStore.getState().photoProcessedIds).toContain('kept');
+    useMediaStore.getState().resetBatch([]);
+    expect(useMediaStore.getState().deleteQueue).toEqual([hidden]);
+    expect(useMediaStore.getState().photoProcessedIds).toEqual(['kept', 'hidden', 'collection']);
+  });
+
+  it('repairs a restored queue item without a processed record when it is explicitly kept', () => {
+    useMediaStore.setState({ deleteQueue: [{ id: 'restored' } as any] });
+    expect(useMediaStore.getState().keepPhotoFromDeleteQueue('restored')).toBe(true);
+    expect(useMediaStore.getState().photoProcessedIds).toEqual(['restored']);
+    expect(useMediaStore.getState().deleteQueue).toEqual([]);
+  });
+
   it.each(['photo', 'video'] as const)('exposes a recoverable %s read failure without changing queued decisions', async mediaType => {
     const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
     const listKey = mediaType === 'photo' ? 'photos' : 'videos';
@@ -262,6 +301,7 @@ describe('media visibility checks', () => {
         expect(locked()).toBe(true);
         await expect(confirm()).resolves.toEqual([]);
         if (mediaType === 'photo') {
+          expect(useMediaStore.getState().keepPhotoFromDeleteQueue('visible')).toBe(false);
           useMediaStore.getState().undoAction('visible');
           useMediaStore.getState().resetBatch();
           useMediaStore.getState().resetPhotoProgress();

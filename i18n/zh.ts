@@ -35,7 +35,7 @@ export default {
     photos_finished: '本组整理完成',
     photos_review_title: '删除前复核',
     photos_review_pending: '{count} 张照片待删除',
-    photos_review_undo: '撤销第 {number} 张照片的待删除决定',
+    photos_review_undo: '保留第 {number} 张照片，保持已整理',
     photos_review_preview_hint: '长按查看完整照片',
     photos_review_warning: '部分设备可能永久删除照片，请先复核。',
     photos_delete_count: '删除: {count} 张',
@@ -156,7 +156,7 @@ export default {
     album_selector_empty: '没有可用相册',
     album_full_access_required: 'iOS 需要“所有照片”权限才能浏览或筛选相册，请前往系统设置修改。',
     album_open_settings: '打开系统设置',
-    thumbnail_tap_undo: '点击撤销，长按查看',
+    thumbnail_tap_undo: '点击保留，长按查看；保留后仍为已整理',
     no_delete_this_batch: '本组没有决定要删除的照片',
     continue_next_batch: '继续下一组',
 

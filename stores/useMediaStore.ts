@@ -136,6 +136,7 @@ interface MediaState {
     markForCollection: (asset: PhotoAsset) => void;
     markAsSkipped: (asset: PhotoAsset) => void;
     undoAction: (assetId: string) => void;
+    keepPhotoFromDeleteQueue: (assetId: string) => boolean;
 
     markVideoForTrash: (asset: PhotoAsset) => void;
     markVideoAsProcessed: (asset: PhotoAsset) => void;
@@ -772,6 +773,28 @@ export const useMediaStore = create<MediaState>()(
         set((state) => state.photoProcessedIds.includes(asset.id)
             ? state
             : { photoProcessedIds: [...state.photoProcessedIds, asset.id] });
+    },
+
+    keepPhotoFromDeleteQueue: (assetId) => {
+        let kept = false;
+        set((state) => {
+            if (state.isConfirmingDeletion || !state.deleteQueue.some(photo => photo.id === assetId)) return state;
+            kept = true;
+            const deleteQueue = state.deleteQueue.filter(photo => photo.id !== assetId);
+            return {
+                deleteQueue,
+                photoProcessedIds: state.photoProcessedIds.includes(assetId)
+                    ? state.photoProcessedIds
+                    : [...state.photoProcessedIds, assetId],
+                hiddenPhotoQueuedAssetIds: state.permissionScope === 'full'
+                    ? null
+                    : retainHiddenQueuedAssetIds(state.hiddenPhotoQueuedAssetIds, [
+                        ...deleteQueue.map(photo => photo.id),
+                        ...state.collectionQueue.map(photo => photo.id),
+                    ]),
+            };
+        });
+        return kept;
     },
 
     undoAction: (assetId) => {

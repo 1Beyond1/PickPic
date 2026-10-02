@@ -20,6 +20,7 @@ const mockMediaState = {
   markForDeletion: jest.fn(),
   markAsSkipped: jest.fn(),
   undoAction: jest.fn(),
+  keepPhotoFromDeleteQueue: jest.fn(),
   confirmDeletion: jest.fn(),
   deleteQueue: [] as ReturnType<typeof mockPhoto>[],
   resetBatch: jest.fn(),
@@ -102,6 +103,16 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.hiddenPhotoQueuedAssetIds = null;
     mockMediaState.mediaLibraryRefreshVersion = 0;
     jest.clearAllMocks();
+    mockMediaState.undoAction.mockImplementation((id: string) => {
+      mockMediaState.deleteQueue = mockMediaState.deleteQueue.filter(photo => photo.id !== id);
+      mockMediaState.photoProcessedIds = mockMediaState.photoProcessedIds.filter(processed => processed !== id);
+    });
+    mockMediaState.keepPhotoFromDeleteQueue.mockImplementation((id: string) => {
+      if (mockMediaState.isConfirmingDeletion || !mockMediaState.deleteQueue.some(photo => photo.id === id)) return false;
+      mockMediaState.deleteQueue = mockMediaState.deleteQueue.filter(photo => photo.id !== id);
+      if (!mockMediaState.photoProcessedIds.includes(id)) mockMediaState.photoProcessedIds.push(id);
+      return true;
+    });
     mockCardSizes.clear();
   });
 
@@ -313,7 +324,7 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.getByText('photos_limited_access_desc')).toBeTruthy();
   });
 
-  it('lets users preview and undo a queued photo beyond the first nine without undoing earlier items', () => {
+  it('lets users preview and keep a queued photo beyond the first nine without changing earlier items', () => {
     mockMediaState.photos = [];
     mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
     render(<PhotosScreen />);
@@ -331,8 +342,101 @@ describe('PhotosScreen visual entry', () => {
     expect(mockMediaState.undoAction).not.toHaveBeenCalled();
     fireEvent(screen.UNSAFE_getByType(Modal), 'requestClose');
     fireEvent.press(tenth);
-    expect(mockMediaState.undoAction).toHaveBeenCalledTimes(1);
-    expect(mockMediaState.undoAction).toHaveBeenCalledWith('queued-9');
+    expect(mockMediaState.keepPhotoFromDeleteQueue).toHaveBeenCalledTimes(1);
+    expect(mockMediaState.keepPhotoFromDeleteQueue).toHaveBeenCalledWith('queued-9');
+    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
+  });
+
+  it('keeps only the tapped photo processed and stays in review without reloading the batch', () => {
+    mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
+    mockMediaState.deleteQueue = [...mockMediaState.photos];
+    const view = render(<PhotosScreen />);
+    mockLoadPhotos.mockClear();
+    fireEvent.press(screen.UNSAFE_getAllByType(Image)[1]);
+    view.rerender(<PhotosScreen />);
+    expect(mockMediaState.deleteQueue.map(photo => photo.id)).toEqual(['one', 'three']);
+    expect(mockMediaState.photoProcessedIds).toEqual(['one', 'two', 'three']);
+    expect(screen.getByTestId('photo-review')).toBeTruthy();
+    expect(screen.queryByText('card:two')).toBeNull();
+    expect(mockLoadPhotos).not.toHaveBeenCalled();
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+  });
+
+  it('shows completion after keeping the last restored item and waits for explicit continue', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('restored')];
+    mockMediaState.photoProcessedIds = ['restored'];
+    const view = render(<PhotosScreen />);
+    mockLoadPhotos.mockClear();
+    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
+    view.rerender(<PhotosScreen />);
+    expect(screen.getByTestId('photo-review')).toBeTruthy();
+    expect(screen.getByText('photos_finished')).toBeTruthy();
+    expect(screen.queryByText('photos_confirm')).toBeNull();
+    expect(mockMediaState.photoProcessedIds).toEqual(['restored']);
+    expect(mockLoadPhotos).not.toHaveBeenCalled();
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByText('continue_next_batch'));
+    expect(mockMediaState.resetBatch).toHaveBeenCalledWith([]);
+    expect(mockLoadPhotos).toHaveBeenCalledTimes(1);
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+    view.rerender(<PhotosScreen />);
+    expect(screen.queryByTestId('photo-review')).toBeNull();
+  });
+
+  it('preserves a valid review page and falls back one page when its final item is kept', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = Array.from({ length: 19 }, (_, i) => mockPhoto(`queued-${i}`));
+    mockMediaState.photoProcessedIds = mockMediaState.deleteQueue.map(photo => photo.id);
+    const view = render(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
+    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
+    view.rerender(<PhotosScreen />);
+    expect(screen.UNSAFE_getAllByType(Image)[0].props.source.uri).toBe('file:///queued-10.jpg');
+    // 18 items now fill two pages. Remove eight more on the second page.
+    for (let i = 0; i < 8; i++) {
+      fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
+      view.rerender(<PhotosScreen />);
+    }
+    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
+    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
+    view.rerender(<PhotosScreen />);
+    expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri))
+      .toEqual(Array.from({ length: 9 }, (_, i) => `file:///queued-${i}.jpg`));
+    expect(screen.getByTestId('photo-review')).toBeTruthy();
+    expect(mockMediaState.photoProcessedIds).toHaveLength(19);
+  });
+
+  it('keeps hidden limited-access decisions when the last visible item is kept and continued', () => {
+    mockMediaState.photos = [];
+    mockMediaState.permissionScope = 'limited';
+    mockMediaState.hiddenPhotoQueuedAssetIds = ['hidden'];
+    mockMediaState.deleteQueue = [mockPhoto('visible'), mockPhoto('hidden')];
+    mockMediaState.photoProcessedIds = ['visible', 'hidden'];
+    const view = render(<PhotosScreen />);
+    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
+    view.rerender(<PhotosScreen />);
+    expect(screen.getByText('photos_finished')).toBeTruthy();
+    expect(mockMediaState.deleteQueue.map(photo => photo.id)).toEqual(['hidden']);
+    expect(mockMediaState.photoProcessedIds).toEqual(['visible', 'hidden']);
+    fireEvent.press(screen.getByText('continue_next_batch'));
+    expect(mockMediaState.resetBatch).toHaveBeenCalledWith([]);
+    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+  });
+
+  it('invalidates the local kept-all completion on a media-library refresh', () => {
+    mockMediaState.photos = [];
+    mockMediaState.deleteQueue = [mockPhoto('restored')];
+    mockMediaState.photoProcessedIds = ['restored'];
+    const view = render(<PhotosScreen />);
+    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
+    expect(screen.getByText('photos_finished')).toBeTruthy();
+    mockMediaState.mediaLibraryRefreshVersion++;
+    view.rerender(<PhotosScreen />);
+    expect(screen.queryByTestId('photo-review')).toBeNull();
+    expect(mockMediaState.photoProcessedIds).toEqual(['restored']);
+    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
   });
 
   it('confirms the complete visible queue rather than just the selected review page', async () => {
@@ -386,6 +490,8 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.getByRole('button', { name: 'photos_review_undo' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'photos_confirm' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'photos_skip' })).toBeDisabled();
+    fireEvent.press(screen.getByRole('button', { name: 'photos_review_undo' }));
+    expect(mockMediaState.keepPhotoFromDeleteQueue).not.toHaveBeenCalled();
   });
 
   it('provides a visible named close action for the long-press preview without changing the queue', () => {

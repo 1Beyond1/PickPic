@@ -35,7 +35,7 @@ export default {
     photos_finished: 'Batch Complete',
     photos_review_title: 'Review before deleting',
     photos_review_pending: '{count} photos pending deletion',
-    photos_review_undo: 'Undo deletion decision for photo {number}',
+    photos_review_undo: 'Keep photo {number}, leaving it organized',
     photos_review_preview_hint: 'Hold to preview the full photo',
     photos_review_warning: 'Some devices permanently remove deleted photos. Review them first.',
     photos_delete_count: 'Delete: {count} items',
@@ -156,7 +156,7 @@ export default {
     album_selector_empty: 'No albums available.',
     album_full_access_required: 'Browsing and filtering albums on iOS requires full photo-library access. You can change this in system settings.',
     album_open_settings: 'Open System Settings',
-    thumbnail_tap_undo: 'Tap to undo, Long press to preview',
+    thumbnail_tap_undo: 'Tap to keep, hold to preview. Kept photos stay organized.',
     no_delete_this_batch: 'No photos marked for deletion in this batch',
     continue_next_batch: 'Continue to Next Batch',
 

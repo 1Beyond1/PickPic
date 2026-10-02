@@ -51,10 +51,12 @@ export default function PhotosScreen() {
     const [showHome, setShowHome] = useState(true);
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [reviewPage, setReviewPage] = useState(0);
+    const [keptAllReviewPhotos, setKeptAllReviewPhotos] = useState(false);
     const [deckSize, setDeckSize] = useState({ width: 0, height: 0 });
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
+        setKeptAllReviewPhotos(false);
         void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
         void loadAlbums();
     }, [
@@ -117,7 +119,10 @@ export default function PhotosScreen() {
     const reviewPhotos = visibleDeleteQueue.slice(currentReviewPage * REVIEW_PAGE_SIZE, (currentReviewPage + 1) * REVIEW_PAGE_SIZE);
 
     useEffect(() => {
-        if (visiblePhotos.length > 0) setReviewPage(0);
+        if (visiblePhotos.length > 0) {
+            setReviewPage(0);
+            setKeptAllReviewPhotos(false);
+        }
     }, [visiblePhotos.length]);
 
     const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
@@ -131,6 +136,7 @@ export default function PhotosScreen() {
         // filtered separately by the permission-aware queue projection.
         setPreviewPhoto(null);
         setReviewPage(0);
+        setKeptAllReviewPhotos(false);
         setPendingCollectionPhoto(null);
         setNewAlbumName('');
         setShowNewAlbumModal(false);
@@ -203,14 +209,13 @@ export default function PhotosScreen() {
         });
     };
 
-    const handleUndo = (assetId: string) => {
-        // useMediaStore undoAction
-        useMediaStore.getState().undoAction(assetId);
-        // The queue can be restored after a restart, when its asset is no
-        // longer present in the in-memory batch. Reload using the current
-        // filter so undo makes the asset actionable again without leaking an
-        // item from another album scope into the deck.
-        void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+    const handleKeepReviewPhoto = (assetId: string) => {
+        if (!visibleDeleteQueueIds.includes(assetId)) return;
+        if (!useMediaStore.getState().keepPhotoFromDeleteQueue(assetId)) return;
+        // A restored queue may have no in-memory batch. Keep its last-item
+        // completion visible until Continue, without reloading processed media.
+        setKeptAllReviewPhotos(visibleDeleteQueue.length === 1);
+        setReviewPage(Math.min(currentReviewPage, Math.max(0, Math.ceil((visibleDeleteQueue.length - 1) / REVIEW_PAGE_SIZE) - 1)));
     };
 
     const handleBatchFinished = () => {
@@ -224,6 +229,7 @@ export default function PhotosScreen() {
                         accessibilityRole="button"
                         style={[styles.reviewButton, { backgroundColor: colors.actionBackground }]}
                         onPress={() => {
+                            setKeptAllReviewPhotos(false);
                             resetBatch(visibleDeleteQueueIds);
                             loadPhotos(groupSize, displayOrder, selectedAlbumIds);
                         }}
@@ -250,7 +256,7 @@ export default function PhotosScreen() {
                                 accessibilityLabel={t('photos_review_undo', { number: currentReviewPage * REVIEW_PAGE_SIZE + index + 1 })}
                                 accessibilityHint={t('photos_review_preview_hint')}
                                 accessibilityState={{ disabled: isConfirmingDeletion }}
-                                onPress={() => handleUndo(photo.id)}
+                                onPress={() => handleKeepReviewPhoto(photo.id)}
                                 onLongPress={() => setPreviewPhoto(photo)}
                                 delayLongPress={200}
                                 disabled={isConfirmingDeletion}
@@ -339,7 +345,7 @@ export default function PhotosScreen() {
     // A persisted delete queue can outlive the in-memory review batch. Keep
     // the confirmation screen reachable after a restart, even when there
     // are no remaining photos to load.
-    if (visiblePhotos.length === 0 && (photos.length > 0 || visibleDeleteQueue.length > 0)) {
+    if (visiblePhotos.length === 0 && (photos.length > 0 || visibleDeleteQueue.length > 0 || (keptAllReviewPhotos && permissionScope !== 'none'))) {
         return (
             <View testID="photo-review" style={[styles.container, {
                 paddingTop: insets.top,
