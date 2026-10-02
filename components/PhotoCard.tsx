@@ -69,8 +69,8 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                         setAspectRatio(imgWidth / imgHeight);
                     }
                 },
-                (error) => {
-                    console.log('Failed to get image size:', error);
+                () => {
+                    console.log('Failed to get image size.');
                     if (active) setAspectRatio(1);
                 }
             );
@@ -198,6 +198,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                 }
             ]}>
                 <Image
+                    cachePolicy="memory"
                     source={{ uri: photo.uri }}
                     style={styles.image}
                     contentFit="contain"

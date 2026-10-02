@@ -27,7 +27,7 @@ function getBridgeQueue() {
             const bridge = require('../../components/MLBridge');
             mlBridgeQueue = bridge.mlBridgeQueue;
         } catch (error) {
-            console.warn('[MLKit] Bridge not available:', error);
+            console.warn('[MLKit] Bridge not available.');
             mlBridgeQueue = { isAvailable: () => false };
         }
     }
@@ -114,7 +114,7 @@ export const MLKitService = {
 
             return await enqueueRequest<DetectedFace[]>(queue, 'detectFaces', imageUri);
         } catch (error) {
-            console.error('[MLKit] Face detection error:', error);
+            console.error('[MLKit] Face detection failed.');
             throw error instanceof Error ? error : new Error(String(error));
         }
     },
@@ -131,7 +131,7 @@ export const MLKitService = {
 
             return await enqueueRequest<ImageLabel[]>(queue, 'labelImage', imageUri);
         } catch (error) {
-            console.error('[MLKit] Image labeling error:', error);
+            console.error('[MLKit] Image labeling failed.');
             throw error instanceof Error ? error : new Error(String(error));
         }
     },

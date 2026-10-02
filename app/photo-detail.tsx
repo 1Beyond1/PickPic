@@ -169,7 +169,7 @@ function PhotoDetailMedia({ uri, assetId, onResolvedUri }: { uri: string; assetI
     }, [image.attempt, image.uri, image.failed, onResolvedUri]);
     if (image.loading) return <ActivityIndicator size="large" color={colors.primary} />;
     if (image.failed) return <PhotoReadFeedback onRetry={image.retry} />;
-    return <Image key={image.attempt} source={{ uri: image.uri }} style={styles.image} contentFit="contain" onError={image.onError} />;
+    return <Image key={image.attempt} source={{ uri: image.uri }} cachePolicy="memory" style={styles.image} contentFit="contain" onError={image.onError} />;
 }
 
 const styles = StyleSheet.create({

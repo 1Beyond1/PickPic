@@ -1,4 +1,7 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { settingsStorage } from '../services/privacy/settingsStorage';
+import { markEncryptedStorageHydrated } from '../services/privacy/encryptedStorage';
+import { mergeProtectedState } from '../services/privacy/mergeState';
+import { usePrivacyStore } from './usePrivacyStore';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
@@ -83,25 +86,19 @@ export const useSettingsStore = create<SettingsState>()(
         }),
         {
             name: 'photoapp-settings',
-            storage: createJSONStorage(() => AsyncStorage),
+            storage: createJSONStorage(() => settingsStorage),
+            merge: mergeProtectedState,
             onRehydrateStorage: () => (state, error) => {
+                if (error) { usePrivacyStore.getState().block('settings', 'read'); return; }
+                if (!state) return;
+                markEncryptedStorageHydrated('settings', 'photoapp-settings');
                 // Older releases persisted WarmTerra, claude and PPstyle.
                 // Preserve every other setting while mapping those modes to
                 // the new neutral light appearance.
-                if (state && state.theme !== 'light' && state.theme !== 'dark') {
+                if (state.theme !== 'light' && state.theme !== 'dark') {
                     state.setTheme('light');
                 }
-                // Zustand passes undefined when storage read/parse fails. The
-                // app can safely continue with defaults, but must still leave
-                // the hydration gate or media screens would never load.
-                if (error && typeof window !== 'undefined') {
-                    console.error('[SettingsStore] Failed to rehydrate settings:', error);
-                }
-                // AsyncStorage's web adapter cannot access window during Expo's
-                // server-side/static render. There is no client store to open
-                // there, so avoid calling a persisted setter in that phase.
-                if (!state && typeof window === 'undefined') return;
-                (state ?? useSettingsStore.getState()).setHasHydrated(true);
+                state.setHasHydrated(true);
             },
         }
     )

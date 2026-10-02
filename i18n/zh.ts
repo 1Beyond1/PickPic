@@ -1,4 +1,13 @@
 export default {
+    privacy_loading: '正在读取本机记录',
+    privacy_native_title: '本机保护需要原生应用',
+    privacy_native_desc: '浏览器不支持 PickPic 当前使用的设备密钥存储。请使用移动端原生构建；已有浏览器记录不会被清空或降级为明文。',
+    privacy_read_title: '暂时无法读取本机记录',
+    privacy_read_desc: '原有记录已保留。请解锁设备后重试；如果仍无法恢复，请保留应用数据。',
+    privacy_write_title: '暂时无法保存记录',
+    privacy_write_desc: '请保持应用开启，释放存储空间或解锁设备后重试，以保存刚才的操作。',
+    privacy_retry: '重试',
+    privacy_retrying: '正在重试…',
     tab_photos: '图片',
     tab_videos: '视频',
     tab_scan_results: 'AI扫描',

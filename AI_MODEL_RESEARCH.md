@@ -33,6 +33,22 @@ MobileCLIP **代码 MIT 与权重许可不同**。当前官方 S0 与 V2 S0 权�
 
 其他合理方案：MediaPipe 官方 Image Embedder 有 MobileNetV3 small/large 模型，可以辅助特征相似，但它不是相册分类器，语义近似也不能证明文件重复。此类方案作为后续相似检索调查，不作为本轮分类替换。框架代码 Apache-2.0，具体模型仍应核对各自来源许可。[官方能力与模型](https://developers.google.com/edge/mediapipe/solutions/vision/image_embedder)、[框架许可](https://github.com/google-ai-edge/mediapipe/blob/master/LICENSE)。
 
+## 扩展候选：现成权重不等于现成手机产品
+
+补充调查日期同上。以下没有下载权重、接入运行依赖或测量手机性能；它们是后续候选，不代表本轮授权替换。
+
+| 方案 | 已核实的资源 | PickPic 的价值与限制 | 建议 |
+| --- | --- | --- | --- |
+| MobileNetV4 Conv Small（timm 发布者预训练权重） | 发布者模型卡标明 ImageNet-1k、3.8M 参数、Apache-2.0；单份 FP32 safetensors 约 15.2 MB。仓库约 30.5 MB 包含两种重复权重格式，不能当 APK 增量 | 可作为轻量物体分类比较项，但和当前模型一样受 ImageNet 类别限制，不天然具备聊天截图、票据等相册知识；PyTorch 权重需转换、验证预处理和量化。不是已验证的 Google 官方 Android 成品包 | 在性能瓶颈明确时比较，不能承诺更准或仅靠换架构解决相册分类 |
+| Google SigLIP2 Base Patch16 224 | Google 官方模型卡 Apache-2.0，支持零样本分类与图文检索；完整 FP32 权重约 1.5 GB，含图像和文本部分 | 固定相册类别可以预计算文字向量，理论上裁掉手机端文字编码器；但图像塔转换、量化、部署体积、中文类别效果、手机内存与速度均未验证。完整 checkpoint 不是可用 APK 模型 | 许可较清楚的语义模型研究候选，目前不是轻量手机首选 |
+| PaddleClas PULC 清晰度评估 | 官方提供现成清晰/模糊推理模型，文档大小约 7.0M；代码仓库 Apache-2.0，具体权重发布条件仍需随资源核对 | 更对应当前传统模糊检测的痛点。其训练主要合成运动/高斯模糊，并不证明能可靠区分人像虚化、夜景、低纹理照片；官方 2.13ms 是 Xeon CPU、10 线程、MKLDNN，不能推算手机速度。需 Paddle Lite 或转换后的原生适配 | 后续专项试验，不要求用户训练，也不与通用分类模型直接比 |
+| Apple Vision 内置分类 | Apple 官方提供 ClassifyImageRequest / VNClassifyImageRequest、支持类别查询与示例；是系统框架而非可提取的开源权重 | iOS 后续可优先调查系统现成能力，避免自行训练；仍需 RN 原生桥和 iOS 验证。Android 不可用，两个平台分类结果未必一致 | iOS 路线独立候选，本轮延期，不宣传已支持 |
+| MediaPipe Image Embedder 的 MobileNetV3 预训练资源 | 官方任务支持提取图片特征和余弦相似度，提供 small/large 候选 | 可用于相似图片评估；语义相似不是相同文件，也可能把不同照片视为相近。需要同一素材集测试，与现有相似算法比较 | 相似分组后续调查，不充当大类分类或完全重复证明 |
+
+来源：[MobileNetV4 模型卡](https://huggingface.co/timm/mobilenetv4_conv_small.e2400_r224_in1k)、[具体权重文件](https://huggingface.co/timm/mobilenetv4_conv_small.e2400_r224_in1k/tree/main)、[SigLIP2 模型卡](https://huggingface.co/google/siglip2-base-patch16-224)、[完整文件列表](https://huggingface.co/google/siglip2-base-patch16-224/tree/main)、[PULC 清晰度模型与测试条件](https://github.com/PaddlePaddle/PaddleClas/blob/release/2.6/docs/zh_CN/models/PULC/PULC_clarity_assessment.md)、[PaddleClas 代码许可](https://github.com/PaddlePaddle/PaddleClas/blob/release/2.6/LICENSE)、[Apple 官方分类示例](https://developer.apple.com/documentation/vision/classifying-images-for-categorization-and-search)、[MediaPipe 官方特征任务](https://developers.google.com/edge/mediapipe/solutions/vision/image_embedder)。
+
+现成方案仍由开发者做兼容、固定评测集和默认策略验证，不把标注大量照片、阈值滑块或提示词调试转嫁给用户。若需要绝不联网/遥测，应把 bundled ML Kit 与独立运行时的隐私边界一起比较；bundled 只说明模型可随包使用，不代表 SDK 没有度量通信。LiteRT/ONNX Runtime/Paddle Lite 是运行引擎，不是自动更准确的分类模型。截图/录屏优先依据可靠媒体类型和相册来源，没有充分证据时保持来源提示而不冒充内容识别。
+
 ## 建议与后续验证
 
 1. 首先保留当前权重并验收大类展示，解决细分类目录和分数叠加问题。

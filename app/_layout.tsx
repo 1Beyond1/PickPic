@@ -7,9 +7,14 @@ import { AppState, Platform, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AIScanGuideModal } from '../components/AIScanGuideModal';
 import { AnnouncementModal } from '../components/AnnouncementModal';
+import { PrivacyRecoveryScreen } from '../components/PrivacyRecoveryScreen';
 import { MLBridge } from '../components/MLBridge';
 import { useThemeColor } from '../hooks/useThemeColor';
-import { AssetRepository } from '../database';
+import { AssetRepository, closeDatabase, getDatabase } from '../database';
+import { flushMediaProgress } from '../services/mediaProgressStorage';
+import { flushSettings } from '../services/privacy/settingsStorage';
+import { clearLegacyMediaCache } from '../services/privacy/mediaCache';
+import { LocalPrivacyError, usePrivacyStore } from '../stores/usePrivacyStore';
 import { isScanning, start as startScanner, stop as stopScanner } from '../services/scanner';
 import { useMediaStore } from '../stores/useMediaStore';
 import { useScannerStore } from '../stores/useScannerStore';
@@ -24,6 +29,9 @@ export default function RootLayout() {
   const { colors, isDark } = useThemeColor();
   const router = useRouter();
   const pathname = usePathname();
+  const privacyFailures = usePrivacyStore(state => state.failures);
+  const mediaHydrated = useMediaStore(state => state.hasHydrated);
+  const [privacyRetrying, setPrivacyRetrying] = useState(false);
   const [mediaPermission, , getMediaPermission] = MediaLibrary.usePermissions({
     // Keep the global gate scoped to the required photo workflow. Android
     // reports a combined request as denied when video is refused, even though
@@ -42,7 +50,7 @@ export default function RootLayout() {
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
-  const mediaHasHydrated = useMediaStore(state => state.hasHydrated);
+  const privacyReady = appReady && settingsHydrated && mediaHydrated && Object.keys(privacyFailures).length === 0;
   const mediaPermissionGrantedRef = useRef(false);
   const mediaPermissionScopeRef = useRef<'none' | 'limited' | 'full' | null>(null);
   const previousMediaPermissionRef = useRef<typeof mediaPermission>(null);
@@ -69,7 +77,7 @@ export default function RootLayout() {
   // snapshot, and an unrelated render would otherwise restore the stale
   // granted value before the next delayed onboarding callback runs.
   useEffect(() => {
-    if (!mediaPermission) return;
+    if (!privacyReady || !mediaPermission) return;
 
     const currentScope = !mediaPermission.granted
       ? 'none'
@@ -109,7 +117,7 @@ export default function RootLayout() {
 
     const mediaStore = useMediaStore.getState();
     mediaStore.setPermissionScope(currentScope);
-    if (mediaHasHydrated && (!queueVisibilityInitializedRef.current || mediaSnapshotChanged)) {
+    if (!queueVisibilityInitializedRef.current || mediaSnapshotChanged) {
       mediaStore.refreshQueuedAssetVisibility(currentScope, 'photo');
       mediaStore.pruneUnavailableQueuedAssets(currentScope, 'photo');
       queueVisibilityInitializedRef.current = true;
@@ -121,12 +129,19 @@ export default function RootLayout() {
     }
     previousMediaPermissionRef.current = mediaPermission;
     mediaPermissionScopeRef.current = currentScope;
-  }, [mediaHasHydrated, mediaPermission]);
+  }, [privacyReady, mediaPermission]);
+
+  useEffect(() => {
+    if (!privacyReady && isScanning()) stopScanner();
+  }, [privacyReady]);
 
   // Permissions can be revoked in system settings after the initial route
   // has already replaced the permission screen. Keep the gate active for
   // every route and send the user back when access is no longer granted.
   useEffect(() => {
+    // The recovery/loading screen deliberately does not mount routes. Do not
+    // navigate or subscribe until protected state has opened successfully.
+    if (!privacyReady) return;
     let mounted = true;
 
     const redirectIfPermissionRevoked = async () => {
@@ -162,7 +177,7 @@ export default function RootLayout() {
       mounted = false;
       subscription.remove();
     };
-  }, [getMediaPermission, router]);
+  }, [privacyReady, getMediaPermission, router]);
 
   // MediaLibrary reports both ordinary asset changes and iOS changes to the
   // selected subset while the permission remains `limited`. The privilege
@@ -170,9 +185,10 @@ export default function RootLayout() {
   // media state and notify result/detail screens explicitly. Web has no native
   // listener.
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    if (!privacyReady || Platform.OS === 'web') return;
 
     const subscription = MediaLibrary.addListener(event => {
+      if (Object.keys(usePrivacyStore.getState().failures).length) return;
       const isPermissionScopeChange = event.hasIncrementalChanges === false;
       const isIncrementalMediaChange = event.hasIncrementalChanges === true || Platform.OS === 'android';
       if (!isPermissionScopeChange && !isIncrementalMediaChange) return;
@@ -193,10 +209,10 @@ export default function RootLayout() {
           // not remove progress that may become visible again later.
           mediaStore.removeDeletedAssets(deletedAssetIds);
           indexCleanupPromise = AssetRepository.removeAssetsAndDerivedData(deletedAssetIds)
-            .catch(error => {
+            .catch(() => {
               // The media is already gone. Keep the UI refresh, and let the
               // next complete scan repair the index if this cleanup failed.
-              console.error('[RootLayout] Failed to clean externally deleted assets from scan index:', error);
+              console.error('[RootLayout] Failed to clean externally deleted assets from scan index.');
             });
         }
         mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none', 'photo');
@@ -250,7 +266,7 @@ export default function RootLayout() {
     });
 
     return () => subscription.remove();
-  }, [getMediaPermission]);
+  }, [privacyReady, getMediaPermission]);
 
   // Initialize app
   useEffect(() => {
@@ -258,10 +274,13 @@ export default function RootLayout() {
 
     async function initializeApp() {
       try {
+        await clearLegacyMediaCache();
+        await getDatabase(); // Migrate/validate the protected scanner index before showing the app.
         // Refresh media counts on app start
         await useMediaStore.getState().refreshTotalCounts();
-      } catch (error) {
-        console.error('[RootLayout] Failed to initialize app data:', error);
+      } catch {
+        // Native storage errors can contain SQL, identifiers or paths.
+        // The protected database reports only a generic recovery state.
       } finally {
         if (mounted) {
           setAppReady(true);
@@ -286,7 +305,7 @@ export default function RootLayout() {
   useEffect(() => {
     // Do not cover the permission gate with onboarding. On a fresh install
     // the user must grant media access before the AI guide can start a scan.
-    if (!appReady || !settingsHydrated || !mediaPermission?.granted || initialCheckDone.current) return;
+    if (!privacyReady || !mediaPermission?.granted || initialCheckDone.current) return;
 
     initialCheckDone.current = true;
 
@@ -304,8 +323,7 @@ export default function RootLayout() {
       return () => clearTimeout(timer);
     }
   }, [
-    appReady,
-    settingsHydrated,
+    privacyReady,
     mediaPermission?.granted,
     dismissedAnnouncementVersion,
     aiGuideShownVersion,
@@ -348,6 +366,38 @@ export default function RootLayout() {
     setShowAIGuide(false);
     dismissAIGuide(APP_VERSION);
   };
+
+  const retryPrivacy = async () => {
+    if (privacyRetrying) return;
+    setPrivacyRetrying(true);
+    try {
+      if (isScanning()) {
+        stopScanner();
+        const deadline = Date.now() + 20000;
+        while (isScanning() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+        if (isScanning()) throw new LocalPrivacyError();
+      }
+      await clearLegacyMediaCache();
+      const failures = usePrivacyStore.getState().failures;
+      if (failures.settings === 'read') await useSettingsStore.persist.rehydrate();
+      else await flushSettings();
+      if (failures.records === 'read') await useMediaStore.persist.rehydrate();
+      else await flushMediaProgress();
+      if (failures.scanner) await closeDatabase();
+      await getDatabase();
+    } catch {
+      // The privacy gate retains the data and a non-sensitive failure state.
+    } finally { setPrivacyRetrying(false); }
+  };
+
+  const failureKinds = Object.values(privacyFailures);
+  if (!privacyReady) {
+    const failure = failureKinds.includes('read') ? 'read' : failureKinds.length ? 'write' : null;
+    return <GestureHandlerRootView style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <PrivacyRecoveryScreen failure={failure} busy={privacyRetrying} onRetry={() => { void retryPrivacy(); }} />
+    </GestureHandlerRootView>;
+  }
 
   return (
     <GestureHandlerRootView style={[styles.container, { backgroundColor: colors.background }]}>

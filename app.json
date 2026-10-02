@@ -74,9 +74,11 @@
           }
         }
       ],
-      "expo-sqlite",
+      ["expo-sqlite", { "useSQLCipher": true }],
+      ["expo-secure-store", { "configureAndroidBackup": false, "faceIDPermission": false }],
       "react-native-quick-crypto",
-      "./plugins/withNativeCryptoToolchain"
+      "./plugins/withNativeCryptoToolchain",
+      "./plugins/withPrivateRecordsBackup"
     ],
     "experiments": {
       "typedRoutes": true,

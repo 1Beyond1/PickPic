@@ -2,6 +2,9 @@ import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { mediaProgressStorage } from '../services/mediaProgressStorage';
+import { markEncryptedStorageHydrated } from '../services/privacy/encryptedStorage';
+import { mergeProtectedState } from '../services/privacy/mergeState';
+import { usePrivacyStore } from './usePrivacyStore';
 import { isRecordTransferActive } from '../services/recordOperationLock';
 import { Platform } from 'react-native';
 import { AssetRepository } from '../database';
@@ -1122,6 +1125,7 @@ export const useMediaStore = create<MediaState>()(
         {
             name: 'photoapp-media-progress',
             storage: createJSONStorage(() => mediaProgressStorage),
+            merge: mergeProtectedState,
             partialize: (state) => ({
                 photoProcessedIds: state.photoProcessedIds,
                 videoProcessedIds: state.videoProcessedIds,
@@ -1134,15 +1138,10 @@ export const useMediaStore = create<MediaState>()(
                 videoTrashBin: state.videoTrashBin,
             }),
             onRehydrateStorage: () => (state, error) => {
-                // A storage read error must not leave the media screens behind
-                // their hydration gate forever; continue with default queues.
-                if (error && typeof window !== 'undefined') {
-                    console.error('[MediaStore] Failed to rehydrate progress:', error);
-                }
-                // AsyncStorage's web adapter cannot access window during Expo's
-                // server-side/static render. Avoid a persisted write there.
-                if (!state && typeof window === 'undefined') return;
-                (state ?? useMediaStore.getState()).setHasHydrated(true);
+                if (error) { usePrivacyStore.getState().block('records', 'read'); return; }
+                if (!state) return;
+                markEncryptedStorageHydrated('records', 'photoapp-media-progress');
+                state.setHasHydrated(true);
             },
         }
     )

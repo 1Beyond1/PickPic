@@ -518,8 +518,8 @@ async function analyzeAIPhoto(assetInfo: MediaLibrary.AssetInfo, uri: string) {
             labelingUri = await imageOps.centerCropSquare(uri, assetInfo.width, assetInfo.height, 300);
             isCropped = (labelingUri !== uri);
         }
-    } catch (e) {
-        console.warn('[AIScanner] Crop failed, using original:', e);
+    } catch {
+        console.warn('[AIScanner] Crop failed, using original.');
     }
 
     const labels = await (async () => {
@@ -553,14 +553,13 @@ async function analyzeAIPhoto(assetInfo: MediaLibrary.AssetInfo, uri: string) {
     });
 
     // Filter 2: Context Disqualifier (Ignore faces in Screenshots/Websites)
-    const topLabel = labels.length > 0 ? labels[0].text.toLowerCase() : '';
     // Use the same grouped evidence as the category screen.
     // A weaker document candidate or a photographed monitor
     // must not override an actual face detection.
     const isContextDisqualified = hasDocumentContext(labels);
 
     if (isContextDisqualified) {
-        console.log(`[AIScanner] Context Disqualifier Triggered: ${topLabel}. Ignoring ${validFaces.length} faces.`);
+        console.log('[AIScanner] Ignored face candidates in a document context.');
         faceCount = 0;
     } else {
         faceCount = validFaces.length;
@@ -679,11 +678,8 @@ async function processAsset(
             // otherwise complete scan/group transaction into ERROR.
             try {
                 await selectBestShot(targetGroupId);
-            } catch (bestShotError) {
-                console.warn(
-                    `[AIScanner] Failed to update best shot for ${targetGroupId}:`,
-                    bestShotError
-                );
+            } catch {
+                console.warn('[AIScanner] Failed to update a suggested keep item.');
             }
         }
 
@@ -703,7 +699,9 @@ async function processAsset(
             markForWiderDuplicateScan
         );
 
-        console.warn(`[AIScanner] Failed to process asset ${assetId}:`, errorMessage);
+        // Native decoder/ML errors may include media URIs. Keep diagnostics
+        // generic; the detailed retry state belongs in the encrypted index.
+        console.warn('[AIScanner] Failed to process a media item.');
         return false;
     }
 }
@@ -827,11 +825,11 @@ async function reportCurrentStatus(
         };
         useScannerStore.getState().setProgress(finalProgress);
         runCallbacks.onProgress?.(finalProgress);
-    } catch (error) {
+    } catch {
         // The original scan error/cancellation should still be surfaced even
         // if this best-effort status refresh is blocked by a simultaneous
         // permission or database change.
-        console.warn('[AIScanner] Failed to publish current status:', error);
+        console.warn('[AIScanner] Failed to publish current status.');
     }
 }
 
@@ -942,7 +940,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
             completed = true;
         }
     } catch (error) {
-        console.error('[AIScanner] Scan error:', error);
+        console.error('[AIScanner] Scan failed.');
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
         useScannerStore.getState().setLastError(error instanceof Error ? error : new Error(String(error)));
         if (!shouldStop) {
@@ -958,7 +956,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
             runCallbacks.onComplete?.();
         } catch (error) {
             const completionError = error instanceof Error ? error : new Error(String(error));
-            console.error('[AIScanner] Completion callback failed:', completionError);
+            console.error('[AIScanner] Completion callback failed.');
             runCallbacks.onError?.(completionError);
             if (scannerRunGeneration === runGeneration) {
                 useScannerStore.getState().setLastError(completionError);
@@ -1082,7 +1080,7 @@ export async function resumeOnce(
             completed = true;
         }
     } catch (error) {
-        console.error('[AIScanner] Resume error:', error);
+        console.error('[AIScanner] Resume failed.');
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
         useScannerStore.getState().setLastError(error instanceof Error ? error : new Error(String(error)));
         if (!shouldStop) {
@@ -1098,7 +1096,7 @@ export async function resumeOnce(
             runCallbacks.onComplete?.();
         } catch (error) {
             const completionError = error instanceof Error ? error : new Error(String(error));
-            console.error('[AIScanner] Completion callback failed:', completionError);
+            console.error('[AIScanner] Completion callback failed.');
             runCallbacks.onError?.(completionError);
             if (scannerRunGeneration === runGeneration) {
                 useScannerStore.getState().setLastError(completionError);

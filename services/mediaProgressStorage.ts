@@ -1,4 +1,4 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { canWriteEncryptedStorage, encryptedRecordStorage } from './privacy/encryptedStorage';
 import type { StateStorage } from 'zustand/middleware';
 
 // Serialize persisted decisions so slow earlier writes cannot overwrite newer
@@ -8,15 +8,18 @@ let queue = Promise.resolve();
 let lastWriteFailed = false;
 let latest: { name: string; value: string } | null = null;
 export const mediaProgressStorage: StateStorage = {
-    getItem: async name => { await queue; return AsyncStorage.getItem(name); },
+    getItem: async name => { await queue; return encryptedRecordStorage.getItem(name); },
     setItem: (name, value) => {
+        // Permission/count setters can run before automatic hydration. Their
+        // default snapshots are never allowed to replace a stored decision.
+        if (!canWriteEncryptedStorage('records', name)) return;
         latest = { name, value };
         queue = queue.then(async () => {
-            try { await AsyncStorage.setItem(name, value); lastWriteFailed = false; }
+            try { await encryptedRecordStorage.setItem(name, value); lastWriteFailed = false; }
             catch { lastWriteFailed = true; }
         });
     },
-    removeItem: async name => { await queue; await AsyncStorage.removeItem(name); },
+    removeItem: async name => { await queue; await encryptedRecordStorage.removeItem(name); },
 };
 export async function flushMediaProgress(): Promise<void> {
     // Include writes added by an in-flight gallery event while we awaited.

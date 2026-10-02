@@ -112,8 +112,8 @@ function MLBridgeInner() {
                 modelReady = typeof loadedState === 'function'
                     ? loadedState.call(labeler)
                     : loadedState === true;
-            } catch (error) {
-                console.warn('[MLBridge] Failed to check model readiness:', error);
+            } catch {
+                console.warn('[MLBridge] Failed to check model readiness.');
             }
 
             const faceDetectorStatus = faceDetector.status;
@@ -151,7 +151,7 @@ function MLBridgeInner() {
             // Check for stuck request (timeout > 10s)
             if (currentRequest && Date.now() - requestStartTimeRef.current > 10000) {
                 const timedOutRequest = currentRequest;
-                console.warn('[MLBridge] Request timed out internally:', timedOutRequest.id);
+                console.warn('[MLBridge] Request timed out internally.');
                 timedOutRequest.reject(new Error('Internal Bridge Timeout'));
                 setCurrentRequest(activeRequest => (
                     activeRequest?.id === timedOutRequest.id ? null : activeRequest
@@ -163,7 +163,7 @@ function MLBridgeInner() {
 
             const request = mlBridgeQueue.shift();
             if (request) {
-                console.log('[MLBridge] Dequeue:', request.type, request.id);
+                console.log('[MLBridge] Processing a native analysis request.');
                 requestStartTimeRef.current = Date.now();
                 setCurrentRequest(request);
             }
@@ -189,7 +189,6 @@ function MLBridgeInner() {
                     throw new Error('Face detection failed');
                 }
 
-                console.log('[MLBridge] Face detection done, count:', result.faces.length);
                 const detectedFaces: DetectedFace[] = result.faces.map((face) => ({
                     boundingBox: {
                         x: face.frame.origin.x,
@@ -202,7 +201,7 @@ function MLBridgeInner() {
                 request.resolve(detectedFaces);
             } catch (error) {
                 if (!active) return;
-                console.error('[MLBridge] Face detection error:', error);
+                console.error('[MLBridge] Face detection failed.');
                 request.reject(error instanceof Error ? error : new Error(String(error)));
             } finally {
                 if (active) {
@@ -226,7 +225,7 @@ function MLBridgeInner() {
         (async () => {
             try {
                 const result = await labeler.classifyImage(currentRequest.imageUri);
-                console.log('[MLBridge] Label success, found:', result.length);
+                console.log('[MLBridge] Label classification completed.');
                 const labels: ImageLabel[] = result.map((item: any) => ({
                     text: (item.text && item.text.length > 0) ? item.text : (IMAGENET_LABELS[item.index] ?? 'Unknown'),
                     confidence: item.confidence,
@@ -237,7 +236,7 @@ function MLBridgeInner() {
                     activeRequest?.id === currentRequest.id ? null : activeRequest
                 ));
             } catch (error) {
-                console.error('[MLBridge] Image labeling error:', error);
+                console.error('[MLBridge] Image labeling failed.');
                 currentRequest.reject(error as Error);
                 setCurrentRequest(activeRequest => (
                     activeRequest?.id === currentRequest.id ? null : activeRequest

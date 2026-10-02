@@ -1,0 +1,29 @@
+import type { StateStorage } from 'zustand/middleware';
+import { canWriteEncryptedStorage, encryptedSettingsStorage } from './encryptedStorage';
+
+// Zustand callers are synchronous; observe failures in the privacy gate and
+// keep the last intended value available for explicit retry.
+let queue = Promise.resolve();
+let failed = false;
+let latest: { name: string; value: string } | null = null;
+export const settingsStorage: StateStorage = {
+    async getItem(name) { await queue; return encryptedSettingsStorage.getItem(name); },
+    setItem(name, value) {
+        if (!canWriteEncryptedStorage('settings', name)) return;
+        latest = { name, value };
+        queue = queue.then(async () => {
+            try { await encryptedSettingsStorage.setItem(name, value); failed = false; }
+            catch { failed = true; }
+        });
+    },
+    async removeItem(name) { await queue; await encryptedSettingsStorage.removeItem(name); },
+};
+export async function flushSettings(): Promise<void> {
+    let observed;
+    do { observed = queue; await observed; } while (observed !== queue);
+    if (failed && latest) {
+        settingsStorage.setItem(latest.name, latest.value);
+        do { observed = queue; await observed; } while (observed !== queue);
+    }
+    if (failed) throw new Error('Could not persist preferences');
+}

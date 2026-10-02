@@ -1,4 +1,13 @@
 export default {
+    privacy_loading: 'Reading local records',
+    privacy_native_title: 'Local protection needs a native app',
+    privacy_native_desc: 'This browser does not support the device key storage used by PickPic. Use a mobile native build. Existing browser records are not cleared or downgraded to plaintext.',
+    privacy_read_title: 'Local records are unavailable',
+    privacy_read_desc: 'Your original records are preserved. Unlock your device and retry. If recovery still fails, keep the app data intact.',
+    privacy_write_title: 'Could not save your records',
+    privacy_write_desc: 'Keep the app open. Free up storage or unlock your device, then retry to save your recent actions.',
+    privacy_retry: 'Retry',
+    privacy_retrying: 'Retrying…',
     tab_photos: 'Photos',
     tab_videos: 'Videos',
     tab_scan_results: 'AI Scan',

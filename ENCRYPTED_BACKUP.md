@@ -23,7 +23,13 @@
 
 ## 应用内部存储边界
 
-本功能保护**导出的备份文件**。现有整理记录在应用沙盒的 AsyncStorage 中，扫描索引在 SQLite 中；本轮没有把这两类存储改成应用层加密。操作系统的沙盒与设备加密不能等同于应用独立加密。Root、越狱、系统备份和调试访问等情况下的本机保护需要单独设计和迁移，不能因增加加密导出而声称已经解决。
+导出密码保护与本机设备保护是两套独立机制。当前开发分支将整理记录、待删除/收藏队列与设置的持久化快照改为 AES-256-GCM；扫描索引改为 SQLCipher。记录、设置、扫描数据库分别使用随机设备密钥，通过 SecureStore 的 Android Keystore / iOS Keychain 保护，不存于普通文件。密码导出格式、参数及匹配规则不变，导出文件不依赖原设备密钥。
+
+旧 AsyncStorage 快照先加密写入、读回认证并核对内容后移除旧键；扫描旧库先导出到加密库、验证完整性及所有用户表数据，并完成旧库 WAL checkpoint，之后才清理精确的旧库及附属文件。失败保留原数据。读取密文失败、设备密钥缺失或合并错误会关闭整理界面，不能用默认状态覆盖；写入失败保留内存里的最新操作并提供重试。请勿卸载或清除数据来解决此类错误，卸载会丢失本机恢复所需的密钥。设备密钥真的丢失时，仅凭本机密文不能找回记录。
+
+Android 配置禁止应用自动备份，并在云备份及设备迁移规则中排除私有数据；iOS 配置设备专用 Keychain 并排除 Documents / Application Support 目录备份，但 iOS 尚未原生验收，厂商第三方备份行为不能由此保证。图库权限、系统媒体数据库和原始照片并不由 PickPic 加密。浏览器没有本实现所需的设备安全存储与 SQLCipher，明确停在不支持页面，不退回明文存储，已有浏览器数据不被清除。
+
+相册 Expo Image 预览使用内存缓存，启动时清理其历史磁盘缓存及应用拥有的 ImageManipulator 临时目录；清理失败不开放整理。图像处理期间仍有必要的明文临时图片，崩溃/强杀后的残留只能在下次启动尝试清理。没有加密系统相册、媒体提供程序或第三方 SDK 的所有缓存，未承诺安全擦除旧存储块、内存取证防护或防止 Root/越狱后的运行时访问。ML Kit 的度量通信边界见 AI_MODEL_RESEARCH.md。
 
 导入只提交一份合并后的媒体记录快照。持久化写入按顺序执行，并等待写入完成后才提示成功。存储写入失败时可能已在内存中应用，界面提示保持应用开启并重试；原照片、视频始终不受影响。重试会重新核对当前记录并尝试保存。无明文临时恢复日志。
 
@@ -36,5 +42,7 @@
 Quick Crypto 与 Nitro 固定匹配的生成代码版本；Android 的配置插件只让这两个新增库继承应用已经选定的 AGP/Kotlin 版本，不改写其他模块，不硬编码另一个 SDK 工具链，也不修改 node_modules 源码。配置改写有幂等测试，API 37 独立模拟器的 x86_64 Release 构建与运行已通过；不等同于 ARM64/iOS 构建验收。
 
 原生代表流程已验证：真实导出文件经独立 Node 解密确认含测试记录，错误密码不恢复，正确密码先预览再确认；恢复后计数立即正确。测试只使用独立模拟器内一张合成图片，不覆盖大图库、全部系统文件提供程序或真实设备。
+
+本机加密验证（2026-10-03，开发分支）：独立 API 37 x86_64 模拟器覆盖升级后，旧合成整理决定、扫描结果和设置仍可用，旧扫描明文库及附属文件已清理，新库不能用普通 SQLite 读取；AsyncStorage 旧键迁为认证密文。原生篡改媒体密文、移除 records 密钥槽位、通过 SQLite 触发器模拟拒绝写入均进入保护界面，失败记录未被覆盖；恢复各自完整的测试副本后启动正常。自动化另覆盖保持应用开启后重试最新决定，使用真实 AES 算法和真实 Zustand。真机/iOS、真实存储满以及大图库性能不是这些测试的已证明范围；ARM64 最终构建验收另见 ITERATION_CHECKPOINT.md。
 
 设计依据：[Expo SDK 54 Crypto](https://docs.expo.dev/versions/v54.0.0/sdk/crypto/)、[Expo DocumentPicker](https://docs.expo.dev/versions/v54.0.0/sdk/document-picker/)、[noble-ciphers](https://github.com/paulmillr/noble-ciphers)、[noble-hashes](https://github.com/paulmillr/noble-hashes)、[Quick Crypto scrypt](https://margelo.github.io/react-native-quick-crypto/docs/api/scrypt)、[OWASP 密码存储参数建议](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)。使用成熟库不代表这套应用集成已经取得独立安全审计认证。

@@ -221,8 +221,8 @@ export class ImageOpsJS implements IImageOps {
                 { format: ImageManipulator.SaveFormat.JPEG, compress: 0.8 }
             );
             return result.uri;
-        } catch (error) {
-            console.warn('[ImageOpsJS] Failed to crop image, using original:', error);
+        } catch {
+            console.warn('[ImageOpsJS] Failed to crop image, using original.');
             return assetUri;
         }
     }
