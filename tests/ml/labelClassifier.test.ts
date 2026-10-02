@@ -1,25 +1,24 @@
-import { hasDocumentContext, selectImageCategory } from '../../services/ml/LabelClassifier';
+import { hasDocumentContext, selectImageCategories, selectImageCategory } from '../../services/ml/LabelClassifier';
 
 const label = (text: string, confidence: number) => ({ text, confidence });
 
 describe('album category evidence', () => {
-  it('combines cat breeds when no individual breed clears the old threshold', () => {
+  it('does not turn several weak breed guesses into a confident category', () => {
     const result = selectImageCategory([
       label('tabby, tabby cat', 0.27), label('Siamese cat, Siamese', 0.24),
       label('Egyptian cat', 0.16), label('golden retriever', 0.12), label('monitor', 0.08),
     ]);
-    expect(result?.category).toBe('cat');
-    expect(result?.score).toBeCloseTo(0.67);
+    expect(result).toBeNull();
   });
 
   it('does not promote a weaker dog prediction above a confident object', () => {
     expect(selectImageCategory([label('sports car', 0.59), label('boxer', 0.41)])?.category)
-      .toBe('sports car');
+      .toBe('car');
   });
 
   it('uses scores rather than trusting stored candidate order', () => {
     expect(selectImageCategory([label('boxer', 0.41), label('sports car', 0.59)])?.category)
-      .toBe('sports car');
+      .toBe('car');
   });
 
   it('leaves conflicting categories unclassified instead of guessing', () => {
@@ -28,7 +27,7 @@ describe('album category evidence', () => {
 
   it('does not invent a person from a phone or a weaker person label', () => {
     expect(selectImageCategory([label('cellular telephone', 0.8), label('groom', 0.15)])?.category)
-      .toBe('cellular telephone');
+      .toBe('electronics');
     expect(selectImageCategory([label('groom, bridegroom', 0.85)])?.category).toBe('people');
   });
 
@@ -46,7 +45,7 @@ describe('album category evidence', () => {
     expect(selectImageCategory([
       null, {}, { text: 'dog', confidence: NaN }, { text: 'dog', confidence: 5 },
       { text: 'dog', confidence: -1 }, { label: 'bull', confidence: 0.8 },
-    ])?.category).toBe('bull');
+    ])).toBeNull();
   });
 
   it('does not suppress real faces for a photographed display', () => {
@@ -58,5 +57,23 @@ describe('album category evidence', () => {
     expect(hasDocumentContext([label('web site, website, internet site, site', 0.9)])).toBe(true);
     expect(hasDocumentContext([label('groom', 0.59), label('web site', 0.41)])).toBe(false);
     expect(hasDocumentContext([label('groom', 0.48), label('web site', 0.46)])).toBe(false);
+  });
+
+  it('keeps the strongest actual breed score instead of adding or counting aliases', () => {
+    expect(selectImageCategory([label('tabby', 0.65), label('tabby, tabby cat', 0.65), label('siamese cat', 0.2)]))
+      .toEqual({ category: 'cat', score: 0.65 });
+  });
+
+  it('does not discard a stronger unmapped candidate to promote a weaker familiar label', () => {
+    expect(selectImageCategory([label('abacus', 0.8), label('golden retriever', 0.45)])).toBeNull();
+  });
+
+  it('supports independently evidenced people and objects while rejecting competing hypotheses', () => {
+    expect(selectImageCategories([label('golden retriever', 0.8)], 1)).toEqual(['people', 'dog']);
+    expect(selectImageCategories([label('sports car', 0.8)], 2)).toEqual(['people', 'car']);
+    expect(selectImageCategories([label('tabby', 0.48), label('boxer', 0.46)])).toEqual([]);
+    expect(selectImageCategories([label('web site', 0.9)], 1)).toEqual(['documents']);
+    expect(selectImageCategories([], 1)).toEqual(['people']);
+    expect(selectImageCategories([], NaN)).toEqual([]);
   });
 });

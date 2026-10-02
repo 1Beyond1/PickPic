@@ -69,8 +69,8 @@ const IMAGE_LABELING_MODELS = {
         model: require('../assets/ml/efficientnet-lite4.tflite'),
         options: {
             maxResultCount: 5,
-            // Keep secondary breeds/classes for semantic grouping. Category
-            // acceptance still uses 0.4 after aggregation, outside the model.
+            // Keep alternatives for ambiguity checks. Display grouping uses
+            // the strongest actual score, without adding competing classes.
             confidenceThreshold: 0.1,
         },
     },
@@ -227,9 +227,6 @@ function MLBridgeInner() {
             try {
                 const result = await labeler.classifyImage(currentRequest.imageUri);
                 console.log('[MLBridge] Label success, found:', result.length);
-                if (result.length > 0) {
-                    console.log('[MLBridge] Sample result item:', JSON.stringify(result[0]));
-                }
                 const labels: ImageLabel[] = result.map((item: any) => ({
                     text: (item.text && item.text.length > 0) ? item.text : (IMAGENET_LABELS[item.index] ?? 'Unknown'),
                     confidence: item.confidence,

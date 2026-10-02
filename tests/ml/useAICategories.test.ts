@@ -21,7 +21,7 @@ const photo = (id: string, labels: [string, number][], faceCount = 0) => ({
 
 it('categorizes saved scans without weaker priors and keeps uncertainty in the unclassified list', async () => {
   (AssetRepository.getAllDoneAssets as jest.Mock).mockResolvedValue([
-    photo('cat', [['tabby', 0.3], ['Siamese cat', 0.3], ['Egyptian cat', 0.15]]),
+    photo('cat', [['tabby', 0.65], ['Siamese cat', 0.2], ['Egyptian cat', 0.15]]),
     photo('car', [['sports car', 0.59], ['boxer', 0.41]]),
     photo('phone', [['cellular telephone', 0.85]]),
     photo('ambiguous', [['sports car', 0.48], ['tabby', 0.46]]),
@@ -35,12 +35,26 @@ it('categorizes saved scans without weaker priors and keeps uncertainty in the u
     .toEqual(['real-person']);
   const objects = result.current.objectGroups;
   expect(objects.find(group => group.title === '猫')?.assets.map(asset => asset.asset_id)).toEqual(['cat']);
-  expect(objects.find(group => group.title === '手机')?.assets.map(asset => asset.asset_id)).toEqual(['phone']);
-  expect(objects.find(group => group.title === '截图与文档')?.assets.map(asset => asset.asset_id)).toEqual(['document']);
+  expect(objects.find(group => group.title === '电子设备')?.assets.map(asset => asset.asset_id)).toEqual(['phone', 'real-person']);
+  expect(objects.find(group => group.title === '图文资料')?.assets.map(asset => asset.asset_id)).toEqual(['document']);
+  expect(objects.find(group => group.title === '汽车')?.assets.map(asset => asset.asset_id)).toEqual(['car']);
   expect(objects.some(group => group.assets.some(asset => asset.asset_id === 'car'))).toBe(true);
   expect(objects.some(group => group.title === '狗')).toBe(false);
   expect(result.current.uncategorizedGroup?.assets.map(asset => asset.asset_id)).toEqual(['ambiguous']);
   expect(result.current.isLoading).toBe(false);
+});
+
+it('reuses original saved labels and counts a person with a dog once in overall progress', async () => {
+  const raw = photo('together', [['golden retriever', 0.85]], 1);
+  const before = raw.labels_json;
+  (AssetRepository.getAllDoneAssets as jest.Mock).mockResolvedValue([raw]);
+  const { result } = renderHook(() => useAICategories());
+  await act(async () => { await result.current.refresh(); });
+  expect(result.current.completedCount).toBe(1);
+  expect(result.current.peopleGroups[0].assets).toEqual([raw]);
+  expect(result.current.objectGroups[0]).toMatchObject({ id: 'category_dog', title: '狗', count: 1 });
+  expect(result.current.uncategorizedGroup).toBeNull();
+  expect(raw.labels_json).toBe(before);
 });
 
 it('reports a failed category read and clears the error after a successful explicit retry', async () => {
