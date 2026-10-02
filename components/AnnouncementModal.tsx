@@ -59,6 +59,7 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
                     <Text style={[styles.body, { color: colors.textSecondary }]}>{t('update_v030_3')}</Text>
                     <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_recovery')}</Text>
                     <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_video')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_deletion')}</Text>
                 </View>
                 <View style={[styles.section, styles.divided, { borderColor: colors.divider }]}>
                     <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>{t('announcement_author_title')}</Text>

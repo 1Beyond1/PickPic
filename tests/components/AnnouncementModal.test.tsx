@@ -57,12 +57,14 @@ it('renders the updated review, recovery and video notes without calling dismiss
   const once = jest.fn();
   const version = jest.fn();
   const view = render(<AnnouncementModal visible onDismissOnce={once} onDismissForVersion={version} />);
-  for (const key of ['update_v030_1', 'update_v030_2', 'update_v030_3', 'announcement_update_recovery', 'announcement_update_video'] as const) {
+  for (const key of ['update_v030_1', 'update_v030_2', 'update_v030_3', 'announcement_update_recovery', 'announcement_update_video', 'announcement_update_deletion'] as const) {
     expect(view.getByText(zh[key])).toBeTruthy();
     expect(en[key]).toBeTruthy();
   }
   expect(zh.update_v030_3).toContain('仍算已整理');
   expect(en.update_v030_3).toContain('staying in review');
+  expect(zh.announcement_update_deletion).toContain('未完成项仍保留');
+  expect(en.announcement_update_deletion).toContain('unfinished items remain');
   expect(once).not.toHaveBeenCalled();
   expect(version).not.toHaveBeenCalled();
 });

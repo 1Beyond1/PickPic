@@ -135,7 +135,7 @@ export default {
 
     announcement_title: 'Welcome to PickPic',
     announcement_notice_title: 'Important Notice',
-    announcement_notice_1: 'On some devices, deleted items may be permanently removed instead of going to the trash/recycle bin. Please proceed with caution.',
+    announcement_notice_1: 'Final deletion may permanently remove the original photos or videos. The pending list is a queue before confirmation, not a system recycle bin. Back up important media first.',
     announcement_notice_2: 'This app does not manage cloud backups. Your sync service may download media again or sync local deletions. Back up important photos and videos separately.',
     announcement_notice_3: 'This app is in beta testing. Please report any issues you encounter.',
     announcement_author_title: 'About Author',
@@ -168,6 +168,7 @@ export default {
     update_v030_3: 'Photo review: tap a photo to keep only that photo, leaving it organized and staying in review. Keeping every photo shows batch completion; choose Continue for the next batch.',
     announcement_update_recovery: 'Read recovery: photo, video, and similar-group read failures show feedback. Full photo and review previews support retry. Reading or previewing does not change organizing decisions.',
     announcement_update_video: 'Video organizing: simply opening or leaving the page does not mark a video organized. You can revisit organized videos, and the final video has an end notice.',
+    announcement_update_deletion: 'Deletion compatibility: large pending lists on Android 16 and later use separate system confirmations. Successful batches leave the list; if a later batch is cancelled or fails, unfinished items remain for review and retry.',
 
     // Developer options
     settings_dev_options: 'Developer Options',
