@@ -135,7 +135,7 @@ export default {
     announcement_title: '欢迎使用 PickPic',
     announcement_notice_title: '使用须知',
     announcement_notice_1: '在本软件中删除的照片/视频，在部分机型上会被直接清除，而非移动到回收站。请谨慎操作！',
-    announcement_notice_2: '如果您开启了云相册同步功能（如小米云、iCloud），我们仅能删除本机文件，无法删除云端备份。删除后可能会因云同步而恢复。',
+    announcement_notice_2: '本应用不管理云端备份。云同步服务可能重新下载媒体，也可能同步本机删除决定；重要照片和视频请另行备份。',
     announcement_notice_3: '本软件目前处于测试阶段，可能存在功能不稳定的情况。使用过程中如遇到问题，欢迎反馈！',
     announcement_author_title: '关于作者',
     announcement_close_once: '本次关闭',
@@ -163,8 +163,10 @@ export default {
     // Version history
     announcement_update_title: '本次更新',
     update_v030_1: 'AI 扫描引擎：分析模糊与相似照片。在“设置 → 智能分析”中可打开“启用 AI 图片分类”（Beta，本地处理）。',
-    update_v030_2: '统一弹窗 UI 风格：全新视觉体验，操作更流畅',
-    update_v030_3: '软件性能优化：启动更快，扫描更流畅',
+    update_v030_2: '界面更新：统一浅色与深色主题、设置分组和底部弹层，整理与复核操作更清楚。',
+    update_v030_3: '照片复核：点击一张只将这一张改为保留，仍算已整理，并留在复核页。全部保留后显示本组完成，点击继续再进入下一批。',
+    announcement_update_recovery: '读取恢复：照片、视频与相似组读取失败时显示提示；照片大图与复核预览支持重试。读取或预览不会改变整理决定。',
+    announcement_update_video: '视频整理：仅打开或离开页面不会记为已整理；已整理的视频仍可滑回查看，最后一个视频会显示提示。',
 
     // Developer options
     settings_dev_options: '开发者选项',

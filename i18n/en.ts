@@ -135,7 +135,7 @@ export default {
     announcement_title: 'Welcome to PickPic',
     announcement_notice_title: 'Important Notice',
     announcement_notice_1: 'On some devices, deleted items may be permanently removed instead of going to the trash/recycle bin. Please proceed with caution.',
-    announcement_notice_2: 'If cloud sync (iCloud/Mi Cloud) is enabled, we can only delete local files. Cloud backups may restore deleted items.',
+    announcement_notice_2: 'This app does not manage cloud backups. Your sync service may download media again or sync local deletions. Back up important photos and videos separately.',
     announcement_notice_3: 'This app is in beta testing. Please report any issues you encounter.',
     announcement_author_title: 'About Author',
     announcement_close_once: 'Close',
@@ -163,8 +163,10 @@ export default {
     // Version history
     announcement_update_title: "What's New",
     update_v030_1: 'AI scanning: Analyze blurry and similar photos. Turn on “Enable AI Classification” under Settings → Intelligent analysis (Beta, on-device processing).',
-    update_v030_2: 'Unified Dialog UI: Refreshed visual experience with smoother interactions',
-    update_v030_3: 'Performance Boost: Faster startup and smoother scanning',
+    update_v030_2: 'Interface update: consistent light and dark themes, grouped settings, and bottom sheets for clearer organizing and review actions.',
+    update_v030_3: 'Photo review: tap a photo to keep only that photo, leaving it organized and staying in review. Keeping every photo shows batch completion; choose Continue for the next batch.',
+    announcement_update_recovery: 'Read recovery: photo, video, and similar-group read failures show feedback. Full photo and review previews support retry. Reading or previewing does not change organizing decisions.',
+    announcement_update_video: 'Video organizing: simply opening or leaving the page does not mark a video organized. You can revisit organized videos, and the final video has an end notice.',
 
     // Developer options
     settings_dev_options: 'Developer Options',

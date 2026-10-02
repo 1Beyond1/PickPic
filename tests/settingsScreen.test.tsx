@@ -35,7 +35,7 @@ jest.mock('../components/AlbumSelector', () => ({ AlbumSelector: () => null }));
 jest.mock('../components/ScanBatchModal', () => ({ ScanBatchModal: () => null }));
 jest.mock('../hooks/useAIScanner', () => ({ useAIScanner: () => mockScanner }));
 jest.mock('../stores/useSettingsStore', () => ({
-  APP_VERSION: 'v0.3.1', useSettingsStore: Object.assign(() => mockSettings, { getState: () => mockSettings }),
+  APP_VERSION: 'v0.4.0', useSettingsStore: Object.assign(() => mockSettings, { getState: () => mockSettings }),
 }));
 jest.mock('../stores/useMediaStore', () => ({ useMediaStore: () => mockMedia }));
 jest.mock('../hooks/useThemeColor', () => ({
