@@ -582,3 +582,28 @@ LICENSE与Apache官方LICENSE-2.0.txt全文逐字符核对一致（忽略行尾�
 README 重写为无表情的产品说明，保留四张实际界面截图，明确照片组末复核与 AI 独立删除入口的差别、设备端分析及 Beta 边界、源码/安装包版本差别、Android/iOS验证状态。保留必要运行/检查/构建说明，删除营销口号和近期审计流水账，不重新加入用户否定的真机检查清单句。四图/许可证/NOTICE共10处本地引用存在，源码版本匹配0.4.0，未改许可证或版本。本轮仅建立本地Git检查点，不自动推送。
 
 提交检查：暂存范围仅本轮11个源码/测试/文档文件，无工作区其他改动。忽略空白后再次核对删除回调无差异；diff --cached --check通过。常见凭据/私钥/个人Windows路径模式扫描130个暂存文本文件无命中，不称完整安全审计。当前无其他未推送提交，本轮提交后不推送远端。
+
+### 删除接口兼容性主动核查（2026-10-02）
+
+用户明确要求保留右上角待删除列表和二次复核，重点排查最终确认后删不掉的情况；不是改成系统回收站，也不是只增加风险提示。本轮未操作真实图库、启动模拟器或移植鸿蒙。
+
+公开证据与边界：
+
+- Android 11+：当前 expo-media-library 18.2.1 的 DeleteContract 已调用 MediaStore.createDeleteRequest，并检查系统 RESULT_OK。旧版误用 createWriteRequest 导致确认后未删除的问题已在 17.1.7 修复，不能把 Expo 49/51 的报告直接记为当前 Bug。[官方接口](https://developer.android.com/training/data-storage/shared/media)、[上游修复 #33211](https://github.com/expo/expo/pull/33211)。
+- 小米/OPPO ColorOS/vivo/荣耀：联合适配指南使用标准 MediaStore.ACTION_PICK_IMAGES，返回的 Picker URI 只读，不能作为删除授权。项目使用媒体库资产 ID，不使用 Picker URI 发起删除。指南覆盖相应 Android 16 系统版本，不等于一加、realme 等全部型号已经通过删除实测。[厂商指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2221)。
+- vivo：官方技术支持说明存在“三方删除拦截”恢复入口。它证明系统可能保留第三方删除后的资料，不证明当前 SDK 调用一定失败，不能据此绕过系统保护或访问图库私有目录。[官方说明](https://bbs.vivo.com.cn/newbbs/thread/38008460)。
+- 三星及 Android 兼容华为系统：本轮公开检索未确认普通应用可用、能替代标准媒体删除授权的专用接口；不能把“未找到”写成“接口不存在”，也不能声称所有机型兼容。华为云空间文件删除接口不等于本地图库删除接口。
+- 原生鸿蒙：MediaAssetChangeRequest.deleteAssets 是另一套媒体库 API，不能直接接到现有 Android APK；本轮不扩大为鸿蒙移植。[OpenHarmony 官方接口源码](https://raw.githubusercontent.com/openharmony/docs/master/zh-cn/application-dev/reference/apis-media-library-kit/arkts-apis-photoAccessHelper-MediaAssetChangeRequest.md)。
+- iOS：当前使用 PHPhotoLibrary.performChanges / PHAssetChangeRequest.deleteAssets。不能用“从相册移除”冒充图库删除，也不能保证只影响本地而保留云端。[Apple PhotoKit 示例](https://developer.apple.com/documentation/photokit/browsing-and-modifying-photo-albums)。
+
+反证检查：Android 10 在启用 scoped storage 时删除其他应用媒体需要 RecoverableSecurityException 授权路径，但本项目 Expo 插件和生成 Manifest 已包含 requestLegacyExternalStorage=true，并有旧版存储读写权限。因此“Android 10 用 File.delete，所以必定不能删除”没有足够证据，本轮不改原生依赖、不提高最低系统版本，保留实机验证项。[Android 10 兼容说明](https://developer.android.com/about/versions/11/privacy/storage)。
+
+确认并修复：Android MediaStore 文档明确，目标 SDK 36+ 的请求最多 2000 个 URI。当前 RN 版本目录、Gradle 配置和已有合并 Manifest 均对应 targetSdkVersion=36；SDK DeleteContract 没有拆分逻辑，应用持久化待删除队列和相似组批量选择也没有 2000 项上限。相机/其他应用创建的媒体积累超过此数量时可以触发失败。[请求上限](https://developer.android.com/reference/android/provider/MediaStore#createDeleteRequest(android.content.ContentResolver,%20java.util.Collection%3Candroid.net.Uri%3E))。
+
+新增共享分批删除函数，仅在 Android API 36+ 按最多 2000 项顺序调用现有 SDK；其他平台和小批次不增加请求。每批成功先同步应用队列/选择状态，再发下一批；后续取消或异常立即停止，未完成项保留，禁止自动重试、静默跳过或扩大选中范围。照片、视频待删除队列和相似照片批量删除接入；单张删除保留原路径。视频失败文案改成“未删除的视频仍在废纸篓中”，不再暗示此前成功批次也没删除。超过上限时系统可能需要分批确认，不承诺始终只有一次系统弹窗。
+
+验证：生产改动前，模拟官方 URI 上限的照片/视频新增 8 项测试全部失败；改后相关 4 组 121 项通过。补充请求边界、iOS/Android 15 保持旧请求、成功批次记账完成后才发下一批，以及相似组消费部分成功回调的测试。最新全量 35 组 349 项通过；相似组部分成功测试是回调契约验证，非数千图片 UI/真机测试。首次新增测试的 Jest mock 参数类型遗漏导致 typecheck 失败，已补上参数类型，不记为产品问题。Node SQLite 实验提示和既有测试日志保留。
+
+未验证边界：没有在各品牌真机或 iPhone 上执行实际删除；自动化 mock 不证明 OEM 返回值完全可信。本轮修复的是官方请求上限和批次间部分成功的应用记账，不解决 SDK 在同一批内部发生部分删除后报错的所有情况，也不保证云端缩略图立即消失。保留系统失败时的待删除决定，不将读权限撤销、瞬时查询失败当成已删除，更不访问厂商私有路径兜底。只建立本地 Git 检查点，不自动推送。
+
+提交门槛：修正测试 mock 参数类型后 typecheck、lint 均通过，diff --check 通过；本轮 10 个修改/新增文本文件定向检查常见凭据、私钥和个人 Windows 用户路径模式无命中，不称完整安全认证。提交范围不包含构建产物、用户素材、设备日志或 SDK 安装文件。

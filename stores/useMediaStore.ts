@@ -4,6 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { AssetRepository } from '../database';
+import { deleteAssetsInBatches } from '../services/mediaDeletion';
 import { DisplayOrder, useSettingsStore } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
@@ -1004,26 +1005,21 @@ export const useMediaStore = create<MediaState>()(
             const ids = Array.from(new Set(selectedDeleteQueue.map(asset => asset.id)));
             if (ids.length === 0) return [];
 
-            // Batch delete all at once - system will show ONE permission dialog
-            const deleted = await MediaLibrary.deleteAssetsAsync(ids);
-            if (!deleted) {
-                throw new Error('Media library did not confirm photo deletion');
-            }
-            for (const id of ids) {
-                try {
-                    await AssetRepository.removeAssetAndDerivedData(id);
-                } catch (cleanupError) {
-                    // The media is already deleted; a later scanner sync can
-                    // repair the local index if this best-effort cleanup fails.
-                    console.error("Failed to clean deleted photo from scan index", cleanupError);
+            await deleteAssetsInBatches(ids, async (batch) => {
+                // Persist confirmed deletions even if a later batch is denied.
+                // Deleted media no longer needs a queued decision or progress ID.
+                get().removeDeletedAssets(batch);
+                for (const id of batch) {
+                    try {
+                        await AssetRepository.removeAssetAndDerivedData(id);
+                    } catch (cleanupError) {
+                        // A later scanner sync can repair the local index.
+                        console.error("Failed to clean deleted photo from scan index", cleanupError);
+                    }
                 }
-            }
+            });
             console.log(`Batch deletion: ${ids.length} items deleted`);
 
-            // Deleted media no longer needs review progress. Removing its IDs
-            // keeps the progress count meaningful and prevents the persisted
-            // list from growing forever as the user cleans up their library.
-            get().removeDeletedAssets(ids);
             return ids;
         } catch (e) {
             // Keep the queue so the user can retry after fixing permissions or
@@ -1056,11 +1052,9 @@ export const useMediaStore = create<MediaState>()(
             const deletedIds = new Set(selectedVideoTrashBin.map(video => video.id));
             if (deletedIds.size === 0) return [];
 
-            const deleted = await MediaLibrary.deleteAssetsAsync(selectedVideoTrashBin);
-            if (!deleted) {
-                throw new Error('Media library did not confirm video deletion');
-            }
-            get().removeDeletedAssets(Array.from(deletedIds));
+            await deleteAssetsInBatches(selectedVideoTrashBin, (batch) => {
+                get().removeDeletedAssets(batch.map(video => video.id));
+            });
             return Array.from(deletedIds);
         } catch (e) {
             console.error("Video deletion failed", e);

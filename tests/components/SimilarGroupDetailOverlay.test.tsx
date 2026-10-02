@@ -34,6 +34,7 @@ jest.mock('react-native-reanimated', () => ({
 
 import { SimilarGroupDetailOverlay } from '../../components/SimilarGroupDetailOverlay';
 import { AssetRepository } from '../../database';
+import * as MediaDeletion from '../../services/mediaDeletion';
 
 const props = {
   visible: true, groupId: 'group', memberAssetIds: ['first', 'second'],
@@ -198,6 +199,34 @@ it('retains selection and records on a cancelled native deletion and ignores rep
   expect(AssetRepository.removeAssetAndDerivedData).not.toHaveBeenCalled();
   expect(props.onComplete).not.toHaveBeenCalled();
   expect(deleteButton).toBeEnabled();
+});
+
+it('reconciles completed batches but keeps the remaining selection and group open on a later failure', async () => {
+  // Exercise the consumer's partial-success contract without rendering/selecting
+  // thousands of images. The actual native-limit splitting is tested separately.
+  jest.spyOn(MediaDeletion, 'deleteAssetsInBatches').mockImplementationOnce(async (assets, onDeleted) => {
+    await onDeleted(assets.slice(0, 1));
+    throw new Error('A later system confirmation was cancelled');
+  });
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  render(<SimilarGroupDetailOverlay {...props} memberAssetIds={['first', 'second', 'third']} />);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(3));
+  const [first, second] = screen.getAllByRole('button', { name: 'similar_photo' });
+  fireEvent(first, 'longPress');
+  fireEvent.press(second);
+  fireEvent.press(screen.getByRole('button', { name: 'similar_delete_selected' }));
+  const confirm = alert.mock.calls[0][2]![1].onPress!;
+  await act(async () => { await confirm(); });
+  expect(mockRemoveDeletedAssets).toHaveBeenCalledWith(['first']);
+  expect(AssetRepository.removeAssetAndDerivedData).toHaveBeenCalledWith('first');
+  expect(AssetRepository.removeAssetAndDerivedData).not.toHaveBeenCalledWith('second');
+  expect(screen.UNSAFE_getByType(FlatList).props.data.map((p: { assetId: string }) => p.assetId)).toEqual(['second', 'third']);
+  const remaining = screen.getAllByRole('button', { name: 'similar_photo' });
+  expect(remaining[0]).toBeSelected();
+  expect(remaining[1]).not.toBeSelected();
+  expect(props.onComplete).not.toHaveBeenCalled();
+  expect(props.onClose).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'similar_delete_selected' })).toBeEnabled();
 });
 
 it('explains selection and exposes photo selection state without changing media or processing the group', async () => {

@@ -417,7 +417,7 @@ describe('VideosScreen processing behavior', () => {
       const screen = await renderScreen();
       fireEvent.press(screen.getByRole('button', { name: 'video_trash_title · 1' }));
       fireEvent.press(screen.getByRole('button', { name: 'video_confirm_delete' }));
-      await waitFor(() => expect(screen.getByText('视频仍保留在废纸篓中，请重试。')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('未删除的视频仍在废纸篓中，请重试。')).toBeTruthy());
       expect(alert).not.toHaveBeenCalled();
       expect(mockMediaState.confirmVideoTrash).toHaveBeenCalledWith(['video-1']);
       expect(screen.getByRole('button', { name: 'video_restore · video-1' })).toBeTruthy();

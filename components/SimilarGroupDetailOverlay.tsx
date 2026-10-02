@@ -26,6 +26,7 @@ import { AssetRepository } from '../database';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { getCurrentlyVisibleAssetIds, useMediaStore } from '../stores/useMediaStore';
+import { deleteAssetsInBatches } from '../services/mediaDeletion';
 
 const COLUMN_COUNT = 3;
 
@@ -181,21 +182,20 @@ export function SimilarGroupDetailOverlay({
                             if (visibleIds.size !== selectedAssetIds.size) {
                                 throw new Error('One or more selected photos are no longer available');
                             }
-                            const deleted = await MediaLibrary.deleteAssetsAsync(assetIds);
-                            if (!deleted) {
-                                throw new Error('Media library did not confirm deletion');
-                            }
-                            useMediaStore.getState().removeDeletedAssets(assetIds);
-                            for (const assetId of assetIds) {
-                                try {
-                                    await AssetRepository.removeAssetAndDerivedData(assetId);
-                                } catch (cleanupError) {
-                                    console.error('[SimilarGroupDetailOverlay] Index cleanup failed:', cleanupError);
+                            await deleteAssetsInBatches(assetIds, async (batch) => {
+                                const batchIds = new Set(batch);
+                                useMediaStore.getState().removeDeletedAssets(batch);
+                                setPhotos(prev => prev.filter(p => !batchIds.has(p.assetId)));
+                                setSelectedIds(prev => new Set(Array.from(prev).filter(id => !batchIds.has(id))));
+                                for (const assetId of batch) {
+                                    try {
+                                        await AssetRepository.removeAssetAndDerivedData(assetId);
+                                    } catch (cleanupError) {
+                                        console.error('[SimilarGroupDetailOverlay] Index cleanup failed:', cleanupError);
+                                    }
                                 }
-                            }
+                            });
                             const remainingCount = photos.filter(photo => !selectedAssetIds.has(photo.assetId)).length;
-                            setPhotos(prev => prev.filter(p => !selectedAssetIds.has(p.assetId)));
-                            setSelectedIds(new Set());
 
                             // Animate close if all deleted or user done
                             if (remainingCount <= 1) {

@@ -569,7 +569,7 @@ export default function VideosScreen() {
                     <ScrollView style={styles.trashContent}>
                         {trashDeleteFailed && (
                             <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.trashError, { color: colors.danger }]}>
-                                {language === 'zh' ? '视频仍保留在废纸篓中，请重试。' : 'The videos remain in the trash. Please try again.'}
+                                {language === 'zh' ? '未删除的视频仍在废纸篓中，请重试。' : 'Undeleted videos remain in the trash. Please try again.'}
                             </Text>
                         )}
                         {visibleVideoTrashBin.length === 0 ? (

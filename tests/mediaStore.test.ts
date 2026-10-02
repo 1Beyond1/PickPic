@@ -29,6 +29,7 @@ jest.mock('../stores/useSettingsStore', () => ({
 
 import * as MediaLibrary from 'expo-media-library';
 import { waitFor } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 import { AssetRepository } from '../database';
 import { getCurrentlyVisibleAssetIds, useMediaStore } from '../stores/useMediaStore';
 
@@ -276,6 +277,67 @@ describe('media visibility checks', () => {
       expect(deleteAssetsAsync).not.toHaveBeenCalled();
       expect(getAssetInfoAsync).not.toHaveBeenCalled();
       expect(useMediaStore.getState()[queueKey]).toEqual([asset]);
+    });
+
+    describe('Android 16 deletion request limit', () => {
+      const osDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!;
+      const versionDescriptor = Object.getOwnPropertyDescriptor(Platform, 'Version')!;
+      let assets: any[];
+
+      beforeEach(() => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+        Object.defineProperty(Platform, 'Version', { configurable: true, value: 36 });
+        assets = Array.from({ length: 4001 }, (_, i) => ({ id: String(i + 1), mediaType }));
+        getAssetInfoAsync.mockImplementation(async (id: string) => ({ id }));
+        useMediaStore.setState({ [queueKey]: assets, [progressKey]: assets.map(a => a.id) });
+        jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        // Model the documented platform contract, not the desired implementation.
+        deleteAssetsAsync.mockImplementation(async (batch: unknown[]) => {
+          if (batch.length > 2000) throw new Error('IllegalArgumentException: too many URIs');
+          return true;
+        });
+      });
+
+      afterEach(() => {
+        Object.defineProperty(Platform, 'OS', osDescriptor);
+        Object.defineProperty(Platform, 'Version', versionDescriptor);
+      });
+
+      it('deletes a large confirmed selection without exceeding the native limit or widening its scope', async () => {
+        const requested = assets.slice(0, 2001).map(a => a.id);
+        await expect(confirm(requested)).resolves.toEqual(requested);
+        expect(deleteAssetsAsync.mock.calls.map(([batch]) => batch.length)).toEqual([2000, 1]);
+        expect(useMediaStore.getState()[queueKey]).toEqual(assets.slice(2001));
+        expect(useMediaStore.getState()[progressKey]).toEqual(assets.slice(2001).map(a => a.id));
+        expect(locked()).toBe(false);
+      });
+
+      it.each(['cancelled', 'rejected'] as const)('stops after a %s second request and retains only the undeleted decisions', async outcome => {
+        deleteAssetsAsync.mockImplementation(async (batch: unknown[]) => {
+          if (batch.length > 2000) throw new Error('IllegalArgumentException: too many URIs');
+          if (deleteAssetsAsync.mock.calls.length === 2) {
+            if (outcome === 'cancelled') return false;
+            throw new Error('Provider failure');
+          }
+          return true;
+        });
+        await expect(confirm()).rejects.toThrow();
+        expect(deleteAssetsAsync).toHaveBeenCalledTimes(2);
+        expect(useMediaStore.getState()[queueKey]).toEqual(assets.slice(2000));
+        expect(useMediaStore.getState()[progressKey]).toEqual(assets.slice(2000).map(a => a.id));
+        expect(mockRemoveAssetAndDerivedData).toHaveBeenCalledTimes(mediaType === 'photo' ? 2000 : 0);
+        expect(locked()).toBe(false);
+      });
+
+      it('does not continue or clear any decisions when the first request is cancelled', async () => {
+        deleteAssetsAsync.mockResolvedValue(false);
+        await expect(confirm()).rejects.toThrow();
+        expect(deleteAssetsAsync).toHaveBeenCalledTimes(1);
+        expect(deleteAssetsAsync.mock.calls[0][0]).toHaveLength(2000);
+        expect(useMediaStore.getState()[queueKey]).toEqual(assets);
+        expect(useMediaStore.getState()[progressKey]).toEqual(assets.map(a => a.id));
+        expect(locked()).toBe(false);
+      });
     });
 
     it('keeps requested-ID scope and leaves other queued visible items untouched', async () => {
