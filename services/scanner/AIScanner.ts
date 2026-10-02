@@ -11,7 +11,7 @@
 
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { InteractionManager } from 'react-native';
+import { InteractionManager, Platform } from 'react-native';
 
 import {
     AssetRepository,
@@ -125,6 +125,32 @@ function getMediaLibrarySignature(asset: MediaLibrary.Asset): string | null {
 
 async function getAssetSignature(asset: MediaLibrary.Asset): Promise<string | null> {
     return await getFileSignature(asset.uri) ?? getMediaLibrarySignature(asset);
+}
+
+/** Android full-detail reads may demand location permission even though pixel
+ * analysis does not use GPS. Fall back only for that known SDK error, never
+ * request location or mask unrelated file failures. */
+async function getReadableAssetInfo(assetId: string, takenAt: number | null): Promise<MediaLibrary.AssetInfo> {
+    try { return await MediaLibrary.getAssetInfoAsync(assetId); }
+    catch (error) {
+        if (Platform.OS !== 'android' || !(error instanceof Error) || !error.message.includes('ACCESS_MEDIA_LOCATION')) throw error;
+        const cursors = new Set<string>();
+        let after: string | undefined;
+        // Positive known timestamps narrow the native query to this instant.
+        // Missing/zero times (including PNGs without DATE_TAKEN) need a full
+        // paginated lookup; do not invent a date and silently skip the asset.
+        const timeRange = takenAt !== null && Number.isFinite(takenAt) && takenAt > 0
+            ? { createdAfter: takenAt - 1, createdBefore: takenAt + 1 } : {};
+        do {
+            const page = await MediaLibrary.getAssetsAsync({ mediaType: 'photo', first: 100,
+                resolveWithFullInfo: false, ...timeRange, ...(after ? { after } : {}) });
+            const asset = page.assets.find(item => item.id === assetId);
+            if (asset) return { ...asset, localUri: asset.uri } as MediaLibrary.AssetInfo;
+            if (!page.hasNextPage) throw new Error('Asset no longer available for analysis');
+            if (!page.endCursor || cursors.has(page.endCursor)) throw new Error('Could not resolve analysis asset');
+            cursors.add(page.endCursor); after = page.endCursor;
+        } while (true);
+    }
 }
 
 const STATUS_MEDIA_PAGE_SIZE = 100;
@@ -565,11 +591,11 @@ async function processAIForAsset(assetId: string): Promise<boolean> {
     };
     try {
         if (!await isVisible() || shouldStop) return false;
-        const info = await MediaLibrary.getAssetInfoAsync(assetId);
+        const info = await getReadableAssetInfo(assetId, source.taken_at);
         if (!info.localUri || !await matchesSource(info)) return false;
         const result = await analyzeAIPhoto(info, info.localUri);
         if (!await isVisible()) return false;
-        const latest = await MediaLibrary.getAssetInfoAsync(assetId);
+        const latest = await getReadableAssetInfo(assetId, source.taken_at);
         if (!await matchesSource(latest) || latest.modificationTime !== info.modificationTime) return false;
         return await AIAnalysisRepository.save(source, result);
     } catch (error) {
@@ -591,7 +617,8 @@ async function processAsset(
 
     try {
         // Get asset info from media library
-        const assetInfo = await MediaLibrary.getAssetInfoAsync(assetId);
+        const indexed = await AssetRepository.getById(assetId);
+        const assetInfo = await getReadableAssetInfo(assetId, indexed?.taken_at ?? null);
         if (!assetInfo || !assetInfo.localUri) {
             throw new Error('Asset not found or no local URI');
         }

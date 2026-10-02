@@ -23,7 +23,7 @@ jest.mock('../../services/ml/MLKitService', () => ({
 }));
 
 import { waitFor } from '@testing-library/react-native';
-import { InteractionManager } from 'react-native';
+import { InteractionManager, Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AssetRepository, AssetStatus, AssetStatusType, DupGroupRepository, GLOBAL_ALGO_VERSION, MetaRepository } from '../../database';
@@ -53,6 +53,7 @@ function deferred<T>() {
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
+const scannerTestPlatform = Platform.OS;
 
 describe('AIScanner engine safety', () => {
   let database: TestDatabase;
@@ -67,6 +68,7 @@ describe('AIScanner engine safety', () => {
   };
 
   beforeEach(() => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: scannerTestPlatform });
     database = new TestDatabase();
     (getDatabase as jest.Mock).mockResolvedValue(database);
     (withTransaction as jest.Mock).mockImplementation(async callback => {
@@ -350,6 +352,65 @@ describe('AIScanner engine safety', () => {
     expect(await AssetRepository.getById('one')).toMatchObject({ blur_score: before!.blur_score, phash: before!.phash, updated_at: before!.updated_at });
     await startClassification();
     expect(ml.labelImage).toHaveBeenCalledTimes(2);
+  });
+  it('analyzes Android photos without requesting location when the full-info API rejects EXIF access', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    media.getAssetInfoAsync.mockRejectedValue(new Error('missing ACCESS_MEDIA_LOCATION permission'));
+    await start();
+    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 2, error: 0 });
+    expect(ops.resizeToGray256).toHaveBeenCalledWith('file:///one.jpg');
+    expect(media.getAssetsAsync).toHaveBeenCalledWith(expect.objectContaining({
+      resolveWithFullInfo: false, createdAfter: 99, createdBefore: 101,
+    }));
+  });
+  it('backfills Android AI through metadata-only reads and rejects edits during inference', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    await seed('one');
+    media.getAssetsAsync.mockResolvedValue(page([photo('one')]));
+    media.getAssetInfoAsync.mockRejectedValue(new Error('missing ACCESS_MEDIA_LOCATION permission'));
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true });
+    const before = await AssetRepository.getById('one');
+    ml.labelImage.mockImplementationOnce(async () => {
+      media.getAssetsAsync.mockResolvedValue(page([{ ...photo('one'), modificationTime: 2 }]));
+      return [{ text: 'Cat', confidence: 0.9 }];
+    });
+    await startClassification();
+    expect(ops.resizeToGray256).not.toHaveBeenCalled();
+    expect(ml.labelImage).toHaveBeenCalledTimes(1);
+    expect((await AssetRepository.getById('one'))?.labels_json).toBeNull();
+    expect(await AssetRepository.getById('one')).toMatchObject({ status: AssetStatus.DONE, updated_at: before!.updated_at });
+  });
+  it('does not apply the Android location fallback to iOS failures', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    media.getAssetInfoAsync.mockRejectedValue(new Error('missing ACCESS_MEDIA_LOCATION permission'));
+    await start();
+    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 0, error: 2 });
+    expect(ops.resizeToGray256).not.toHaveBeenCalled();
+    expect(media.getAssetsAsync.mock.calls.some(([options]) => options?.resolveWithFullInfo === false)).toBe(false);
+  });
+  it('stops a broken fallback cursor without analyzing a different photo', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    media.getAssetInfoAsync.mockRejectedValue(new Error('missing ACCESS_MEDIA_LOCATION permission'));
+    media.getAssetsAsync.mockImplementation(async options => options?.resolveWithFullInfo === false
+      ? page([photo('unrelated')], true, 'repeated-cursor') : page([photo('one')]));
+    await start();
+    expect((await AssetRepository.getById('one'))?.status).toBe(AssetStatus.ERROR);
+    expect(ops.resizeToGray256).not.toHaveBeenCalled();
+    expect(media.getAssetsAsync.mock.calls.filter(([options]) => options?.resolveWithFullInfo === false)).toHaveLength(2);
+  });
+  it('finds an Android photo with an unknown creation time on a later page without guessing a timestamp', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    media.getAssetInfoAsync.mockRejectedValue(new Error('missing ACCESS_MEDIA_LOCATION permission'));
+    media.getAssetsAsync.mockImplementation(async options => {
+      if (options?.resolveWithFullInfo === false) {
+        expect(options.createdAfter).toBeUndefined(); expect(options.createdBefore).toBeUndefined();
+        return options.after ? page([photo('one', 0)]) : page([], true, 'metadata-page');
+      }
+      return page([photo('one', 0)]);
+    });
+    await start();
+    expect((await AssetRepository.getById('one'))?.status).toBe(AssetStatus.DONE);
+    expect(ops.resizeToGray256).toHaveBeenCalledTimes(1);
   });
 
   it('does not publish a classification when access is revoked during inference', async () => {

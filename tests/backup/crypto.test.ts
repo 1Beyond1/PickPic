@@ -12,7 +12,11 @@ let encrypted: Uint8Array;
 beforeAll(async () => { encrypted = await encryptBackup(payload, password); });
 
 it('round-trips Chinese records and independently decrypts with Node crypto', async () => {
-    expect(await decryptBackup(encrypted, password)).toEqual(payload);
+    const progress: number[] = [];
+    expect(await decryptBackup(encrypted, password, undefined, fraction => progress.push(fraction))).toEqual(payload);
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress.at(-1)).toBe(1);
+    expect(progress.every((fraction, index) => fraction > 0 && fraction <= 1 && (!index || fraction >= progress[index - 1]))).toBe(true);
     const key = scryptSync(password, encrypted.subarray(8, 40), 32, { N: 65536, r: 8, p: 2, maxmem: 80 * 1024 * 1024 });
     const cipher = createDecipheriv('aes-256-gcm', key, encrypted.subarray(40, 52));
     cipher.setAAD(encrypted.subarray(0, 52)); cipher.setAuthTag(encrypted.subarray(-16));

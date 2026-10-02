@@ -74,7 +74,9 @@
           }
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "react-native-quick-crypto",
+      "./plugins/withNativeCryptoToolchain"
     ],
     "experiments": {
       "typedRoutes": true,

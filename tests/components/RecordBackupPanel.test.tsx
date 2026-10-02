@@ -62,3 +62,27 @@ it('cancels and clears the sheet when backgrounded during encryption', async () 
     act(() => handler('background'));
     expect(screen.queryByLabelText('备份密码（至少 12 个字符）')).toBeNull();
 });
+it('shows actual key derivation progress and ignores late updates after cancellation', async () => {
+    let cancelled!: () => boolean;
+    let progress!: (fraction: number) => void;
+    let finish!: (result: { bytes: Uint8Array; saved: number; skipped: number }) => void;
+    jest.mocked(createEncryptedRecords).mockImplementationOnce((_password, isCancelled, onProgress) => {
+        cancelled = isCancelled!; progress = onProgress!;
+        return new Promise(resolve => { finish = resolve; });
+    });
+    render(<RecordBackupPanel />);
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    fireEvent.changeText(screen.getByLabelText('备份密码（至少 12 个字符）'), 'long-test-passphrase');
+    fireEvent.changeText(screen.getByLabelText('再次输入密码'), 'long-test-passphrase');
+    fireEvent.press(screen.getByRole('button', { name: '加密并选择保存位置' }));
+    await waitFor(() => expect(progress).toBeDefined());
+    act(() => progress(0.426));
+    expect(screen.getByText(/密码保护计算 42%/)).toBeTruthy();
+    fireEvent.press(screen.getAllByRole('button', { name: '取消' })[0]);
+    expect(cancelled()).toBe(true);
+    const bytes = new Uint8Array([10, 20]);
+    await act(async () => { progress(0.9); finish({ bytes, saved: 1, skipped: 0 }); });
+    expect(screen.queryByText(/密码保护计算/)).toBeNull();
+    expect(saveEncryptedFile).not.toHaveBeenCalled();
+    expect([...bytes]).toEqual([0, 0]);
+});

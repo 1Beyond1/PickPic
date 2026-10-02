@@ -13,6 +13,7 @@
 ## 文件保护
 
 - 文件内容使用 AES-256-GCM 加密并认证。密码通过 scrypt 派生 32 字节密钥，参数固定为 N=65536、r=8、p=2，工作内存约 64 MiB。参数固定于文件格式版本，导入文件不能自行调低或调高计算成本。
+- Android/iOS 的密码派生使用 Quick Crypto 的原生异步 scrypt，文件格式与参数不变；便携 JavaScript 实现用于独立算法测试。原生模块不可用时停止操作，不悄悄降级算法或参数。原生计算本身不能中途终止；取消会关闭界面，使结果失效，并在计算返回后清零、丢弃密钥，不保存或恢复数据。
 - 每次导出通过 Expo 原生异步安全随机数接口生成新的 32 字节盐和 12 字节 nonce；随机数不可用时停止导出，不回退到 Math.random。
 - 文件头仅含格式标记、盐和 nonce，不包含媒体 ID、记录数、路径、分类或日期。整个文件头参与认证。明文以 64 KiB 块填充，降低从精确文件长度推断记录数量的可能；文件总长度仍然可见。
 - 至少 12 个字符的密码并不能保证高强度。建议使用较长、独立的口令。密码无法找回，也没有后门或服务端解密钥匙。
@@ -30,6 +31,10 @@
 
 自动化测试覆盖实际加密算法，并使用 Node.js crypto 独立解密；覆盖错误密码、盐/nonce/正文/标签篡改、随机数失效、取消、格式与容量限制、恢复合并、排除待删除、权限变化以及持久化失败后重试。平台文件接口通过替身验证，不能据此宣称所有文件提供程序和厂商机型都通过。
 
-新依赖包含 expo-crypto 与 expo-document-picker，已有 development build 必须重新构建原生部分。真机验证按用户安排延期；iOS 原生构建尚未验证。
+新依赖包含 expo-crypto、expo-document-picker、react-native-quick-crypto 及其 Nitro/base64 依赖，已有 development build 必须重新构建原生部分。相册备份只查询索引元数据，并显式关闭 resolveWithFullInfo；不调用会额外读取位置/EXIF 的 Android 详情接口，也不请求位置权限。真机验证按用户安排延期；iOS 原生构建尚未验证。
 
-设计依据：[Expo SDK 54 Crypto](https://docs.expo.dev/versions/v54.0.0/sdk/crypto/)、[Expo DocumentPicker](https://docs.expo.dev/versions/v54.0.0/sdk/document-picker/)、[noble-ciphers](https://github.com/paulmillr/noble-ciphers)、[noble-hashes](https://github.com/paulmillr/noble-hashes)、[OWASP 密码存储参数建议](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)。使用成熟库不代表这套应用集成已经取得独立安全审计认证。
+Quick Crypto 与 Nitro 固定匹配的生成代码版本；Android 的配置插件只让这两个新增库继承应用已经选定的 AGP/Kotlin 版本，不改写其他模块，不硬编码另一个 SDK 工具链，也不修改 node_modules 源码。配置改写有幂等测试，API 37 独立模拟器的 x86_64 Release 构建与运行已通过；不等同于 ARM64/iOS 构建验收。
+
+原生代表流程已验证：真实导出文件经独立 Node 解密确认含测试记录，错误密码不恢复，正确密码先预览再确认；恢复后计数立即正确。测试只使用独立模拟器内一张合成图片，不覆盖大图库、全部系统文件提供程序或真实设备。
+
+设计依据：[Expo SDK 54 Crypto](https://docs.expo.dev/versions/v54.0.0/sdk/crypto/)、[Expo DocumentPicker](https://docs.expo.dev/versions/v54.0.0/sdk/document-picker/)、[noble-ciphers](https://github.com/paulmillr/noble-ciphers)、[noble-hashes](https://github.com/paulmillr/noble-hashes)、[Quick Crypto scrypt](https://margelo.github.io/react-native-quick-crypto/docs/api/scrypt)、[OWASP 密码存储参数建议](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)。使用成熟库不代表这套应用集成已经取得独立安全审计认证。

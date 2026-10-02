@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { acquireRecordOperation } from '../recordOperationLock';
 import { flushMediaProgress } from '../mediaProgressStorage';
-import { BackupCancellation, BackupError, decryptBackup, encryptBackup } from './crypto';
+import { BackupCancellation, BackupError, BackupKeyProgress, decryptBackup, encryptBackup } from './crypto';
 import { BackupPayload, getDecisions, mediaFingerprint, parseBackupPayload, planRestore, snapshotRecords } from './payload';
 
 function check(cancelled?: BackupCancellation) { if (cancelled?.()) throw new BackupError('cancelled'); }
@@ -11,14 +11,18 @@ async function permission(kind: 'photo' | 'video') {
     const result = await MediaLibrary.getPermissionsAsync(false, [kind]);
     return result.granted ? result.accessPrivileges ?? 'all' : 'none';
 }
-async function limitedIds(kind: 'photo' | 'video', cancelled?: BackupCancellation) {
+async function enumerateAssets(kind: 'photo' | 'video', cancelled?: BackupCancellation,
+    visit?: (asset: MediaLibrary.Asset) => void, collectIds = true) {
     const ids = new Set<string>();
     const cursors = new Set<string>();
     let after: string | undefined;
     do {
         check(cancelled);
-        const page = await MediaLibrary.getAssetsAsync({ mediaType: kind, first: 500, ...(after ? { after } : {}) });
-        for (const asset of page.assets) ids.add(asset.id);
+        // Android getAssetInfoAsync also reads EXIF/location and can fail
+        // without ACCESS_MEDIA_LOCATION. Backup only needs indexed metadata.
+        const page = await MediaLibrary.getAssetsAsync({ mediaType: kind, first: 500, resolveWithFullInfo: false,
+            ...(after ? { after } : {}) });
+        for (const asset of page.assets) { if (collectIds) ids.add(asset.id); visit?.(asset); }
         if (!page.hasNextPage) return ids;
         if (!page.endCursor || cursors.has(page.endCursor)) throw new BackupError('unavailable');
         cursors.add(page.endCursor); after = page.endCursor;
@@ -33,29 +37,22 @@ async function readVisible(rows: readonly { id: string; kind: 'photo' | 'video' 
         if (requested.length === 0) continue;
         const scope = await permission(kind);
         if (scope === 'none') continue;
-        const granted = scope === 'limited' ? await limitedIds(kind, cancelled) : null;
-        scopes.push({ kind, scope, granted });
-        // Bounded native calls; a large library must not launch thousands of
-        // simultaneous requests or download originals from a cloud provider.
-        for (let i = 0; i < requested.length; i += 8) {
-            check(cancelled);
-            await Promise.all(requested.slice(i, i + 8).map(async row => {
-                if (granted && !granted.has(row.id)) return;
-                try {
-                    const info = await MediaLibrary.getAssetInfoAsync(row.id, { shouldDownloadFromNetwork: false });
-                    if (info.id !== row.id || info.mediaType !== kind) return;
-                    mediaFingerprint(info); // Reject incomplete metadata.
-                    // Do not carry location/EXIF fields from AssetInfo into
-                    // persisted queues when rebuilding a decision.
-                    visible.set(`${kind}:${row.id}`, {
-                        id: info.id, filename: info.filename, uri: info.uri, mediaType: info.mediaType,
-                        width: info.width, height: info.height, creationTime: info.creationTime,
-                        modificationTime: info.modificationTime, duration: info.duration,
-                        ...(info.albumId ? { albumId: info.albumId } : {}),
-                    });
-                } catch { /* Deleted, hidden or unreadable media is skipped. */ }
-            }));
-        }
+        const wanted = new Set(requested.map(row => row.id));
+        // One paginated metadata pass, not thousands of native EXIF requests
+        // or original-media downloads. Retain only the requested assets.
+        const ids = await enumerateAssets(kind, cancelled, info => {
+            if (!wanted.has(info.id) || info.mediaType !== kind) return;
+            try {
+                mediaFingerprint(info); // Reject incomplete metadata.
+                visible.set(`${kind}:${info.id}`, {
+                    id: info.id, filename: info.filename, uri: info.uri, mediaType: info.mediaType,
+                    width: info.width, height: info.height, creationTime: info.creationTime,
+                    modificationTime: info.modificationTime, duration: info.duration,
+                    ...(info.albumId ? { albumId: info.albumId } : {}),
+                });
+            } catch { /* Incomplete or unreadable metadata is skipped. */ }
+        }, scope === 'limited');
+        scopes.push({ kind, scope, granted: scope === 'limited' ? ids : null });
     }
     // Validate both media scopes after the entire read, including a photo
     // revocation that happened while video metadata was being fetched.
@@ -63,7 +60,7 @@ async function readVisible(rows: readonly { id: string; kind: 'photo' | 'video' 
         check(cancelled);
         if (await permission(kind) !== scope) throw new BackupError('unavailable');
         if (granted) {
-            const latest = await limitedIds(kind, cancelled);
+            const latest = await enumerateAssets(kind, cancelled);
             if (latest.size !== granted.size || [...latest].some(id => !granted.has(id))) throw new BackupError('unavailable');
         }
     }
@@ -79,7 +76,7 @@ async function withTransfer<T>(task: () => Promise<T>): Promise<T> {
     finally { release(); }
 }
 
-export async function createEncryptedRecords(password: string, cancelled?: BackupCancellation) {
+export async function createEncryptedRecords(password: string, cancelled?: BackupCancellation, onProgress?: BackupKeyProgress) {
     return withTransfer(async () => {
         if (Platform.OS !== 'android' && Platform.OS !== 'ios') throw new BackupError('unavailable');
         const rows = getDecisions(snapshotRecords(useMediaStore.getState()));
@@ -90,13 +87,13 @@ export async function createEncryptedRecords(password: string, cancelled?: Backu
         });
         check(cancelled);
         const payload: BackupPayload = { version: 1, platform: Platform.OS, records };
-        return { bytes: await encryptBackup(payload, password, cancelled), saved: records.length, skipped: rows.length - records.length };
+        return { bytes: await encryptBackup(payload, password, cancelled, onProgress), saved: records.length, skipped: rows.length - records.length };
     });
 }
 
-export async function openEncryptedRecords(bytes: Uint8Array, password: string, cancelled?: BackupCancellation) {
+export async function openEncryptedRecords(bytes: Uint8Array, password: string, cancelled?: BackupCancellation, onProgress?: BackupKeyProgress) {
     return withTransfer(async () => {
-        const payload = parseBackupPayload(await decryptBackup(bytes, password, cancelled), Platform.OS);
+        const payload = parseBackupPayload(await decryptBackup(bytes, password, cancelled, onProgress), Platform.OS);
         const visible = await readVisible(payload.records, cancelled);
         check(cancelled);
         return { payload, preview: planRestore(payload, useMediaStore.getState(), visible, false).preview };
@@ -117,6 +114,7 @@ export async function restoreEncryptedRecords(payload: BackupPayload, includePen
             hiddenPhotoQueuedAssetIds: null, hiddenVideoQueuedAssetIds: null });
         current.clearLoadedMedia(); // Invalidate asynchronous feed loads too.
         await flushMediaProgress();
+        await current.refreshTotalCounts();
         current.notifyMediaLibraryRefresh();
         return preview;
     });

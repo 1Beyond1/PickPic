@@ -14,6 +14,7 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
     const [password, setPassword] = useState('');
     const [repeat, setRepeat] = useState('');
     const [busy, setBusy] = useState(false);
+    const [keyProgress, setKeyProgress] = useState<number | null>(null);
     const [selected, setSelected] = useState(false);
     const [preview, setPreview] = useState<RestorePreview | null>(null);
     const [includePending, setIncludePending] = useState(false);
@@ -27,7 +28,7 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
         generation.current++;
         bytes.current?.fill(0); bytes.current = null; payload.current = null;
         setPassword(''); setRepeat(''); setPreview(null); setSelected(false);
-        setIncludePending(false); setMessage(''); setBusy(false); setMode(null);
+        setIncludePending(false); setMessage(''); setBusy(false); setKeyProgress(null); setMode(null);
     };
     const close = useRef(clear); close.current = clear;
     useEffect(() => {
@@ -43,12 +44,18 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
         return () => { subscription.remove(); taskGeneration.current++; encryptedBytes.current?.fill(0); decryptedPayload.current = null; };
     }, []);
 
-    async function run(task: (cancelled: () => boolean) => Promise<void>) {
+    async function run(task: (cancelled: () => boolean, onProgress: (fraction: number) => void) => Promise<void>) {
         if (running.current) return;
-        running.current = true; setBusy(true); setMessage('');
+        running.current = true; setBusy(true); setMessage(''); setKeyProgress(null);
         const ticket = generation.current;
         const cancelled = () => ticket !== generation.current;
-        try { await task(cancelled); }
+        // Noble emits many callbacks; render only when a whole percent changes.
+        let lastPercent = -1;
+        const onProgress = (fraction: number) => {
+            const percent = Math.min(100, Math.max(0, Math.floor(fraction * 100)));
+            if (!cancelled() && percent !== lastPercent) { lastPercent = percent; setKeyProgress(percent); }
+        };
+        try { await task(cancelled, onProgress); }
         catch (error) {
             if (!cancelled()) {
                 const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
@@ -60,7 +67,7 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
             }
         } finally {
             running.current = false;
-            if (!cancelled()) { setBusy(false); setPassword(''); setRepeat(''); }
+            if (!cancelled()) { setBusy(false); setKeyProgress(null); setPassword(''); setRepeat(''); }
         }
     }
     const choose = () => run(async cancelled => {
@@ -74,11 +81,12 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
         bytes.current?.fill(0); bytes.current = selectedBytes;
         setSelected(!!selectedBytes);
     });
-    const execute = () => run(async cancelled => {
+    const execute = () => run(async (cancelled, onProgress) => {
         if (mode === 'export') {
             if (password !== repeat) { setMessage(zh ? '两次输入的密码不一致。' : 'The passwords do not match.'); return; }
             const { createEncryptedRecords } = await import('../services/backup/records');
-            const output = await createEncryptedRecords(password, cancelled);
+            const output = await createEncryptedRecords(password, cancelled, onProgress);
+            setKeyProgress(null);
             setPassword(''); setRepeat('');
             try {
                 if (cancelled()) return;
@@ -94,7 +102,7 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
             } finally { output.bytes.fill(0); }
         } else if (bytes.current) {
             const { openEncryptedRecords } = await import('../services/backup/records');
-            const opened = await openEncryptedRecords(bytes.current, password, cancelled);
+            const opened = await openEncryptedRecords(bytes.current, password, cancelled, onProgress);
             if (cancelled()) return;
             payload.current = opened.payload; setPreview(opened.preview);
             bytes.current.fill(0); bytes.current = null;
@@ -155,6 +163,9 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
                         {button(zh ? '确认恢复' : 'Confirm restore', restore)}
                     </>}
                     {busy && <ActivityIndicator accessibilityLabel={zh ? '处理中' : 'Working'} color={colors.text} />}
+                    {busy && keyProgress !== null && <Text accessibilityLiveRegion="polite" style={[styles.copy, { color: colors.textSecondary }]}>{zh
+                        ? `密码保护计算 ${keyProgress}% · 为保护密码，此步骤可能较慢，可随时取消。`
+                        : `Password protection ${keyProgress}% · This security step can take time. You can cancel at any time.`}</Text>}
                     {!!message && <Text accessibilityLiveRegion="polite" style={[styles.copy, { color: colors.text }]}>{message}</Text>}
                 </ScrollView>
             </KeyboardAvoidingView>
