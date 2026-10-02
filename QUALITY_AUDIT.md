@@ -619,3 +619,15 @@ README 重写为无表情的产品说明，保留四张实际界面截图，明�
 构建当前状态：ARM64 Release在独立新工程进行，使用忽略的Gradle初始化脚本显式禁用模板调试签名，先构建未签名验证包。首次原生构建等待缺失的React Native Release AAR下载；线程检查定位到SSL下载等待，不能当成产品代码编译错误。通过官方Maven重定向端点下载同一依赖，核对缓存官方.module元数据的大小与SHA-256完全一致，随后仅停止本任务的停滞Gradle守护进程，补齐内容寻址缓存并离线重试。此前daemon disappeared日志是主动停止导致，不记为独立崩溃。此处为发布准备记录，不宣称APK已构建成功、签名合格、真机验收或Release已公开。
 
 推送前定向检查：134个已跟踪文本文件及尚未推送的历史差异，常见凭据、私钥和个人Windows用户路径模式均无命中；无已跟踪APK、签名密钥或credentials文件，不称完整安全认证。build-artifacts和本地credentials.json加入忽略。源码文档可独立推送；安装包公开发布等待构建验收及签名选择。
+
+### 0.4.0 APK 构建与签名验收（2026-10-02）
+
+用户明确选择新建正式签名。生成独立RSA3072发布密钥，没有沿用Android Debug证书。签名材料只保存在Git忽略的本机目录，ACL已核对为当前Windows用户、Administrators与SYSTEM，所有者已移交当前Windows用户；没有提交或上传密钥。最初密码保护绑定构建沙箱账户，当前用户解密失败后，使用原账户恢复并改成本机DPAPI保护，仍未写入明文密码；仅有加密密码文件不能保证跨电脑或重装Windows后恢复，正式迁移前须另做安全的可迁移备份。签名时密码只通过临时环境变量传入，随后清除。ACL调整中的失败尝试不计为成功，以最终icacls及只读核对为准。
+
+隔离新工程的ARM64 Release构建成功，原工程Android目录未改。Windows/Ninja超过260字符路径的问题，通过缩短临时CMake buildStagingDirectory与对象路径限制解决，没有改系统长路径设置、依赖版本或业务代码。首次离线重试另缺少两个Release AAR，联网补齐后成功。Gradle元空间和依赖弃用提示保留，不冒充已经解决。
+
+发布APK为PickPic-v0.4.0-arm64.apk，90,099,869字节，SHA256为1334fee2114b09f6da9ba4082e4164efcce3e790354b8e1d8f17fe2e210e961a。apksigner验签通过，新证书SHA256为5f584d637f8e1ec98190e378eba849f49439f15ce81d992f90f9239a4b6f3527。aapt核对versionName=0.4.0、versionCode=4、minSdk=29、targetSdk=36，仅arm64-v8a，无debuggable声明；最终合并权限无定位、录音或读取音频声明，保留依赖生成的网络、振动及SYSTEM_ALERT_WINDOW等权限。内置Hermes字节码3,170,952字节；分类模型打包为res/H_.tflite，其15,022,904字节及SHA256与源码EfficientNet-Lite4一致。zipalign的16KB验证通过，所有打包原生ELF的PT_LOAD段p_align至少16KB；不将静态对齐检查等同于所有16KB设备验收。安装包未发现签名材料或.map文件。
+
+运行检查：仅创建全新空白API37模拟器，没有安装到用户现有模拟器、切换其用户、读取真实图库或执行删除。纯ARM64包安装成功但该x86环境加载libreactnative.so失败，日志DirectApkSoSource只搜索lib/x86_64，未记为真机问题已证实、也未算验收通过。另构建同源码、同Release压缩配置的本地x86验证包（不上传），关闭模拟器Wi-Fi与移动网络后冷启动成功、存活PID正常，无crash日志；媒体授权、0.4.0新公告、引导及空图库首页正常。设置开启可选分类后，原生日志确认内置efficientnet模型加载、MLBridge Ready、TensorFlow Lite/XNNPACK初始化成功，无启动异常。没有用空图库测试冒称实际分类准确率或删除流程已验证；ARM64真机、各厂商删除和iOS仍未验收。
+
+源码e930821已推送main并通过GitHub CI。README补充独立APK下载与Android10+/ARM64范围、正式签名导致旧版通常需卸载重装及记录丢失的说明，避免要求用户为升级先删除媒体。新Release先作为测试版草稿，仅上传ARM64 APK和SHA256SUMS.txt；GitHub资产digest/大小与本地一致，尚须公开发布并核对最终tag/源码提交。最新133个源码/发布说明文本文件的定向秘密和个人路径模式检查无命中，不称完整安全认证。

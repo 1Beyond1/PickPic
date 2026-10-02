@@ -2,11 +2,13 @@
 
 PickPic 是一款本地照片与视频整理工具。逐张浏览，决定保留或删除，在清理相册的同时记录整理进度。支持浅色与深色界面，以及设备端照片分析。
 
-当前源码版本 **0.4.0**，处于测试阶段。主要在 Android 上开发和验证；iOS 尚未完成原生验证。源码版本不等同于已发布安装包的版本。
+当前版本 **0.4.0**，处于测试阶段。主要在 Android 上开发和验证；iOS 尚未完成原生验证。
 
 ## 下载
 
-Android 安装包与更新说明见 [GitHub Releases](https://github.com/1Beyond1/PickPic/releases)。请以具体 Release 的版本、支持架构和签名说明为准，不要将开发客户端当作独立安装包。
+下载 [0.4.0 Android APK](https://github.com/1Beyond1/PickPic/releases/download/v0.4.0/PickPic-v0.4.0-arm64.apk)，或查看 [完整更新说明与校验文件](https://github.com/1Beyond1/PickPic/releases/tag/v0.4.0)。安装包支持 **Android 10 及以上、ARM64（arm64-v8a）**，内置运行资源，无需 Expo Go 或开发服务器。其他版本见 [GitHub Releases](https://github.com/1Beyond1/PickPic/releases)。
+
+**旧版安装提醒：** 0.4.0 开始使用独立发布签名，与 0.3.1 的调试签名不同。旧版通常无法直接覆盖升级，需要先卸载再安装；卸载会清除应用内整理、扫描及偏好记录，不会删除原照片或视频。如需保留旧版待删除决定，请先自行记录；重装不会迁移队列或替你执行删除。
 
 ## 0.4.0 更新
 
