@@ -110,11 +110,21 @@ it('rechecks edited metadata on confirmation and skips it without restoring a pe
 });
 it('exports only bounded decision metadata inside the encrypted payload', async () => {
     state.photoProcessedIds = ['one', 'hidden'];
+    state.recentDecisions = [{ eventId: 'local-only-journal' }];
     const result = await createEncryptedRecords('secret');
     expect(result).toMatchObject({ saved: 1, skipped: 1 });
     const value = jest.mocked(encryptBackup).mock.calls[0][0];
     expect(value).toEqual({ version: 1, platform: 'android', records: [{ id: 'one', kind: 'photo', decision: 'keep', fingerprint: mediaFingerprint(photo) }] });
     expect(JSON.stringify(value)).not.toContain('private.jpg');
+    expect(JSON.stringify(value)).not.toContain('local-only-journal');
+});
+it('does not import or fabricate undo history from a version-1 backup', async () => {
+    state.recentDecisions = [{ eventId: 'stale-local-operation' }];
+    await openEncryptedRecords(new Uint8Array(), 'secret');
+    expect(state.recentDecisions).toEqual([{ eventId: 'stale-local-operation' }]);
+    await restoreEncryptedRecords(file(), true);
+    expect(state.recentDecisions).toEqual([]);
+    expect(state.photoProcessedIds).toEqual(['one']); expect(state.deleteQueue).toEqual([photo]);
 });
 it('reads later metadata pages and rejects repeated cursors without committing', async () => {
     state.photoProcessedIds = ['one'];

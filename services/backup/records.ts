@@ -110,7 +110,9 @@ export async function restoreEncryptedRecords(payload: BackupPayload, includePen
         const current = useMediaStore.getState();
         if (current.isConfirmingDeletion || current.isConfirmingVideoTrash) throw new BackupError('unavailable');
         const { merged, preview } = planRestore(payload, current, visible, includePending);
-        useMediaStore.setState({ ...merged, photos: [], videos: [], currentIndex: 0, videoCurrentIndex: 0,
+        // Version-1 backups do not contain an undo journal. A restore changes
+        // decisions outside that journal; old inverse operations are stale.
+        useMediaStore.setState({ ...merged, recentDecisions: [], photos: [], videos: [], currentIndex: 0, videoCurrentIndex: 0,
             hiddenPhotoQueuedAssetIds: null, hiddenVideoQueuedAssetIds: null });
         current.clearLoadedMedia(); // Invalidate asynchronous feed loads too.
         await flushMediaProgress();

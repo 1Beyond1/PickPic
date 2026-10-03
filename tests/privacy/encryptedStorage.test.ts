@@ -171,6 +171,15 @@ it('does not migrate malformed decision fields that would crash or replace resto
     expect(disk.has(encryptedName)).toBe(false);
 });
 
+it.each([null, {}, [{ version: 2 }], [{ uri: 'file:///private.jpg' }]])('preserves malformed recent decisions and prevents empty overwrite %j', async recentDecisions => {
+    const original = JSON.stringify({ state: { photoProcessedIds: ['kept'], recentDecisions }, version: 0 });
+    disk.set(name, original);
+    const storage = createEncryptedStorage('records');
+    await expect(storage.getItem(name)).rejects.toThrow();
+    await expect(storage.setItem(name, JSON.stringify({ state: {}, version: 0 }))).rejects.toThrow();
+    expect(disk.get(name)).toBe(original); expect(disk.has(encryptedName)).toBe(false);
+});
+
 it.each([
     null, [], {}, { photo: null }, { photo: null, video: null, extra: null },
     { photo: { version: 2 }, video: null },

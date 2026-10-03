@@ -64,6 +64,7 @@ describe('media visibility checks', () => {
       pendingDeletionInfo: {},
       deletedCounts: { photos: 0, videos: 0 },
       lastDeletionResult: null,
+      recentDecisions: [],
       photoProcessedIds: [],
       videoProcessedIds: [],
       totalPhotos: 0,

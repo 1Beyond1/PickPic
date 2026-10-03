@@ -16,6 +16,8 @@ import { advanceOrganizingSession, continueOrganizingSession, createOrganizingSe
 import type { OrganizingSession, SessionScope } from '../services/organizingSession';
 import { recoverOrganizingSession } from '../services/sessionRecovery';
 import type { SessionRecoveryResult } from '../services/sessionRecovery';
+import { appendRecentDecision, sameDecisionSnapshot } from '../services/recentDecisions';
+import type { DecisionSnapshot, RecentDecision } from '../services/recentDecisions';
 import { DisplayOrder, useSettingsStore } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
@@ -134,6 +136,7 @@ interface MediaState {
     pendingDeletionInfo: Record<string, PendingDeletionInfo>;
     deletedCounts: { photos: number; videos: number };
     lastDeletionResult: PendingDeletionResult | null;
+    recentDecisions: RecentDecision[];
     organizingSessions: { photo: OrganizingSession | null; video: OrganizingSession | null };
     photoSessionRecoveryStatus: SessionRecoveryResult['status'] | null;
     photoSessionUnavailableCount: number;
@@ -247,10 +250,41 @@ function currentVideoIndex(videos: readonly PhotoAsset[], session: OrganizingSes
     return wanted ? videos.findIndex(asset => asset.id === wanted) : Math.max(0, Math.min(fallback, videos.length - 1));
 }
 
+function decisionSnapshot(state: MediaState, kind: MediaType, assetId: string): DecisionSnapshot {
+    const queue = kind === 'photo' ? state.deleteQueue : state.videoTrashBin;
+    return {
+        processed: (kind === 'photo' ? state.photoProcessedIds : state.videoProcessedIds).includes(assetId),
+        pending: queue.some(asset => asset.id === assetId) ? state.pendingDeletionInfo[assetId] ?? { source: 'unknown', addedAt: 0 } : null,
+        collected: kind === 'photo' && state.collectionQueue.some(asset => asset.id === assetId),
+        deferred: !!state.organizingSessions[kind]?.deferredIds.includes(assetId),
+    };
+}
+function clearDeferredDecision(sessions: MediaState['organizingSessions'], kind: MediaType, assetId: string): MediaState['organizingSessions'] {
+    const session = sessions[kind];
+    if (!session?.deferredIds.includes(assetId)) return sessions;
+    return { ...sessions, [kind]: { ...session, deferredIds: session.deferredIds.filter(id => id !== assetId),
+        updatedAt: Math.max(session.startedAt, Date.now()) } };
+}
+function withRecentDecision(state: MediaState, next: Partial<MediaState>, kind: MediaType, assetId: string): Partial<MediaState> {
+    const before = decisionSnapshot(state, kind, assetId), after = decisionSnapshot({ ...state, ...next }, kind, assetId);
+    if (sameDecisionSnapshot(before, after)) return next;
+    const session = state.organizingSessions[kind];
+    const inSession = !!session?.assetIds.includes(assetId);
+    const at = Date.now();
+    let eventId: string;
+    do { eventId = `decision-${at}-${++recentDecisionSequence}`; } while (state.recentDecisions.some(entry => entry.eventId === eventId));
+    return { ...next, recentDecisions: appendRecentDecision(next.recentDecisions ?? state.recentDecisions, {
+        version: 1, eventId, assetId, kind,
+        action: after.pending ? 'pending' : after.collected ? 'collect' : after.deferred ? 'defer' : 'keep',
+        before, after, at, sessionId: inSession ? session!.sessionId : null, position: inSession ? session!.position : null,
+    }) };
+}
+
 function removeDeletedState(state: MediaState, deletedIds: ReadonlySet<string>): Partial<MediaState> {
     const deleteQueue = state.deleteQueue.filter(asset => !deletedIds.has(asset.id));
     const videoTrashBin = state.videoTrashBin.filter(asset => !deletedIds.has(asset.id));
     return { deleteQueue, videoTrashBin,
+        recentDecisions: state.recentDecisions.filter(entry => !deletedIds.has(entry.assetId)),
         organizingSessions: { photo: removeDeletedSessionMedia(state.organizingSessions.photo, deletedIds),
             video: removeDeletedSessionMedia(state.organizingSessions.video, deletedIds) },
         collectionQueue: state.collectionQueue.filter(asset => !deletedIds.has(asset.id)),
@@ -576,6 +610,7 @@ let videoQueueVisibilityRequestId = 0;
 let photoQueuePruneRequestId = 0;
 let videoQueuePruneRequestId = 0;
 let organizingSessionSequence = 0; // Identity only, never a cryptographic key.
+let recentDecisionSequence = 0; // Local event identity, not a key or media identifier.
 
 export const useMediaStore = create<MediaState>()(
     persist(
@@ -597,6 +632,7 @@ export const useMediaStore = create<MediaState>()(
     pendingDeletionInfo: {},
     deletedCounts: { photos: 0, videos: 0 },
     lastDeletionResult: null,
+    recentDecisions: [],
     organizingSessions: { photo: null, video: null },
     photoSessionRecoveryStatus: null,
     photoSessionUnavailableCount: 0,
@@ -706,9 +742,9 @@ export const useMediaStore = create<MediaState>()(
         const nextSessions = kind === 'photo' ? advancePhotoSession({ ...state, organizingSessions: sessions }, new Set(state.photoProcessedIds))
             : advanceVideoSession({ ...state, organizingSessions: sessions }, new Set(state.videoProcessedIds));
         const videos = state.videos.filter(asset => asset.id !== assetId);
-        set({ organizingSessions: nextSessions,
+        set(withRecentDecision(state, { organizingSessions: nextSessions,
             ...(kind === 'photo' ? { photos: state.photos.filter(asset => asset.id !== assetId) }
-                : { videos, videoCurrentIndex: currentVideoIndex(videos, nextSessions.video, state.videoCurrentIndex) }) });
+                : { videos, videoCurrentIndex: currentVideoIndex(videos, nextSessions.video, state.videoCurrentIndex) }) }, kind, assetId));
         return true;
     },
     moveVideoSession: assetId => {
@@ -1040,6 +1076,7 @@ export const useMediaStore = create<MediaState>()(
         if (isRecordTransferActive()) return 0;
         let added = 0;
         set(state => {
+            if (!state.hasHydrated) return state;
             const alreadyQueued = new Set(getPendingDeletionEntries(state).map(entry => entry.asset.id));
             const deleteQueue = [...state.deleteQueue], videoTrashBin = [...state.videoTrashBin];
             const photoProcessed = new Set(state.photoProcessedIds), videoProcessed = new Set(state.videoProcessedIds);
@@ -1053,14 +1090,22 @@ export const useMediaStore = create<MediaState>()(
                 else { deleteQueue.push(asset); photoProcessed.add(asset.id); }
             }
             if (!added) return state;
-            const photoSessions = advancePhotoSession(state, photoProcessed);
+            let clearedSessions = state.organizingSessions;
+            for (const asset of [...deleteQueue, ...videoTrashBin]) if (newlyQueued.has(asset.id)) {
+                clearedSessions = clearDeferredDecision(clearedSessions, asset.mediaType === 'video' ? 'video' : 'photo', asset.id);
+            }
+            const photoSessions = advancePhotoSession({ ...state, organizingSessions: clearedSessions }, photoProcessed);
             const sessions = advanceVideoSession({ ...state, organizingSessions: photoSessions }, videoProcessed);
             const videos = state.videos.filter(asset => !newlyQueued.has(asset.id));
-            return { deleteQueue, videoTrashBin, pendingDeletionInfo, lastDeletionResult: null,
+            let next: Partial<MediaState> = { deleteQueue, videoTrashBin, pendingDeletionInfo, lastDeletionResult: null,
                 organizingSessions: sessions,
                 collectionQueue: state.collectionQueue.filter(asset => !newlyQueued.has(asset.id)),
                 videos, videoCurrentIndex: currentVideoIndex(videos, sessions.video, state.videoCurrentIndex),
                 photoProcessedIds: [...photoProcessed], videoProcessedIds: [...videoProcessed] };
+            for (const asset of [...deleteQueue, ...videoTrashBin]) if (newlyQueued.has(asset.id)) {
+                next = withRecentDecision(state, next, asset.mediaType === 'video' ? 'video' : 'photo', asset.id);
+            }
+            return next;
         });
         return added;
     },
@@ -1068,33 +1113,37 @@ export const useMediaStore = create<MediaState>()(
 
     markForCollection: (asset) => {
         set((state) => {
-            if (state.photoProcessedIds.includes(asset.id)) return state;
-            return {
+            if (!state.hasHydrated || isRecordTransferActive() || state.photoProcessedIds.includes(asset.id)) return state;
+            const sessions = clearDeferredDecision(state.organizingSessions, 'photo', asset.id);
+            return withRecentDecision(state, {
                 collectionQueue: [...state.collectionQueue, asset],
                 photoProcessedIds: [...state.photoProcessedIds, asset.id],
-                organizingSessions: advancePhotoSession(state, new Set([...state.photoProcessedIds, asset.id]))
-            };
+                organizingSessions: advancePhotoSession({ ...state, organizingSessions: sessions }, new Set([...state.photoProcessedIds, asset.id]))
+            }, 'photo', asset.id);
         });
     },
 
     markAsSkipped: (asset) => {
-        set((state) => state.photoProcessedIds.includes(asset.id)
-            ? state
-            : { photoProcessedIds: [...state.photoProcessedIds, asset.id],
-                organizingSessions: advancePhotoSession(state, new Set([...state.photoProcessedIds, asset.id])) });
+        set(state => {
+            if (!state.hasHydrated || isRecordTransferActive() || state.photoProcessedIds.includes(asset.id)) return state;
+            const sessions = clearDeferredDecision(state.organizingSessions, 'photo', asset.id);
+            return withRecentDecision(state, { photoProcessedIds: [...state.photoProcessedIds, asset.id],
+                organizingSessions: advancePhotoSession({ ...state, organizingSessions: sessions }, new Set([...state.photoProcessedIds, asset.id])) }, 'photo', asset.id);
+        });
     },
 
     keepPendingDeletion: (assetId) => {
         let kept = false;
         set((state) => {
-            if (state.isConfirmingDeletion || state.isConfirmingVideoTrash || isRecordTransferActive()) return state;
+            if (!state.hasHydrated || state.isConfirmingDeletion || state.isConfirmingVideoTrash || isRecordTransferActive()) return state;
             const entry = getPendingDeletionEntries(state).find(item => item.asset.id === assetId);
             if (!entry) return state;
             kept = true;
             const deleteQueue = state.deleteQueue.filter(photo => photo.id !== assetId);
             const videoTrashBin = state.videoTrashBin.filter(video => video.id !== assetId);
-            return {
+            return withRecentDecision(state, {
                 deleteQueue, videoTrashBin,
+                organizingSessions: clearDeferredDecision(state.organizingSessions, entry.type, assetId),
                 pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue, videoTrashBin }),
                 lastDeletionResult: null,
                 photoProcessedIds: entry.type !== 'photo' || state.photoProcessedIds.includes(assetId)
@@ -1110,7 +1159,7 @@ export const useMediaStore = create<MediaState>()(
                     ]),
                 hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds === null ? null
                     : retainHiddenQueuedAssetIds(state.hiddenVideoQueuedAssetIds, videoTrashBin.map(asset => asset.id)),
-            };
+            }, entry.type, assetId);
         });
         return kept;
     },
@@ -1123,6 +1172,7 @@ export const useMediaStore = create<MediaState>()(
                 deleteQueue: state.deleteQueue.filter(p => p.id !== assetId),
                 collectionQueue: state.collectionQueue.filter(p => p.id !== assetId),
                 pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue: state.deleteQueue.filter(asset => asset.id !== assetId) }),
+                recentDecisions: state.recentDecisions.filter(entry => entry.kind !== 'photo' || entry.assetId !== assetId),
                 photoProcessedIds: state.photoProcessedIds.filter(id => id !== assetId)
             });
     },
@@ -1134,8 +1184,9 @@ export const useMediaStore = create<MediaState>()(
             if (!state.hasHydrated || isRecordTransferActive() || state.isConfirmingDeletion || state.isConfirmingVideoTrash
                 || asset.mediaType !== 'video') return state;
             const processed = new Set([...state.videoProcessedIds, asset.id]);
-            return { videoProcessedIds: state.videoProcessedIds.includes(asset.id) ? state.videoProcessedIds : [...processed],
-                organizingSessions: advanceVideoSession(state, processed) };
+            const sessions = clearDeferredDecision(state.organizingSessions, 'video', asset.id);
+            return withRecentDecision(state, { videoProcessedIds: state.videoProcessedIds.includes(asset.id) ? state.videoProcessedIds : [...processed],
+                organizingSessions: advanceVideoSession({ ...state, organizingSessions: sessions }, processed) }, 'video', asset.id);
         });
     },
 
@@ -1250,6 +1301,7 @@ export const useMediaStore = create<MediaState>()(
             ? state
             : {
                 photoProcessedIds: [],
+                recentDecisions: state.recentDecisions.filter(entry => entry.kind !== 'photo'),
                 organizingSessions: { ...state.organizingSessions, photo: null },
                 photos: [],
                 deleteQueue: [],
@@ -1270,6 +1322,7 @@ export const useMediaStore = create<MediaState>()(
             ? state
             : {
                 videoProcessedIds: [],
+                recentDecisions: state.recentDecisions.filter(entry => entry.kind !== 'video'),
                 organizingSessions: { ...state.organizingSessions, video: null },
                 videoSessionRecoveryStatus: null, videoSessionUnavailableCount: 0, videoCurrentIndex: 0,
                 videos: [],
@@ -1412,6 +1465,7 @@ export const useMediaStore = create<MediaState>()(
                 pendingDeletionInfo: retainPendingDeletionInfo(state),
                 deletedCounts: state.deletedCounts,
                 organizingSessions: state.organizingSessions,
+                recentDecisions: state.recentDecisions,
             }),
             onRehydrateStorage: () => (state, error) => {
                 if (error) { usePrivacyStore.getState().block('records', 'read'); return; }

@@ -7,6 +7,7 @@ import type { StateStorage } from 'zustand/middleware';
 import { getDeviceKeyHex } from './deviceKey';
 import { LocalPrivacyError, DeviceKeyScope, usePrivacyStore } from '../../stores/usePrivacyStore';
 import { isOrganizingSession } from '../organizingSession';
+import { isRecentDecisions } from '../recentDecisions';
 
 const suffix = '.encrypted-v1';
 const prefix = 'PKLOCAL1:';
@@ -29,6 +30,7 @@ function validateState(value: string): void {
     // version without a migration function. Never remove that source first.
     if ('version' in parsed && parsed.version !== 0) throw new LocalPrivacyError();
     const state = parsed.state as Record<string, unknown>;
+    if ('recentDecisions' in state && !isRecentDecisions(state.recentDecisions)) throw new LocalPrivacyError();
     for (const name of ['photoProcessedIds', 'videoProcessedIds', 'selectedAlbumIds', 'activeCollectionIds']) {
         if (name in state && (!Array.isArray(state[name]) || !(state[name] as unknown[]).every(id => typeof id === 'string' && id.length > 0))) throw new LocalPrivacyError();
     }

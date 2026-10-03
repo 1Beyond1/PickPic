@@ -47,6 +47,24 @@ it('hydrates real Zustand stores without startup default snapshots replacing leg
     expect(mockDisk.has(recordsName)).toBe(false); expect(mockDisk.has(settingsName)).toBe(false);
     expect(mockDisk.get(recordsName + '.encrypted-v1')).not.toContain('pending');
     expect(mockDisk.get(settingsName + '.encrypted-v1')).not.toContain('private-album');
+    expect(stores.media.getState().recentDecisions).toEqual([]); // Do not invent legacy undo events.
+});
+
+it('authenticates the bounded recent journal through real Zustand persistence and reopen', async () => {
+    const stores = await openStores(); await stores.media.persist.rehydrate();
+    const before = { processed: false, pending: null, collected: false, deferred: false };
+    const journal = [{ version: 1, eventId: 'recent-event', assetId: 'private-recent-photo', kind: 'photo', action: 'pending', before,
+        after: { ...before, processed: true, pending: { source: 'similar', addedAt: 12 } },
+        at: 13, sessionId: 'private-recent-session', position: 2 }];
+    stores.media.setState({ recentDecisions: journal });
+    await require('../../services/mediaProgressStorage').flushMediaProgress();
+    const encrypted = mockDisk.get(recordsName + '.encrypted-v1')!;
+    expect(encrypted.startsWith('PKLOCAL1:')).toBe(true);
+    expect(encrypted).not.toContain('private-recent-photo'); expect(encrypted).not.toContain('private-recent-session');
+    jest.resetModules();
+    const reopened = await openStores(); await reopened.media.persist.rehydrate();
+    expect(reopened.media.getState().recentDecisions).toEqual(journal);
+    expect(reopened.media.getState().photoProcessedIds).toEqual(['kept']);
 });
 
 it('encrypts session scope, exact order, position and deferred media, then restores them without changing old decisions', async () => {
@@ -97,6 +115,8 @@ it('encrypts and reopens a backward-viewed video cursor and skipped IDs without 
     expect(stores.media.getState().moveVideoSession('video-b')).toBe(true);
     expect(stores.media.getState().deferSessionMedia('video', 'video-b')).toBe(true);
     expect(stores.media.getState().moveVideoSession('video-a')).toBe(true);
+    const journal = stores.media.getState().recentDecisions;
+    expect(journal.map((entry: { action: string; assetId: string }) => [entry.action, entry.assetId])).toEqual([['defer', 'video-b'], ['keep', 'video-a']]);
     await require('../../services/mediaProgressStorage').flushMediaProgress();
     const encrypted = mockDisk.get(recordsName + '.encrypted-v1')!;
     expect(encrypted.startsWith('PKLOCAL1:')).toBe(true);
@@ -109,6 +129,7 @@ it('encrypts and reopens a backward-viewed video cursor and skipped IDs without 
     });
     expect(reopened.media.getState().videoProcessedIds).toEqual(['video', 'video-a']);
     expect(reopened.media.getState().videoTrashBin).toEqual([]);
+    expect(reopened.media.getState().recentDecisions).toEqual(journal);
 });
 
 it('rejects persisted fields that replace store actions, even with a forged hydrated flag', async () => {
@@ -147,4 +168,6 @@ it('retains an unsaved decision in memory, gates actions, and persists that deci
     await restarted.media.persist.rehydrate();
     expect(restarted.media.getState().deleteQueue.map((asset: { id: string }) => asset.id)).toEqual(['pending', 'new-pending']);
     expect(restarted.media.getState().photoProcessedIds).toEqual(['kept', 'new-pending']);
+    expect(restarted.media.getState().recentDecisions[0]).toMatchObject({ assetId: 'new-pending', action: 'pending',
+        before: { processed: false, pending: null }, after: { processed: true, pending: { source: 'photos' } } });
 });
