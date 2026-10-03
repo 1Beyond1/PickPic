@@ -52,6 +52,35 @@ beforeEach(() => {
     });
 });
 const startButton = () => screen.getByRole('button', { name: '按此范围开始整理' });
+it('does not block the main scope when an optional album suggestion is slow', async () => {
+    let release!: (value: any) => void;
+    jest.mocked(MediaLibrary.getAlbumsAsync).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const view = await renderAsync(<OrganizingScopeModal visible kind="photo" onStarted={jest.fn()} onClose={jest.fn()} />);
+    try {
+        await waitFor(() => expect(screen.getByRole('radio', { name: '2026 年 10 月' })).toBeTruthy());
+        expect(startButton()).toBeEnabled();
+        expect(screen.queryByRole('button', { name: '选择截图相册' })).toBeNull();
+        expect(useMediaStore.getState().organizingSessions.photo).toBeNull();
+    } finally {
+        await act(async () => release([{ id: 'shot', title: 'Screenshots' }]));
+        await view.unmountAsync();
+    }
+});
+it.each(['photo', 'video'] as const)('the %s source shortcut changes only a draft album selection, keeps date/order and requires explicit start', async kind => {
+    fixtures = fixtures.map(item => ({ ...item, mediaType: kind }));
+    const saved = useMediaStore.getState().startOrganizingSession(kind, { albumIds: [], order: 'newest', date: month }, ['start']);
+    jest.mocked(MediaLibrary.getAlbumsAsync).mockResolvedValue([{ id: 'camera', title: kind === 'photo' ? 'Screenshots' : 'ScreenRecordings' }] as any);
+    const { onStarted } = await open(kind);
+    await waitFor(() => expect(screen.getByText(require('../i18n/zh').default.scope_source_hint)).toBeTruthy());
+    await fireEventAsync.press(screen.getByRole('button', { name: kind === 'photo' ? '选择截图相册' : '选择录屏相册' }));
+    expect(useMediaStore.getState().organizingSessions[kind]).toBe(saved); expect(onStarted).not.toHaveBeenCalled();
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    expect(screen.getByText('已选择 1 个相册')).toBeTruthy();
+    await fireEventAsync.press(startButton());
+    expect(useMediaStore.getState().organizingSessions[kind]?.scope).toEqual({ albumIds: ['camera'], order: 'newest', date: month });
+    expect(onStarted).toHaveBeenCalledTimes(1); expect(mockSettings.selectedAlbumIds).toEqual([]);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+});
 it.each(['photo', 'video'] as const)('starts %s largest-first from the range page, with a distinct unknown-size explanation and no global preference change', async kind => {
     const original = Platform.OS;
     try {

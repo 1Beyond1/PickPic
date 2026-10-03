@@ -12,6 +12,8 @@ import type { OrganizingMonthsResult } from '../services/organizingMonths';
 import { sameSessionScope } from '../services/organizingSession';
 import type { OrganizingOrder } from '../services/organizingSession';
 import { supportsIndexedMediaSizes } from '../services/mediaSizes';
+import { readSourceAlbums } from '../services/mediaSourceAlbums';
+import type { SourceAlbumsResult } from '../services/mediaSourceAlbums';
 import { useMediaStore } from '../stores/useMediaStore';
 import type { MediaType } from '../stores/useMediaStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
@@ -42,15 +44,22 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
         permissionVersion: state.permissionRefreshVersion, mediaVersion: state.mediaLibraryRefreshVersion, attempt }),
     [kind, albumIds, processed, pending, collection, state.permissionRefreshVersion, state.mediaLibraryRefreshVersion, attempt]);
     const [loaded, setLoaded] = useState<{ identity: object; result: OrganizingMonthsResult } | null>(null);
+    const [loadedSources, setLoadedSources] = useState<{ identity: object; result: SourceAlbumsResult } | null>(null);
     const read = loaded?.identity === readIdentity ? loaded.result : null;
+    const sources = loadedSources?.identity === readIdentity ? loadedSources.result : null;
     useEffect(() => {
         let active = true;
         const initial = useMediaStore.getState();
         const current = () => active && useMediaStore.getState().permissionRefreshVersion === initial.permissionRefreshVersion
             && useMediaStore.getState().mediaLibraryRefreshVersion === initial.mediaLibraryRefreshVersion;
         setLoaded(null);
+        setLoadedSources(null);
         const excluded = new Set([...processed, ...pending.map(asset => asset.id), ...(collection?.map(asset => asset.id) ?? [])]);
-        void readOrganizingMonths(kind, albumIds, excluded, current).then(result => { if (current()) setLoaded({ identity: readIdentity, result }); });
+        // Optional source suggestions must not hold up the ordinary scope.
+        void readOrganizingMonths(kind, albumIds, excluded, current)
+            .then(result => { if (current()) setLoaded({ identity: readIdentity, result }); });
+        void readSourceAlbums(kind, current)
+            .then(result => { if (current()) setLoadedSources({ identity: readIdentity, result }); });
         return () => { active = false; };
     }, [readIdentity, kind, albumIds, processed, pending, collection, state.permissionRefreshVersion, state.mediaLibraryRefreshVersion, attempt]);
     const start = async () => {
@@ -95,6 +104,16 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
                     <View style={styles.copy}><Text style={[styles.label, { color: colors.text }]}>{t('scope_albums')}</Text>
                         <Text style={[styles.caption, { color: colors.textSecondary }]}>{t(albumIds.length ? 'scope_album_count' : 'scope_all_albums', { count: albumIds.length })}</Text></View>
                     <Feather name="chevron-right" size={18} color={colors.textSecondary} /></Pressable>
+                {sources?.status === 'ready' && sources.albums.length > 0 ? <>
+                    <Pressable accessibilityRole="button" accessibilityLabel={t(`scope_source_${kind}`)} disabled={busy}
+                        onPress={() => { setAlbumIds(sources.albums.map(album => album.id)); setFeedback(null); }}
+                        style={[styles.row, { borderColor: colors.divider }]}>
+                        <View style={styles.copy}><Text style={[styles.label, { color: colors.text }]}>{t(`scope_source_${kind}`)}</Text>
+                            <Text style={[styles.caption, { color: colors.textSecondary }]}>{sources.albums.map(album => album.title).join('、')}</Text></View>
+                        <Feather name="chevron-right" size={18} color={colors.textSecondary} />
+                    </Pressable>
+                    <Text style={[styles.caption, { color: colors.textSecondary }]}>{t('scope_source_hint')}</Text>
+                </> : sources && <Text style={[styles.caption, { color: colors.textSecondary }]}>{t(sources.status === 'ready' ? 'scope_source_none' : 'scope_source_unavailable')}</Text>}
                 <Text accessibilityRole="header" style={[styles.section, { color: colors.text }]}>{t('settings_display_order')}</Text>
                 <SegmentedControl label={t('settings_display_order')} value={order} onChange={value => { if (!busy) setOrder(value); }} options={[
                     { value: 'oldest', label: t('display_order_oldest') }, { value: 'newest', label: t('display_order_newest') }, { value: 'random', label: t('display_order_random') },
