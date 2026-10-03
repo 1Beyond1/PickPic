@@ -61,6 +61,7 @@ jest.mock('@expo/vector-icons', () => ({
 
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Platform, StyleSheet } from 'react-native';
+import * as ReactNative from 'react-native';
 import { VideoFeedItem } from '../../components/VideoFeedItem';
 
 const video = {
@@ -98,6 +99,18 @@ describe('VideoFeedItem with expo-video', () => {
     mockEnterFullscreen.mockClear();
     mockExitFullscreen.mockClear();
     mockVideoViewProps.current = null;
+  });
+
+  it('uses the existing compact rail when large labels would clip a vertical action', () => {
+    const dimensions = jest.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width: 320, height: 640, scale: 2.625, fontScale: 1.5 });
+    try {
+      const view = renderVideo({ itemHeight: 370 });
+      const favorite = view.getByRole('button', { name: 'video_favorite' });
+      expect(view.queryByText('video_favorite')).toBeNull();
+      expect(StyleSheet.flatten(view.getByRole('button', { name: 'video_pause' }).props.style).marginBottom).toBeGreaterThanOrEqual(100);
+      expect(StyleSheet.flatten(favorite.props.style).minHeight).toBeGreaterThanOrEqual(44);
+      expect(view.getByRole('button', { name: 'video_queue_delete' })).toBeEnabled();
+    } finally { dimensions.mockRestore(); }
   });
 
   it('keeps player configuration and play/pause behavior', async () => {

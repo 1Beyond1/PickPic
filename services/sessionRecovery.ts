@@ -28,7 +28,7 @@ export async function recoverOrganizingSession(session: OrganizingSession, proce
         const permission = await MediaLibrary.getPermissionsAsync(false, [session.kind]);
         if (!permission.granted) return result('permission');
         if (!isCurrent()) return result('stale');
-        if (session.phase === 'review') return result('review');
+        if (session.phase === 'review' && (session.kind === 'photo' || !wanted.length)) return result('review');
         if (session.phase === 'complete') return result('complete');
         if (!wanted.length) return result('review');
         if (session.scope.albumIds.length) {
@@ -65,6 +65,6 @@ export async function recoverOrganizingSession(session: OrganizingSession, proce
         if (!isCurrent()) return result('stale');
         if (!latestPermission.granted || latestPermission.accessPrivileges !== permission.accessPrivileges) return result('permission');
         const assets = wanted.flatMap(id => { const asset = found.get(id); return asset ? [asset] : []; });
-        return result(assets.length ? 'ready' : 'unavailable', assets);
+        return result(assets.length ? session.phase === 'review' ? 'review' : 'ready' : 'unavailable', assets);
     } catch { return result(isCurrent() ? 'failed' : 'stale'); }
 }

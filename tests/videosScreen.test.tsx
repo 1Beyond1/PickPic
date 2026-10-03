@@ -43,6 +43,9 @@ const mockMediaState = {
   addAssetToAlbum: jest.fn(),
   hiddenVideoQueuedAssetIds: null,
   mediaLibraryRefreshVersion: 0,
+  organizingSessions: { photo: null, video: null }, videoCurrentIndex: 0,
+  videoSessionRecoveryStatus: null, videoSessionUnavailableCount: 0,
+  moveVideoSession: jest.fn(), deferSessionMedia: jest.fn(), revisitSessionDeferred: jest.fn(),
   refreshQueuedAssetVisibility: jest.fn(),
   pruneUnavailableQueuedAssets: jest.fn(),
 };
@@ -118,6 +121,7 @@ async function renderScreen() {
 }
 
 function settlePage(list: any, index: number) {
+  list.props.onScrollBeginDrag();
   list.props.onMomentumScrollEnd({ nativeEvent: { contentOffset: { y: index * list.props.snapToInterval } } });
 }
 
@@ -341,15 +345,28 @@ describe('VideosScreen processing behavior', () => {
     expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
   });
 
+  it('does not process a video when native momentum is emitted by a restore rather than a finger drag', async () => {
+    const view = await renderScreen();
+    const list = view.UNSAFE_getByType(ReactNative.FlatList);
+    act(() => list.props.onMomentumScrollEnd({ nativeEvent: { contentOffset: { y: 600 } } }));
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    await view.unmountAsync();
+  });
+
   it('uses the measured feed viewport for both snapping and item layout', async () => {
     const screen = await renderScreen();
     const list = screen.UNSAFE_getByType(ReactNative.FlatList);
+    act(() => list.props.onViewableItemsChanged({ viewableItems: [{ key: videoTwo.id }] }));
     expect(list.props.snapToInterval).toBe(600);
     expect(list.props.getItemLayout(null, 1)).toEqual({ length: 600, offset: 600, index: 1 });
     fireEvent(screen.getByTestId('video-feed-viewport'), 'layout', { nativeEvent: { layout: { height: 520, width: 390 } } });
     const resizedList = screen.UNSAFE_getByType(ReactNative.FlatList);
+    expect(resizedList).not.toBe(list);
     expect(resizedList.props.snapToInterval).toBe(520);
     expect(resizedList.props.getItemLayout(null, 1)).toEqual({ length: 520, offset: 520, index: 1 });
+    // Layout changes need not emit another viewability callback.
+    expect(screen.getByRole('button', { name: 'video_keep' })).toBeEnabled();
+    expect(screen.getByText('video_last_item')).toBeTruthy();
     expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
     await screen.unmountAsync();
   });

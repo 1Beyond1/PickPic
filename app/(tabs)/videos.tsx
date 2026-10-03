@@ -5,7 +5,7 @@ import * as MediaLibrary from 'expo-media-library';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, FlatList, Linking, NativeScrollEvent, NativeSyntheticEvent, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, FlatList, Linking, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { PendingDeletionModal } from '../../components/PendingDeletionReview';
@@ -27,6 +27,9 @@ export default function VideosScreen() {
         videos, loadVideos, isLoading, videoLoadFailed, hasHydrated,
         markVideoForTrash, markVideoAsProcessed,
         addAssetToAlbum, mediaLibraryRefreshVersion,
+        videoCurrentIndex, organizingSessions, videoProcessedIds,
+        videoSessionRecoveryStatus, videoSessionUnavailableCount,
+        moveVideoSession, deferSessionMedia, revisitSessionDeferred,
     } = useMediaStore();
     const {
         displayOrder,
@@ -40,6 +43,9 @@ export default function VideosScreen() {
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [selectedVideoForCollection, setSelectedVideoForCollection] = useState<any>(null);
     const [isScreenFocused, setIsScreenFocused] = useState(true);
+    const [showHome, setShowHome] = useState(false);
+    const session = organizingSessions?.video;
+    const batchFinished = !!session && session.assetIds.every(id => videoProcessedIds.includes(id) || session.deferredIds.includes(id));
     // Derive the notice from the current feed and visible identity. Removing
     // an item directly (e.g. into trash) need not emit another viewability event.
     const isAtEnd = videos.length > 0 && activeId === videos[videos.length - 1].id;
@@ -50,10 +56,13 @@ export default function VideosScreen() {
     const isFocusedRef = useRef(isFocused);
     isFocusedRef.current = isFocused;
     const lastActiveIdRef = useRef<string | null>(null);
+    const dragStartIdRef = useRef<string | null>(null);
     const visibleIdRef = useRef<string | null>(null);
+    const confirmedVisibleIdRef = useRef<string | null>(null);
     const feedRef = useRef<FlatList>(null);
     const videosRef = useRef(videos);
     videosRef.current = videos;
+    const displayedVideosRef = useRef(videos);
     const hasLimitedVideoAccess = videoPermission?.accessPrivileges === 'limited';
     const pendingCount = getPendingDeletionEntries(useMediaStore.getState()).length;
 
@@ -78,9 +87,9 @@ export default function VideosScreen() {
             mediaStore.refreshQueuedAssetVisibility(scope, 'video');
             mediaStore.pruneUnavailableQueuedAssets(scope, 'video');
             return permission;
-        } catch (error) {
+        } catch {
             if (requestId !== videoPermissionRequestIdRef.current) return null;
-            console.error('[Videos] Failed to refresh video permission:', error);
+            console.error('[Videos] Failed to refresh video permission.');
             setVideoPermission(null);
             setVideoPermissionChecked(true);
             useMediaStore.getState().refreshQueuedAssetVisibility('none', 'video');
@@ -95,7 +104,9 @@ export default function VideosScreen() {
     useLayoutEffect(() => {
         if (!isLoading) return;
         lastActiveIdRef.current = null;
+        dragStartIdRef.current = null;
         visibleIdRef.current = null;
+        confirmedVisibleIdRef.current = null;
         setActiveId(null);
     }, [isLoading]);
 
@@ -138,10 +149,31 @@ export default function VideosScreen() {
     // Measure only the feed viewport, excluding header, hints and the dock.
     const [feedHeight, setFeedHeight] = useState(0);
     useLayoutEffect(() => {
-        if (!feedHeight) return;
-        const index = videosRef.current.findIndex(video => video.id === visibleIdRef.current);
-        if (index > 0) feedRef.current?.scrollToOffset({ offset: index * feedHeight, animated: false });
-    }, [feedHeight]);
+        if (!feedHeight || isLoading || showHome) return;
+        const retainedId = displayedVideosRef.current === videos ? dragStartIdRef.current ?? confirmedVisibleIdRef.current : null;
+        displayedVideosRef.current = videos;
+        const retainedIndex = videos.findIndex(video => video.id === retainedId);
+        const index = retainedIndex >= 0 ? retainedIndex : Math.max(0, Math.min(useMediaStore.getState().videoCurrentIndex ?? 0, videos.length - 1));
+        const id = videos[index]?.id ?? null;
+        lastActiveIdRef.current = id;
+        visibleIdRef.current = id;
+        dragStartIdRef.current = null;
+        // Resizing an already visible item need not emit viewability again.
+        // Retain its verified identity; a replacement/restored list still waits
+        // for native visibility before playback or the last-item notice.
+        setActiveId(confirmedVisibleIdRef.current === id ? id : null);
+        feedRef.current?.scrollToOffset({ offset: index * feedHeight, animated: false });
+    }, [feedHeight, videos, isLoading, showHome]);
+
+    useEffect(() => {
+        const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+            if (!isFocused || showHome || showTrash || showAlbumSelector) return false;
+            setShowHome(true);
+            dragStartIdRef.current = null;
+            return true;
+        });
+        return () => subscription.remove();
+    }, [isFocused, showHome, showTrash, showAlbumSelector]);
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
@@ -196,6 +228,8 @@ export default function VideosScreen() {
             setActiveId(null);
             lastActiveIdRef.current = null;
             visibleIdRef.current = null;
+            confirmedVisibleIdRef.current = null;
+            dragStartIdRef.current = null;
             return () => {
                 setIsScreenFocused(false);
                 setShowTrash(false);
@@ -206,6 +240,7 @@ export default function VideosScreen() {
                 // video unprocessed so an accidental tab switch does not
                 // silently remove it from the feed on the next visit.
                 lastActiveIdRef.current = null;
+                dragStartIdRef.current = null;
             };
         }, [])
     );
@@ -214,6 +249,7 @@ export default function VideosScreen() {
         const newActiveId = viewableItems[0]?.key;
         if (!newActiveId) return;
         visibleIdRef.current = newActiveId;
+        confirmedVisibleIdRef.current = newActiveId;
         setActiveId(newActiveId);
         // Visibility drives playback, not review progress: a half-finished
         // drag can reveal the next video and then snap back to this one.
@@ -221,13 +257,15 @@ export default function VideosScreen() {
     }, []);
 
     const onMomentumScrollEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-        if (!feedHeight || !isFocusedRef.current) return;
+        // Restore/layout/button scrolling is navigation, not a user's swipe.
+        const previousActiveId = dragStartIdRef.current;
+        dragStartIdRef.current = null;
+        if (!previousActiveId || !feedHeight || !isFocusedRef.current) return;
         const currentVideos = videosRef.current;
         const newIndex = Math.round(event.nativeEvent.contentOffset.y / feedHeight);
         const nextVideo = currentVideos[newIndex];
         if (!nextVideo) return;
         const newActiveId = nextVideo.id;
-        const previousActiveId = lastActiveIdRef.current;
         if (previousActiveId && previousActiveId !== newActiveId) {
             const previousIndex = currentVideos.findIndex(video => video.id === previousActiveId);
             const isAdvancing = previousIndex >= 0 && newIndex > previousIndex;
@@ -242,7 +280,40 @@ export default function VideosScreen() {
         lastActiveIdRef.current = newActiveId;
         visibleIdRef.current = newActiveId;
         setActiveId(newActiveId);
-    }, [feedHeight, markVideoAsProcessed]);
+        moveVideoSession(newActiveId);
+    }, [feedHeight, markVideoAsProcessed, moveVideoSession]);
+
+    const openSession = async (mode?: 'new' | 'continue') => {
+        if (mode) await loadVideos(50, displayOrder, selectedAlbumIds, mode);
+        else await loadVideos(50, displayOrder, selectedAlbumIds);
+        if (useMediaStore.getState().videos.length) setShowHome(false);
+    };
+    const revisitDeferred = async () => {
+        if (!revisitSessionDeferred('video')) return;
+        await openSession();
+    };
+    const keepCurrent = () => {
+        const state = useMediaStore.getState();
+        const asset = state.videos.find(video => video.id === visibleIdRef.current);
+        if (!asset) return;
+        markVideoAsProcessed(asset);
+        const index = state.videos.indexOf(asset);
+        const latest = useMediaStore.getState();
+        const next = state.videos[index + 1] ?? latest.videos.find(video => !latest.videoProcessedIds.includes(video.id));
+        if (next && moveVideoSession(next.id)) {
+            lastActiveIdRef.current = next.id;
+            visibleIdRef.current = next.id;
+            dragStartIdRef.current = null;
+            setActiveId(next.id);
+            feedRef.current?.scrollToOffset({ offset: state.videos.indexOf(next) * feedHeight, animated: false });
+        } else if (latest.organizingSessions.video?.phase === 'organizing') {
+            setShowHome(true); // Remaining members may require permission recovery.
+        }
+    };
+    const skipCurrent = () => {
+        const id = visibleIdRef.current;
+        if (id) deferSessionMedia('video', id);
+    };
 
     // View config ref
     const viewabilityConfig = useRef({
@@ -346,6 +417,21 @@ export default function VideosScreen() {
         }
     };
 
+    const unavailable = videoSessionRecoveryStatus === 'unavailable'
+        || (!!session && !batchFinished && videoSessionUnavailableCount > 0
+            && !videos.some(asset => !videoProcessedIds.includes(asset.id)));
+    const readFailed = videoLoadFailed || videoSessionRecoveryStatus === 'failed';
+    const emptyTitle = readFailed ? 'video_load_failed' : unavailable ? 'session_unavailable'
+        : session?.phase === 'complete' ? session.deferredIds.length ? 'video_rest_complete'
+            : session.scope.albumIds.length ? 'session_scope_complete' : hasLimitedVideoAccess ? 'video_accessible_complete' : 'video_library_complete'
+        : batchFinished ? 'video_batch_complete' : showHome && videos.length ? 'video_organize'
+        : hasLimitedVideoAccess ? 'video_permission_desc' : 'video_empty';
+    const scope = session?.scope;
+    const scopeText = scope ? t(scope.albumIds.length ? 'session_album_scope' : 'session_all_scope', {
+        count: scope.albumIds.length, order: t(`session_order_${scope.order}`),
+    }) : null;
+    const activeIsProcessed = !!activeId && videoProcessedIds.includes(activeId);
+
     if (!videoPermissionChecked) {
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
@@ -398,13 +484,18 @@ export default function VideosScreen() {
     }
 
     return (
-        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: 65 + insets.bottom }]}>
+        <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top,
+            paddingBottom: UI_METRICS.dockHeight + insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
             <View style={styles.pageHeader}>
+                {!showHome && videos.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel={t('photos_back_home')}
+                    onPress={() => { setShowHome(true); dragStartIdRef.current = null; }} style={styles.homeButton}>
+                    <Ionicons name="chevron-back" size={22} color={colors.text} />
+                </Pressable>}
                 <View style={styles.heading}>
                     <Text style={[styles.pageTitle, { color: colors.text }]}>{t('video_organize')}</Text>
                     {videos.length > 0 && !isLoading && (
                         <Text style={[styles.pageCount, { color: colors.textSecondary }]}>
-                            {Math.max(1, videos.findIndex(video => video.id === activeId) + 1)} / {videos.length}
+                            {Math.max(1, session ? session.assetIds.indexOf(activeId ?? '') + 1 : videos.findIndex(video => video.id === activeId) + 1)} / {session?.assetIds.length ?? videos.length}
                         </Text>
                     )}
                 </View>
@@ -426,8 +517,11 @@ export default function VideosScreen() {
                 <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                     <ActivityIndicator size="large" color={colors.primary} />
                 </View>
-            ) : videos.length > 0 && feedHeight > 0 ? (
+            ) : !showHome && videos.length > 0 && feedHeight > 0 ? (
                 <FlatList
+                    // Native cached page frames belong to this viewport size.
+                    // Recreate them when large text/layout changes its height.
+                    key={`video-feed-${feedHeight}`}
                     ref={feedRef}
                     data={videos}
                     keyExtractor={item => item.id}
@@ -450,6 +544,8 @@ export default function VideosScreen() {
                     showsVerticalScrollIndicator={false}
                     onViewableItemsChanged={onViewableItemsChanged}
                     onMomentumScrollEnd={onMomentumScrollEnd}
+                    onScrollBeginDrag={() => { dragStartIdRef.current = lastActiveIdRef.current; }}
+                    initialScrollIndex={Math.min(videoCurrentIndex ?? 0, videos.length - 1)}
                     viewabilityConfig={viewabilityConfig}
                     snapToInterval={feedHeight}
                     snapToAlignment="start"
@@ -463,13 +559,15 @@ export default function VideosScreen() {
                         index,
                     })}
                 />
-            ) : videos.length === 0 ? (
-                <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                    <Text accessibilityRole={videoLoadFailed ? 'alert' : undefined} style={[styles.emptyText, { color: colors.text }]}>
-                        {videoLoadFailed ? t('video_load_failed') : hasLimitedVideoAccess ? t('video_permission_desc') : t('video_empty')}
+            ) : showHome || videos.length === 0 ? (
+                <ScrollView testID="videos-home" contentContainerStyle={styles.homeContent}>
+                    <Text accessibilityRole={readFailed || unavailable ? 'alert' : 'header'} style={[styles.emptyText, { color: colors.text, textAlign: 'center' }]}>
+                        {t(emptyTitle)}
                     </Text>
-                    {videoLoadFailed && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('media_load_retry_desc')}</Text>}
-                    {selectedAlbumIds.length > 0 && !videoLoadFailed && (
+                    {scopeText && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{scopeText}</Text>}
+                    {scope && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('session_filter_hint')}</Text>}
+                    {(readFailed || unavailable) && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('session_preserved_hint')}</Text>}
+                    {!scope && selectedAlbumIds.length > 0 && !readFailed && (
                         <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('video_filtered_empty_hint')}</Text>
                     )}
                     {hasLimitedVideoAccess && (
@@ -485,20 +583,49 @@ export default function VideosScreen() {
                     )}
                     <Pressable
                         accessibilityRole="button"
-                        onPress={() => loadVideos(50, displayOrder, selectedAlbumIds)}
+                        onPress={() => void openSession(session && batchFinished && !videos.length && !readFailed && !unavailable ? 'continue' : undefined)}
                         disabled={requestingVideoPermission}
                         style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: requestingVideoPermission ? 0.6 : 1, marginTop: hasLimitedVideoAccess ? 10 : 0 }]}
                     >
-                        <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('photos_reload')}</Text>
+                        <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t(session && batchFinished && !videos.length && !readFailed && !unavailable
+                            ? 'session_next_batch' : readFailed || unavailable || !videos.length ? 'photos_reload' : 'session_continue')}</Text>
                     </Pressable>
-                </View>
+                    {session && batchFinished && (videos.length > 0 || readFailed || unavailable) && <Pressable accessibilityRole="button" onPress={() => void openSession('continue')}
+                        style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: 12 }]}>
+                        <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('session_next_batch')}</Text>
+                    </Pressable>}
+                    {!!session?.deferredIds.length && <Pressable accessibilityRole="button" onPress={() => void revisitDeferred()}
+                        style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: 12 }]}>
+                        <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('session_deferred_count', { count: session.deferredIds.length })}</Text>
+                    </Pressable>}
+                    {session && <Pressable accessibilityRole="button" onPress={() => void openSession('new')}
+                        style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: 12 }]}>
+                        <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('session_new_round')}</Text>
+                    </Pressable>}
+                    {session && <Text style={[styles.scopeHint, { color: colors.textSecondary, marginTop: 12 }]}>{t('session_new_round_hint')}</Text>}
+                </ScrollView>
             ) : null}
             </View>
-            {videos.length > 0 && !isLoading && (
-                <View style={styles.feedHint} pointerEvents="none">
-                    <Text numberOfLines={1} style={[styles.feedHintText, { color: colors.textSecondary }]}>
+            {videos.length > 0 && !isLoading && !showHome && (
+                <View style={styles.feedHint}>
+                    {!!videoSessionUnavailableCount && <Text style={[styles.feedHintText, { color: colors.textSecondary }]}>
+                        {t('video_partial_hint', { count: videoSessionUnavailableCount })}
+                    </Text>}
+                    <Text style={[styles.feedHintText, { color: colors.textSecondary }]}>
                         {isAtEnd ? t('video_last_item') : t('video_swipe_hint')}
                     </Text>
+                    <View style={styles.footerActions}>
+                        {!batchFinished && !activeIsProcessed && <Pressable accessibilityRole="button" onPress={skipCurrent}
+                            disabled={!activeId} style={[styles.footerButton, { backgroundColor: colors.surface }]}>
+                            <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('session_defer')}</Text>
+                        </Pressable>}
+                        <Pressable accessibilityRole="button" onPress={() => batchFinished ? void openSession('continue') : keepCurrent()}
+                            disabled={!activeId} style={[styles.footerButton, { backgroundColor: colors.actionBackground }]}>
+                            <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>
+                                {t(batchFinished ? 'session_next_batch' : activeIsProcessed ? 'video_view_next' : isAtEnd ? 'video_keep' : 'video_keep_next')}
+                            </Text>
+                        </Pressable>
+                    </View>
                 </View>
             )}
 
@@ -529,11 +656,16 @@ const styles = StyleSheet.create({
         paddingVertical: 6,
     },
     heading: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: 10 },
+    homeButton: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center' },
+    homeContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 24 },
     pageTitle: { fontSize: 17, fontWeight: '500', flexShrink: 1 },
     pageCount: { fontSize: 12, fontVariant: ['tabular-nums'] },
     feedViewport: { flex: 1 },
     feedHint: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingVertical: 8, minHeight: 34 },
     feedHintText: { fontSize: 11, textAlign: 'center' },
+    footerActions: { flexDirection: 'row', gap: 12, marginTop: 8, width: '100%', flexWrap: 'wrap' },
+    footerButton: { flex: 1, minWidth: 120, minHeight: 44, paddingHorizontal: 12, paddingVertical: 10,
+        borderRadius: UI_METRICS.buttonRadius, alignItems: 'center', justifyContent: 'center' },
     scopeHint: { fontSize: 13, lineHeight: 20, textAlign: 'center', marginHorizontal: 32, marginBottom: 20 },
     centerContainer: {
         flex: 1,

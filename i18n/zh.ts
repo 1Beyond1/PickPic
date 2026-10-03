@@ -1,4 +1,12 @@
 export default {
+    video_keep: '保留',
+    video_keep_next: '保留并下一条',
+    video_view_next: '查看下一条',
+    video_batch_complete: '本批视频整理完成',
+    video_rest_complete: '本轮其余视频已整理完，还有暂时跳过的内容',
+    video_accessible_complete: '当前允许访问的视频已整理完',
+    video_library_complete: '当前可访问的视频已整理完',
+    video_partial_hint: '{count} 项暂时不可访问，记录已保留。',
     session_continue: '继续上次整理',
     session_position: '本批浏览位置',
     session_review: '继续批次复核',

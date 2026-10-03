@@ -10,6 +10,7 @@ import {
     Pressable,
     StyleSheet,
     Text,
+    useWindowDimensions,
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -103,6 +104,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     colors,
     itemHeight
 }) => {
+    const { fontScale } = useWindowDimensions();
     const videoRef = useRef<VideoView>(null);
     const needsLocalUri = /^(ph|assets-library):\/\//.test(video.uri);
     const [playbackSource, setPlaybackSource] = useState<{ assetId: string; uri: string } | null>(() => (
@@ -239,7 +241,10 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     const dateString = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const duration = Math.max(0, Math.round(video.duration ?? 0));
     const durationString = `${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')}`;
-    const compact = itemHeight < 360;
+    // Four labeled buttons must fit above metadata, even with large text.
+    // The existing compact rail is preferable to clipping the first action.
+    const railHeight = 4 * (32 + 12 + 4 + Math.ceil(11 * 1.4 * fontScale)) + 3 * 10;
+    const compact = itemHeight < Math.max(360, railHeight + 68 + 8);
     const actions = [
         { icon: isMuted ? 'volume-mute-outline' : 'volume-high-outline', label: t(isMuted ? 'video_muted' : 'video_sound'), onPress: toggleMute },
         { icon: 'star-outline', label: t('video_favorite'), onPress: onFavorite },
@@ -314,7 +319,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                         }]}
                     >
                         <View style={styles.actionIcon}>
-                            <Ionicons name={action.icon} size={26} color={'destructive' in action ? colors.danger : colors.text} />
+                            <Ionicons name={action.icon} size={26} allowFontScaling={false} color={'destructive' in action ? colors.danger : colors.text} />
                         </View>
                         {!compact && <Text style={[styles.actionText, { color: 'destructive' in action ? colors.danger : colors.textSecondary }]}>{action.label}</Text>}
                     </Pressable>

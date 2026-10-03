@@ -89,6 +89,28 @@ it('keeps failed hydration closed and preserves old records, then restores them 
     expect(stores.privacy.getState().failures).toEqual({});
 });
 
+it('encrypts and reopens a backward-viewed video cursor and skipped IDs without clearing kept decisions', async () => {
+    const stores = await openStores(); await stores.media.persist.rehydrate();
+    stores.media.getState().startOrganizingSession('video', { albumIds: ['private-video-scope'], order: 'oldest' }, ['video-a', 'video-b', 'video-c']);
+    stores.media.setState({ videos: ['video-a', 'video-b', 'video-c'].map(id => ({ id, mediaType: 'video' })) });
+    stores.media.getState().markVideoAsProcessed({ id: 'video-a', mediaType: 'video' });
+    expect(stores.media.getState().moveVideoSession('video-b')).toBe(true);
+    expect(stores.media.getState().deferSessionMedia('video', 'video-b')).toBe(true);
+    expect(stores.media.getState().moveVideoSession('video-a')).toBe(true);
+    await require('../../services/mediaProgressStorage').flushMediaProgress();
+    const encrypted = mockDisk.get(recordsName + '.encrypted-v1')!;
+    expect(encrypted.startsWith('PKLOCAL1:')).toBe(true);
+    expect(encrypted).not.toContain('private-video-scope'); expect(encrypted).not.toContain('video-b');
+    jest.resetModules();
+    const reopened = await openStores(); await reopened.media.persist.rehydrate();
+    expect(reopened.media.getState().organizingSessions.video).toMatchObject({
+        scope: { albumIds: ['private-video-scope'], order: 'oldest' }, assetIds: ['video-a', 'video-b', 'video-c'],
+        position: 0, deferredIds: ['video-b'], phase: 'organizing',
+    });
+    expect(reopened.media.getState().videoProcessedIds).toEqual(['video', 'video-a']);
+    expect(reopened.media.getState().videoTrashBin).toEqual([]);
+});
+
 it('rejects persisted fields that replace store actions, even with a forged hydrated flag', async () => {
     mockDisk.set(recordsName, JSON.stringify({ state: { photoProcessedIds: ['kept'], setHasHydrated: 'not-an-action', hasHydrated: true }, version: 0 }));
     const stores = await openStores();

@@ -77,6 +77,7 @@ describe('media visibility checks', () => {
       hasHydrated: true,
       organizingSessions: { photo: null, video: null },
       photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0,
+      videoSessionRecoveryStatus: null, videoSessionUnavailableCount: 0,
       permissionScope: 'full',
       hiddenPhotoQueuedAssetIds: null,
       hiddenVideoQueuedAssetIds: null,
@@ -266,6 +267,42 @@ describe('media visibility checks', () => {
       expect((await recovery).status).toBe('stale');
       expect(useMediaStore.getState().videos).toEqual([]);
       expect(useMediaStore.getState().videoTrashBin).toEqual([asset]);
+  });
+
+  it('rejects a changed video permission generation during a new-round read and preserves the old session', async () => {
+      getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+      const saved = useMediaStore.getState().startOrganizingSession('video', { albumIds: [], order: 'oldest' }, ['saved']);
+      let finish!: (value: any) => void;
+      getAssetsAsync.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+      const loading = useMediaStore.getState().loadVideos(1, 'oldest', [], 'new');
+      await waitFor(() => expect(getAssetsAsync).toHaveBeenCalled());
+      useMediaStore.getState().notifyPermissionRefresh();
+      finish({ assets: [{ id: 'new', mediaType: 'video', uri: 'file:///synthetic.mp4' }], hasNextPage: false, totalCount: 1 });
+      await loading;
+      expect(useMediaStore.getState().videos).toEqual([]);
+      expect(useMediaStore.getState().organizingSessions.video).toBe(saved);
+  });
+
+  it('never widens an invalid captured video album into the full gallery', async () => {
+      getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+      getAlbumsAsync.mockResolvedValue([{ id: 'other-album' }]);
+      await useMediaStore.getState().loadVideos(10, 'oldest', ['missing'], 'new');
+      expect(getAssetsAsync).not.toHaveBeenCalled();
+      expect(useMediaStore.getState().videoSessionRecoveryStatus).toBe('unavailable');
+      expect(useMediaStore.getState().organizingSessions.video).toBeNull();
+  });
+
+  it('keeps an independent photo session started while video recovery is paging', async () => {
+      getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+      useMediaStore.getState().startOrganizingSession('video', { albumIds: [], order: 'oldest' }, ['saved']);
+      let finish!: (value: any) => void;
+      getAssetsAsync.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+      const recovery = useMediaStore.getState().resumeOrganizingSession('video');
+      await waitFor(() => expect(getAssetsAsync).toHaveBeenCalled());
+      const photo = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'random' }, ['photo']);
+      finish({ assets: [{ id: 'saved', mediaType: 'video', uri: 'file:///synthetic.mp4' }], hasNextPage: false });
+      expect((await recovery).status).toBe('ready');
+      expect(useMediaStore.getState().organizingSessions.photo).toBe(photo);
   });
 
   it('repairs a restored queue item without a processed record when it is explicitly kept', () => {

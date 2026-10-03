@@ -87,3 +87,14 @@ it('retains already kept video history and its current viewing position, but nev
     expect(recovered).toMatchObject({ status: 'ready', position: 1 });
     expect(recovered.assets.map(item => item.id)).toEqual(['c', 'a']);
 });
+
+it('revalidates completed video history before allowing a replay, while preserving the review stage', async () => {
+    const saved = { ...createOrganizingSession('video', { albumIds: [], order: 'oldest' }, ['a', 'b'], 'video', 1), phase: 'review' as const, position: 2 };
+    page.mockResolvedValue({ assets: [asset('b', 'video'), asset('a', 'video')], hasNextPage: false });
+    const recovered = await recoverOrganizingSession(saved, new Set(['a', 'b']));
+    expect(recovered).toMatchObject({ status: 'review', position: 1, unavailableCount: 0 });
+    expect(recovered.assets.map(item => item.id)).toEqual(['a', 'b']);
+    expect(saved).toMatchObject({ phase: 'review', position: 2 });
+    page.mockRejectedValueOnce(new Error('Synthetic provider failure'));
+    expect((await recoverOrganizingSession(saved, new Set(['a', 'b']))).status).toBe('failed');
+});

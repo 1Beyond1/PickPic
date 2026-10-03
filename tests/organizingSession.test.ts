@@ -74,6 +74,13 @@ it('requires a finished batch before continuing so unseen media cannot be silent
     const session = start();
     expect(continueOrganizingSession(session, ['new'])).toBe(session);
 });
+it('preserves earlier unreviewed video members when revisiting a skip from a later viewing position', () => {
+    const session = { ...createOrganizingSession('video', { albumIds: [], order: 'oldest' }, ['earlier', 'kept', 'later'], 'video', 10),
+        position: 2, deferredIds: ['deferred'] };
+    expect(revisitDeferredMedia(session, undefined, 11, new Set(['kept']))).toMatchObject({
+        assetIds: ['deferred', 'earlier', 'later'], position: 0, deferredIds: [], phase: 'organizing',
+    });
+});
 it('removes only confirmed deleted members without shifting the cursor to a different surviving item', () => {
     const saved = advanceOrganizingSession(start(), 'a', 'skip', 11);
     const pruned = removeDeletedSessionMedia(saved, new Set(['a']), 12)!;

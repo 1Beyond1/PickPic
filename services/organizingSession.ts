@@ -71,11 +71,13 @@ export function continueOrganizingSession(session: OrganizingSession, assetIds: 
     return { ...session, assetIds: ids, position: 0, phase: ids.length ? 'organizing' : 'complete', updatedAt: Math.max(session.startedAt, now) };
 }
 
-export function revisitDeferredMedia(session: OrganizingSession, ids: readonly string[] = session.deferredIds, now = Date.now()): OrganizingSession {
+export function revisitDeferredMedia(session: OrganizingSession, ids: readonly string[] = session.deferredIds, now = Date.now(), processedIds: ReadonlySet<string> = new Set()): OrganizingSession {
     const selected = new Set(ids);
     const deferred = session.deferredIds.filter(id => selected.has(id));
     if (!deferred.length) return session;
-    const remaining = session.assetIds.slice(session.position);
+    // Unlike the photo cursor, a video cursor is a viewing position: earlier
+    // members can still be unreviewed, including inaccessible ones.
+    const remaining = session.kind === 'video' ? session.assetIds.filter(id => !processedIds.has(id)) : session.assetIds.slice(session.position);
     return { ...session, assetIds: unique([...deferred, ...remaining]), position: 0, phase: 'organizing',
         deferredIds: session.deferredIds.filter(id => !selected.has(id)), updatedAt: Math.max(session.startedAt, now) };
 }

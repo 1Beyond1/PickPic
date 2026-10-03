@@ -1,0 +1,169 @@
+import React from 'react';
+import { act, fireEvent, fireEventAsync, renderAsync, screen, waitFor } from '@testing-library/react-native';
+import * as MediaLibrary from 'expo-media-library';
+import { FlatList, Platform } from 'react-native';
+
+jest.mock('expo-media-library', () => ({ getPermissionsAsync: jest.fn(), getAssetsAsync: jest.fn(), getAlbumsAsync: jest.fn(),
+    getAssetInfoAsync: jest.fn(), deleteAssetsAsync: jest.fn(), SortBy: { creationTime: 'creationTime' }, presentPermissionsPickerAsync: jest.fn() }));
+jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn(async () => null), setItem: jest.fn(async () => {}), removeItem: jest.fn(async () => {}) }));
+jest.mock('../database', () => ({ AssetRepository: { removeAssetAndDerivedData: jest.fn(async () => {}) } }));
+const mockSettings = { displayOrder: 'oldest', selectedAlbumIds: [] as string[], hasHydrated: true, setSelectedAlbums: jest.fn() };
+jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: Object.assign(() => mockSettings, { getState: () => mockSettings }) }));
+jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
+jest.mock('expo-router', () => ({ useFocusEffect: (callback: () => void) => require('react').useEffect(callback, [callback]) }));
+jest.mock('@expo/vector-icons', () => ({ Feather: () => null, Ionicons: () => null }));
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 32, bottom: 24, left: 0, right: 0 }) }));
+jest.mock('../components/AlbumSelector', () => ({ AlbumSelector: () => null }));
+jest.mock('../components/VideoFeedItem', () => ({ VideoFeedItem: ({ video, onDelete }: any) => {
+    const { Pressable, Text } = require('react-native');
+    return <Pressable accessibilityRole="button" accessibilityLabel={`queue:${video.id}`} onPress={onDelete}><Text>{video.id}</Text></Pressable>;
+} }));
+jest.mock('../hooks/useThemeColor', () => ({ useThemeColor: () => ({ isDark: false, colors: require('../constants/theme').COLORS }) }));
+jest.mock('../hooks/useI18n', () => ({ useI18n: () => ({ language: 'zh', t: (key: string, params: Record<string, string | number> = {}) => {
+    let value = require('../i18n/zh').default[key] ?? key;
+    for (const [name, replacement] of Object.entries(params)) value = value.replace(`{${name}}`, String(replacement));
+    return value;
+} }) }));
+
+import VideosScreen from '../app/(tabs)/videos';
+import { useMediaStore } from '../stores/useMediaStore';
+
+const video = (id: string) => ({ id, uri: `file:///synthetic-${id}.mp4`, filename: `${id}.mp4`, mediaType: 'video', creationTime: 1, width: 800, height: 600 }) as any;
+let mockLibrary = [video('one'), video('two'), video('three')];
+const originalOS = Platform.OS;
+beforeEach(async () => {
+    Platform.OS = 'android'; mockLibrary = [video('one'), video('two'), video('three')];
+    mockSettings.selectedAlbumIds = [];
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+    (MediaLibrary.getAlbumsAsync as jest.Mock).mockResolvedValue([{ id: 'saved' }, { id: 'new-scope' }]);
+    (MediaLibrary.getAssetsAsync as jest.Mock).mockImplementation(async ({ album }: any) => ({
+        assets: album === 'new-scope' ? [video('other')] : mockLibrary, hasNextPage: false, totalCount: mockLibrary.length,
+    }));
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => video(id));
+    await act(async () => useMediaStore.setState({ photos: [], videos: [], albums: [], hasHydrated: true,
+        photoProcessedIds: [], videoProcessedIds: [], deleteQueue: [], collectionQueue: [], videoTrashBin: [],
+        organizingSessions: { photo: null, video: null }, videoCurrentIndex: 0, videoSessionRecoveryStatus: null, videoSessionUnavailableCount: 0,
+        isLoading: false, videoLoadFailed: false, isConfirmingDeletion: false, isConfirmingVideoTrash: false,
+        pendingDeletionInfo: {}, deletedCounts: { photos: 0, videos: 0 }, lastDeletionResult: null,
+        permissionScope: 'full', permissionRefreshVersion: 0, mediaLibraryRefreshVersion: 0,
+    }));
+});
+afterEach(() => { Platform.OS = originalOS; });
+
+async function mount() {
+    const view = await renderAsync(<VideosScreen />);
+    await waitFor(() => expect(useMediaStore.getState().isLoading).toBe(false));
+    fireEvent(screen.getByTestId('video-feed-viewport'), 'layout', { nativeEvent: { layout: { width: 390, height: 600 } } });
+    const list = await waitFor(() => screen.UNSAFE_getByType(FlatList));
+    act(() => list.props.onViewableItemsChanged({ viewableItems: [{ key: list.props.data[list.props.initialScrollIndex].id }] }));
+    return view;
+}
+function swipe(index: number) {
+    const list = screen.UNSAFE_getByType(FlatList);
+    act(() => {
+        list.props.onScrollBeginDrag();
+        list.props.onViewableItemsChanged({ viewableItems: [{ key: list.props.data[index].id }] });
+        list.props.onMomentumScrollEnd({ nativeEvent: { contentOffset: { y: index * 600 } } });
+    });
+}
+function visible() {
+    const list = screen.UNSAFE_getByType(FlatList);
+    const index = useMediaStore.getState().videoCurrentIndex;
+    act(() => list.props.onViewableItemsChanged({ viewableItems: [{ key: list.props.data[index].id }] }));
+}
+
+it('keeps forward-swiped video, permits sliding back, and restores exact order/cursor after a screen restart', async () => {
+    const view = await mount(); swipe(1);
+    expect(useMediaStore.getState().videoProcessedIds).toEqual(['one']);
+    expect(useMediaStore.getState().organizingSessions.video?.position).toBe(1);
+    swipe(0);
+    expect(useMediaStore.getState().videoProcessedIds).toEqual(['one']);
+    expect(useMediaStore.getState().organizingSessions.video?.position).toBe(0);
+    await view.unmountAsync();
+    mockLibrary.reverse(); mockLibrary.push(video('new'));
+    useMediaStore.getState().clearLoadedMedia();
+    await mount();
+    expect(useMediaStore.getState().videos.map(asset => asset.id)).toEqual(['one', 'two', 'three']);
+    expect(screen.UNSAFE_getByType(FlatList).props.initialScrollIndex).toBe(0);
+    expect(useMediaStore.getState().organizingSessions.video?.position).toBe(0);
+    swipe(1);
+    expect(useMediaStore.getState().videoProcessedIds).toEqual(['one']);
+});
+
+it('does not keep by restoring, partial dragging, returning home, or leaving the tab', async () => {
+    useMediaStore.getState().startOrganizingSession('video', { albumIds: [], order: 'oldest' }, ['one', 'two', 'three']);
+    useMediaStore.setState({ organizingSessions: { photo: null, video: { ...useMediaStore.getState().organizingSessions.video!, position: 1 } } });
+    const view = await mount();
+    const list = screen.UNSAFE_getByType(FlatList);
+    expect(list.props.initialScrollIndex).toBe(1);
+    act(() => {
+        list.props.onMomentumScrollEnd({ nativeEvent: { contentOffset: { y: 600 } } });
+        list.props.onScrollBeginDrag();
+        list.props.onViewableItemsChanged({ viewableItems: [{ key: 'three' }] });
+        list.props.onMomentumScrollEnd({ nativeEvent: { contentOffset: { y: 600 } } });
+    });
+    await fireEventAsync.press(screen.getByRole('button', { name: '返回首页' }));
+    expect(useMediaStore.getState().videoProcessedIds).toEqual([]);
+    await view.unmountAsync();
+    expect(useMediaStore.getState().videoProcessedIds).toEqual([]);
+});
+
+it('skips without a decision, retains deferrals across next batch and restart, and explicitly revisits them', async () => {
+    await mount();
+    await fireEventAsync.press(screen.getByRole('button', { name: '暂时跳过' })); visible();
+    expect(useMediaStore.getState().videoProcessedIds).toEqual([]);
+    expect(useMediaStore.getState().organizingSessions.video?.deferredIds).toEqual(['one']);
+    await fireEventAsync.press(screen.getByRole('button', { name: '保留并下一条' })); visible();
+    await fireEventAsync.press(screen.getByRole('button', { name: '保留' }));
+    expect(useMediaStore.getState().videoProcessedIds).toEqual(['two', 'three']);
+    expect(useMediaStore.getState().organizingSessions.video?.phase).toBe('review');
+    await fireEventAsync.press(screen.getByRole('button', { name: '查找下一批' }));
+    expect(screen.getByText('本轮其余视频已整理完，还有暂时跳过的内容')).toBeTruthy();
+    expect(useMediaStore.getState().organizingSessions.video?.deferredIds).toEqual(['one']);
+    await fireEventAsync.press(screen.getByRole('button', { name: '处理本轮跳过的 1 项' })); visible();
+    expect(useMediaStore.getState().videos.map(asset => asset.id)).toEqual(['one']);
+    expect(useMediaStore.getState().videoTrashBin).toEqual([]);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+});
+
+it('queues the last video without deleting and leaves kept history available after restart', async () => {
+    const view = await mount(); swipe(1); swipe(2);
+    await fireEventAsync.press(screen.getByRole('button', { name: 'queue:three' })); visible();
+    expect(useMediaStore.getState().organizingSessions.video?.phase).toBe('review');
+    expect(useMediaStore.getState().videoTrashBin.map(asset => asset.id)).toEqual(['three']);
+    await view.unmountAsync(); useMediaStore.getState().clearLoadedMedia();
+    await mount();
+    expect(useMediaStore.getState().videos.map(asset => asset.id)).toEqual(['one', 'two']);
+    expect(screen.getByRole('button', { name: '查找下一批' })).toBeTruthy();
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    swipe(0);
+    expect(useMediaStore.getState().videoProcessedIds).toEqual(['one', 'two', 'three']);
+});
+
+it('preserves unavailable unreviewed members even when a later readable video is kept', async () => {
+    useMediaStore.getState().startOrganizingSession('video', { albumIds: [], order: 'oldest' }, ['one', 'two']);
+    mockLibrary = [video('two')];
+    await mount();
+    await fireEventAsync.press(screen.getByRole('button', { name: '保留' }));
+    expect(useMediaStore.getState().organizingSessions.video).toMatchObject({ assetIds: ['one', 'two'], position: 0, phase: 'organizing' });
+    expect(screen.getByText('上次整理的部分内容暂时无法访问')).toBeTruthy();
+    expect(useMediaStore.getState().finishVideoSession()).toBe(false);
+    mockLibrary = [video('one'), video('two')];
+    await fireEventAsync.press(screen.getByRole('button', { name: '重新加载' })); visible();
+    expect(screen.UNSAFE_getByType(FlatList).props.initialScrollIndex).toBe(0);
+    expect(useMediaStore.getState().videoProcessedIds).toEqual(['two']);
+});
+
+it('uses saved filters when continuing and uses current settings only for an explicit new round', async () => {
+    mockSettings.selectedAlbumIds = ['saved'];
+    const view = await mount(); swipe(1);
+    await fireEventAsync.press(screen.getByRole('button', { name: '返回首页' }));
+    mockSettings.selectedAlbumIds = ['new-scope'];
+    await view.rerenderAsync(<VideosScreen />);
+    await waitFor(() => expect(screen.getByText('上次范围：1 个相册 · 最旧优先')).toBeTruthy());
+    expect(useMediaStore.getState().organizingSessions.video?.scope.albumIds).toEqual(['saved']);
+    await fireEventAsync.press(screen.getByRole('button', { name: '开始新一轮' })); visible();
+    expect(useMediaStore.getState().organizingSessions.video?.scope.albumIds).toEqual(['new-scope']);
+    expect(useMediaStore.getState().videos.map(asset => asset.id)).toEqual(['other']);
+    expect(useMediaStore.getState().videoProcessedIds).toEqual(['one']);
+});

@@ -1,4 +1,12 @@
 export default {
+    video_keep: 'Keep',
+    video_keep_next: 'Keep and next',
+    video_view_next: 'View next',
+    video_batch_complete: 'This video batch is organized',
+    video_rest_complete: 'The rest of this video round is organized. Deferred items remain.',
+    video_accessible_complete: 'Currently allowed videos are organized',
+    video_library_complete: 'Currently accessible videos are organized',
+    video_partial_hint: '{count} items are unavailable. Their records are preserved.',
     session_continue: 'Continue last session',
     session_position: 'Position in this batch',
     session_review: 'Continue batch review',
