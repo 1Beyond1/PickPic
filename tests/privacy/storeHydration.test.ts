@@ -1,6 +1,7 @@
 jest.unmock('../../services/privacy/encryptedStorage');
 let mockDisk: Map<string, string>, mockKeys: Map<string, string>;
 let mockLocked = false;
+let mockVisibleAssets: any[] = [];
 jest.mock('@react-native-async-storage/async-storage', () => ({
     getItem: jest.fn(async (name: string) => mockDisk.get(name) ?? null),
     setItem: jest.fn(async (name: string, value: string) => { mockDisk.set(name, value); }),
@@ -16,7 +17,10 @@ jest.mock('react-native-quick-base64', () => ({
     fromByteArray: (bytes: Uint8Array) => Buffer.from(bytes).toString('base64'),
     toByteArray: (encoded: string) => new Uint8Array(Buffer.from(encoded, 'base64')),
 }));
-jest.mock('expo-media-library', () => ({}));
+jest.mock('expo-media-library', () => ({
+    getPermissionsAsync: jest.fn(async () => ({ granted: true, accessPrivileges: 'all' })),
+    getAssetsAsync: jest.fn(async ({ mediaType }: any) => ({ assets: mockVisibleAssets.filter(asset => asset.mediaType === mediaType), hasNextPage: false })),
+}));
 jest.mock('../../database', () => ({ AssetRepository: {} }));
 
 const recordsName = 'photoapp-media-progress';
@@ -24,7 +28,7 @@ const settingsName = 'photoapp-settings';
 const records = JSON.stringify({ state: { photoProcessedIds: ['kept'], videoProcessedIds: ['video'], deleteQueue: [{ id: 'pending', mediaType: 'photo' }], collectionQueue: [], videoTrashBin: [] }, version: 0 });
 const settings = JSON.stringify({ state: { theme: 'dark', selectedAlbumIds: ['private-album'], displayOrder: 'oldest', language: 'en', groupSize: 20 }, version: 0 });
 beforeEach(() => {
-    jest.resetModules(); mockDisk = new Map([[recordsName, records], [settingsName, settings]]); mockKeys = new Map(); mockLocked = false;
+    jest.resetModules(); mockDisk = new Map([[recordsName, records], [settingsName, settings]]); mockKeys = new Map(); mockLocked = false; mockVisibleAssets = [];
 });
 async function openStores() {
     const { useMediaStore } = require('../../stores/useMediaStore');
@@ -170,4 +174,28 @@ it('retains an unsaved decision in memory, gates actions, and persists that deci
     expect(restarted.media.getState().photoProcessedIds).toEqual(['kept', 'new-pending']);
     expect(restarted.media.getState().recentDecisions[0]).toMatchObject({ assetId: 'new-pending', action: 'pending',
         before: { processed: false, pending: null }, after: { processed: true, pending: { source: 'photos' } } });
+});
+
+it('preserves an unsaved undo behind the real encryption gate and persists its exact state on retry', async () => {
+    const stores = await openStores(); await stores.media.persist.rehydrate();
+    const asset = { id: 'private-undo-photo', mediaType: 'photo', uri: 'file:///synthetic-undo.jpg', filename: 'synthetic.jpg', creationTime: 1, width: 10, height: 10 };
+    mockVisibleAssets = [asset]; stores.media.getState().markAsSkipped(asset);
+    const event = stores.media.getState().recentDecisions[0].eventId;
+    const { flushMediaProgress } = require('../../services/mediaProgressStorage'); await flushMediaProgress();
+    const originalCipher = mockDisk.get(recordsName + '.encrypted-v1');
+    const diskStorage = require('@react-native-async-storage/async-storage');
+    diskStorage.setItem.mockRejectedValue(new Error('synthetic disk failure'));
+    expect(await stores.media.getState().changeRecentDecision(event, 'undo')).toBe('failed');
+    expect(stores.media.getState().photoProcessedIds).toEqual(['kept']);
+    expect(stores.media.getState().recentDecisions).toEqual([]);
+    expect(stores.privacy.getState().failures.records).toBe('write');
+    expect(mockDisk.get(recordsName + '.encrypted-v1')).toBe(originalCipher);
+    expect(await stores.media.getState().changeRecentDecision(event, 'undo')).toBe('busy');
+    diskStorage.setItem.mockImplementation(async (name: string, value: string) => { mockDisk.set(name, value); });
+    await flushMediaProgress();
+    expect(stores.privacy.getState().failures).toEqual({});
+    jest.resetModules(); const reopened = await openStores(); await reopened.media.persist.rehydrate();
+    expect(reopened.media.getState().photoProcessedIds).toEqual(['kept']);
+    expect(reopened.media.getState().recentDecisions).toEqual([]);
+    expect(reopened.media.getState().deleteQueue[0].id).toBe('pending');
 });

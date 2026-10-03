@@ -10,7 +10,7 @@ jest.mock('../database', () => ({ AssetRepository: { removeAssetAndDerivedData: 
 const mockSettings = { displayOrder: 'oldest', selectedAlbumIds: [] as string[], hasHydrated: true, setSelectedAlbums: jest.fn() };
 jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: Object.assign(() => mockSettings, { getState: () => mockSettings }) }));
 jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
-jest.mock('expo-router', () => ({ useFocusEffect: (callback: () => void) => require('react').useEffect(callback, [callback]) }));
+jest.mock('expo-router', () => ({ useRouter: () => ({ push: jest.fn() }), useFocusEffect: (callback: () => void) => require('react').useEffect(callback, [callback]) }));
 jest.mock('@expo/vector-icons', () => ({ Feather: () => null, Ionicons: () => null }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 32, bottom: 24, left: 0, right: 0 }) }));
 jest.mock('../components/AlbumSelector', () => ({ AlbumSelector: () => null }));
@@ -44,7 +44,7 @@ beforeEach(async () => {
         photoProcessedIds: [], videoProcessedIds: [], deleteQueue: [], collectionQueue: [], videoTrashBin: [],
         organizingSessions: { photo: null, video: null }, videoCurrentIndex: 0, videoSessionRecoveryStatus: null, videoSessionUnavailableCount: 0,
         isLoading: false, videoLoadFailed: false, isConfirmingDeletion: false, isConfirmingVideoTrash: false,
-        pendingDeletionInfo: {}, deletedCounts: { photos: 0, videos: 0 }, lastDeletionResult: null,
+        pendingDeletionInfo: {}, deletedCounts: { photos: 0, videos: 0 }, lastDeletionResult: null, recentDecisions: [],
         permissionScope: 'full', permissionRefreshVersion: 0, mediaLibraryRefreshVersion: 0,
     }));
 });
@@ -166,4 +166,18 @@ it('uses saved filters when continuing and uses current settings only for an exp
     expect(useMediaStore.getState().organizingSessions.video?.scope.albumIds).toEqual(['new-scope']);
     expect(useMediaStore.getState().videos.map(asset => asset.id)).toEqual(['other']);
     expect(useMediaStore.getState().videoProcessedIds).toEqual(['one']);
+});
+
+it('undoes the last kept video and resumes its saved position without unprocessing earlier videos', async () => {
+    await mount(); swipe(1); swipe(2);
+    await fireEventAsync.press(screen.getByRole('button', { name: '保留' }));
+    expect(useMediaStore.getState().organizingSessions.video?.phase).toBe('review');
+    await fireEventAsync.press(screen.getByRole('button', { name: '撤销上一步' }));
+    await waitFor(() => expect(useMediaStore.getState().isLoading).toBe(false));
+    fireEvent(screen.getByTestId('video-feed-viewport'), 'layout', { nativeEvent: { layout: { width: 390, height: 600 } } });
+    visible();
+    expect(useMediaStore.getState().videoProcessedIds).toEqual(['one', 'two']);
+    expect(useMediaStore.getState().organizingSessions.video).toMatchObject({ position: 2, phase: 'organizing' });
+    expect(screen.UNSAFE_getByType(FlatList).props.initialScrollIndex).toBe(2);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
 });

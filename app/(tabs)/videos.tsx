@@ -9,6 +9,7 @@ import { ActivityIndicator, Alert, AppState, BackHandler, FlatList, Linking, Nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { PendingDeletionModal } from '../../components/PendingDeletionReview';
+import { RecentDecisionsButton, RecentUndoButton } from '../../components/RecentDecisionControls';
 import { getPendingDeletionEntries } from '../../services/pendingDeletion';
 import { VideoFeedItem } from '../../components/VideoFeedItem';
 import { COLORS, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
@@ -314,6 +315,11 @@ export default function VideosScreen() {
         const id = visibleIdRef.current;
         if (id) deferSessionMedia('video', id);
     };
+    const afterUndo = () => {
+        if (!isFocusedRef.current) return;
+        setShowHome(false); dragStartIdRef.current = null;
+        void loadVideos(50, displayOrder, selectedAlbumIds);
+    };
 
     // View config ref
     const viewabilityConfig = useRef({
@@ -603,6 +609,7 @@ export default function VideosScreen() {
                         <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('session_new_round')}</Text>
                     </Pressable>}
                     {session && <Text style={[styles.scopeHint, { color: colors.textSecondary, marginTop: 12 }]}>{t('session_new_round_hint')}</Text>}
+                    <View style={styles.recentRow}><RecentDecisionsButton kind="video" /><RecentUndoButton kind="video" onChanged={afterUndo} /></View>
                 </ScrollView>
             ) : null}
             </View>
@@ -626,6 +633,7 @@ export default function VideosScreen() {
                             </Text>
                         </Pressable>
                     </View>
+                    <View style={styles.recentRow}><RecentUndoButton kind="video" onChanged={afterUndo} /><RecentDecisionsButton kind="video" iconOnly /></View>
                 </View>
             )}
 
@@ -644,6 +652,7 @@ export default function VideosScreen() {
 }
 
 const styles = StyleSheet.create({
+    recentRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 8 },
     container: {
         flex: 1,
     },

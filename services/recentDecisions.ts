@@ -21,6 +21,7 @@ export interface RecentDecision {
     sessionId: string | null;
     position: number | null;
 }
+export type RecentDecisionResult = 'changed' | 'unchanged' | 'busy' | 'stale' | 'unavailable' | 'failed' | 'nothing';
 const exact = (value: object, keys: readonly string[]) => Object.keys(value).sort().join(',') === [...keys].sort().join(',');
 const id = (value: unknown, length: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= length;
 const time = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;

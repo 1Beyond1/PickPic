@@ -151,7 +151,7 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
     );
 }
 
-function PendingVideoPreview({ entry, onClose }: { entry: PendingDeletionEntry; onClose: () => void }) {
+export function PendingVideoPreview({ entry, onClose }: { entry: PendingDeletionEntry; onClose: () => void }) {
     const { t } = useI18n();
     const { colors } = useThemeColor();
     const insets = useSafeAreaInsets();

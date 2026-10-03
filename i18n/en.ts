@@ -232,6 +232,18 @@ export default {
     no_delete_this_batch: 'No photos marked for deletion in this batch',
     continue_next_batch: 'Continue to Next Batch',
 
+    recent_title: 'Recent decisions', recent_back: 'Back to organizing', recent_filter: 'Recent media type',
+    recent_hint: 'Up to 100 recent changes, encrypted on this device. Undo changes organizing decisions only. It cannot restore deleted files or undo system album additions, favorites or sharing.',
+    recent_empty: 'No recent decisions yet. Existing records are not guessed into undo history.',
+    recent_action_keep: 'Kept', recent_action_pending: 'Pending deletion', recent_action_collect: 'Collection queue', recent_action_defer: 'Deferred',
+    recent_view: 'View item {number}', recent_keep_item: 'Keep item {number}', recent_pending_item: 'Queue item {number} for deletion',
+    recent_undo_item: 'Undo this decision for item {number}', recent_pending: 'Queue for deletion', recent_undo: 'Undo this decision', recent_undo_last: 'Undo last decision',
+    recent_stale_hint: 'The current state has changed. The old action cannot be undone; you can make a new decision.',
+    recent_unavailable: 'Unavailable: removed or not authorized',
+    recent_access_hint: 'Unavailable items cannot be changed or undone. Retry or check media permissions; existing records are preserved.',
+    recent_result_changed: 'Organizing decision changed', recent_result_unchanged: 'Already set to this decision', recent_result_busy: 'Another operation is in progress. Try again shortly.',
+    recent_result_stale: 'The state changed. Review recent decisions again.', recent_result_unavailable: 'Media unavailable. The decision was not changed.',
+    recent_result_failed: 'Could not read or save records. Please retry.', recent_result_nothing: 'No decision available to undo. Deleted files cannot be restored.',
     // Version history
     announcement_update_title: "What's New",
     update_v030_1: 'AI scanning: Analyze blurry and similar photos. Turn on “Enable AI Classification” under Settings → Intelligent analysis (Beta, on-device processing).',

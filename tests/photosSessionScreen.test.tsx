@@ -52,7 +52,7 @@ beforeEach(async () => {
         photoProcessedIds: [], videoProcessedIds: [], deleteQueue: [], collectionQueue: [], videoTrashBin: [],
         organizingSessions: { photo: null, video: null }, photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0,
         isLoading: false, photoLoadFailed: false, isConfirmingDeletion: false, isConfirmingVideoTrash: false,
-        pendingDeletionInfo: {}, deletedCounts: { photos: 0, videos: 0 }, lastDeletionResult: null,
+        pendingDeletionInfo: {}, deletedCounts: { photos: 0, videos: 0 }, lastDeletionResult: null, recentDecisions: [],
         permissionScope: 'full', permissionRefreshVersion: 0, mediaLibraryRefreshVersion: 0,
     }));
 });
@@ -155,4 +155,18 @@ it('distinguishes batch completion from exhaustion of the accessible library', a
     await fireEventAsync.press(screen.getByRole('button', { name: '返回首页' }));
     expect(screen.getByTestId('photos-home')).toBeTruthy();
     expect(useMediaStore.getState().photoProcessedIds).toEqual(['one', 'two', 'three']);
+});
+
+it('undoes from the completion screen and restores only the last photo to the deck', async () => {
+    await start();
+    for (const id of ['one', 'two', 'three']) await fireEventAsync.press(screen.getByRole('button', { name: `keep:${id}` }));
+    expect(screen.getByText('本组整理完成')).toBeTruthy();
+    await fireEventAsync.press(screen.getByRole('button', { name: '撤销上一步' }));
+    await waitFor(() => expect(useMediaStore.getState().isLoading).toBe(false));
+    measureDeck();
+    expect(screen.getByTestId('card:three')).toBeTruthy();
+    expect(screen.queryByTestId('card:one')).toBeNull();
+    expect(useMediaStore.getState().photoProcessedIds).toEqual(['one', 'two']);
+    expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ position: 2, phase: 'organizing' });
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
 });

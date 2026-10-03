@@ -1,7 +1,7 @@
 import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { mediaProgressStorage } from '../services/mediaProgressStorage';
+import { flushMediaProgress, mediaProgressStorage } from '../services/mediaProgressStorage';
 import { markEncryptedStorageHydrated } from '../services/privacy/encryptedStorage';
 import { mergeProtectedState } from '../services/privacy/mergeState';
 import { usePrivacyStore } from './usePrivacyStore';
@@ -17,7 +17,8 @@ import type { OrganizingSession, SessionScope } from '../services/organizingSess
 import { recoverOrganizingSession } from '../services/sessionRecovery';
 import type { SessionRecoveryResult } from '../services/sessionRecovery';
 import { appendRecentDecision, sameDecisionSnapshot } from '../services/recentDecisions';
-import type { DecisionSnapshot, RecentDecision } from '../services/recentDecisions';
+import type { DecisionSnapshot, RecentDecision, RecentDecisionResult } from '../services/recentDecisions';
+import { readRecentDecisionMedia } from '../services/recentDecisionMedia';
 import { DisplayOrder, useSettingsStore } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
@@ -185,6 +186,7 @@ interface MediaState {
     markForCollection: (asset: PhotoAsset) => void;
     markAsSkipped: (asset: PhotoAsset) => void;
     undoAction: (assetId: string) => void;
+    changeRecentDecision: (eventId: string, action: 'undo' | 'keep' | 'pending') => Promise<RecentDecisionResult>;
     keepPhotoFromDeleteQueue: (assetId: string) => boolean;
 
     markVideoForTrash: (asset: PhotoAsset) => void;
@@ -278,6 +280,49 @@ function withRecentDecision(state: MediaState, next: Partial<MediaState>, kind: 
         action: after.pending ? 'pending' : after.collected ? 'collect' : after.deferred ? 'defer' : 'keep',
         before, after, at, sessionId: inSession ? session!.sessionId : null, position: inSession ? session!.position : null,
     }) };
+}
+
+export function recentDecisionIsCurrent(state: MediaState, entry: RecentDecision): boolean {
+    const latest = state.recentDecisions.find(item => item.assetId === entry.assetId && item.kind === entry.kind);
+    // A skip belongs to one round. Never recreate an old round's exclusion in
+    // a different round just because the global keep flags happen to match.
+    return latest === entry && sameDecisionSnapshot(decisionSnapshot(state, entry.kind, entry.assetId), entry.after)
+        && (!(entry.before.deferred || entry.after.deferred) || state.organizingSessions[entry.kind]?.sessionId === entry.sessionId);
+}
+function applyDecisionSnapshot(state: MediaState, entry: RecentDecision, snapshot: DecisionSnapshot, asset: PhotoAsset): Partial<MediaState> {
+    const id = entry.assetId, kind = entry.kind;
+    const deleteQueue = kind === 'photo' ? state.deleteQueue.filter(item => item.id !== id) : state.deleteQueue;
+    const videoTrashBin = kind === 'video' ? state.videoTrashBin.filter(item => item.id !== id) : state.videoTrashBin;
+    const collectionQueue = kind === 'photo' ? state.collectionQueue.filter(item => item.id !== id) : state.collectionQueue;
+    if (snapshot.pending) (kind === 'photo' ? deleteQueue : videoTrashBin).push(asset);
+    if (snapshot.collected && kind === 'photo') collectionQueue.push(asset);
+    const originalProcessed = kind === 'photo' ? state.photoProcessedIds : state.videoProcessedIds;
+    const processed = snapshot.processed ? originalProcessed.includes(id) ? originalProcessed : [...originalProcessed, id]
+        : originalProcessed.filter(value => value !== id);
+    const info = { ...state.pendingDeletionInfo };
+    delete info[id];
+    if (snapshot.pending) info[id] = { ...snapshot.pending };
+    let sessions = clearDeferredDecision(state.organizingSessions, kind, id);
+    let session = sessions[kind];
+    if (session) {
+        if (snapshot.deferred) session = { ...session, deferredIds: [...new Set([...session.deferredIds, id])] };
+        const index = session.assetIds.indexOf(id);
+        // Returning an unreviewed member cannot abandon other members or
+        // rewind to a numeric position belonging to a different batch.
+        if (index >= 0 && !snapshot.processed && !snapshot.deferred) session = moveOrganizingSession(session, kind === 'video' ? index : Math.min(index, session.position));
+        sessions = { ...sessions, [kind]: session };
+        sessions = kind === 'photo' ? advancePhotoSession({ ...state, organizingSessions: sessions }, new Set(processed))
+            : advanceVideoSession({ ...state, organizingSessions: sessions }, new Set(processed));
+    }
+    const videos = kind === 'video' && (snapshot.pending || snapshot.deferred) ? state.videos.filter(item => item.id !== id) : state.videos;
+    return { deleteQueue, videoTrashBin, collectionQueue, pendingDeletionInfo: info, organizingSessions: sessions, lastDeletionResult: null,
+        ...(kind === 'video' ? { videos, videoCurrentIndex: currentVideoIndex(videos, sessions.video, state.videoCurrentIndex) } : {}),
+        ...(kind === 'photo' ? { photoProcessedIds: processed } : { videoProcessedIds: processed }),
+        // The target was just verified; no other hidden queue is made visible.
+        ...(kind === 'photo' ? { hiddenPhotoQueuedAssetIds: state.permissionScope === 'full' ? null
+            : (state.hiddenPhotoQueuedAssetIds ?? [...deleteQueue, ...collectionQueue].map(item => item.id)).filter(value => value !== id) }
+            : { hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds === null ? null : state.hiddenVideoQueuedAssetIds.filter(value => value !== id) }),
+    };
 }
 
 function removeDeletedState(state: MediaState, deletedIds: ReadonlySet<string>): Partial<MediaState> {
@@ -611,6 +656,7 @@ let photoQueuePruneRequestId = 0;
 let videoQueuePruneRequestId = 0;
 let organizingSessionSequence = 0; // Identity only, never a cryptographic key.
 let recentDecisionSequence = 0; // Local event identity, not a key or media identifier.
+let recentDecisionRequest = 0;
 
 export const useMediaStore = create<MediaState>()(
     persist(
@@ -1164,6 +1210,48 @@ export const useMediaStore = create<MediaState>()(
         return kept;
     },
     keepPhotoFromDeleteQueue: assetId => get().deleteQueue.some(asset => asset.id === assetId) && get().keepPendingDeletion(assetId),
+
+    changeRecentDecision: async (eventId, action) => {
+        const initial = get();
+        const busy = () => !get().hasHydrated || isRecordTransferActive() || get().isConfirmingDeletion || get().isConfirmingVideoTrash
+            || !!usePrivacyStore.getState().failures.records;
+        if (busy()) return 'busy';
+        const entry = initial.recentDecisions.find(item => item.eventId === eventId);
+        if (!entry) return 'nothing';
+        const latest = (state: MediaState) => state.recentDecisions.find(item => item.kind === entry.kind && item.assetId === entry.assetId) === entry;
+        if (!latest(initial) || (action === 'undo' && !recentDecisionIsCurrent(initial, entry))) return 'stale';
+        const request = ++recentDecisionRequest;
+        const session = initial.organizingSessions[entry.kind];
+        const current = () => request === recentDecisionRequest && !busy()
+            && get().mediaLibraryRefreshVersion === initial.mediaLibraryRefreshVersion
+            && get().permissionRefreshVersion === initial.permissionRefreshVersion
+            && get().organizingSessions[entry.kind] === session && latest(get())
+            && (action !== 'undo' || recentDecisionIsCurrent(get(), entry));
+        const read = await readRecentDecisionMedia(entry.kind, [entry.assetId], current);
+        if (!current()) return 'stale';
+        if (read.status === 'stale') return 'stale';
+        if (read.status === 'failed') return 'failed';
+        if (read.status !== 'ready') return 'unavailable';
+        const asset = read.assets.get(entry.assetId);
+        if (!asset) return 'unavailable';
+        const target: DecisionSnapshot = action === 'undo' ? entry.before
+            : { processed: true, pending: action === 'pending' ? { source: 'unknown', addedAt: Date.now() } : null, collected: false, deferred: false };
+        const actual = decisionSnapshot(get(), entry.kind, entry.assetId);
+        if (action !== 'undo' && (action === 'pending' ? !!actual.pending : sameDecisionSnapshot(actual, target))) return 'unchanged';
+        let applied = false;
+        set(state => {
+            if (!current()) return state;
+            const next = applyDecisionSnapshot(state, entry, target, asset);
+            applied = true;
+            if (action === 'undo') return { ...next, recentDecisions: state.recentDecisions.filter(item => item.eventId !== eventId) };
+            return withRecentDecision(state, next, entry.kind, entry.assetId);
+        });
+        if (applied) {
+            try { await flushMediaProgress(); }
+            catch { return 'failed'; } // Keep the unsaved inverse in memory behind the privacy gate.
+        }
+        return applied ? 'changed' : 'stale';
+    },
 
     undoAction: (assetId) => {
         set((state) => state.isConfirmingDeletion

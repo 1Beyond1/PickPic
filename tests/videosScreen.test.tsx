@@ -68,6 +68,7 @@ jest.mock('@react-navigation/native', () => ({
   useIsFocused: () => true,
 }));
 jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: jest.fn() }),
   useFocusEffect: (effect: () => void | (() => void)) => {
     const ReactModule = require('react');
     ReactModule.useEffect(effect, [effect]);

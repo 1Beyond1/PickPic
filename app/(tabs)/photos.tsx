@@ -9,6 +9,7 @@ import { GlassContainer } from '../../components/GlassContainer';
 import { AlbumSelector } from '../../components/AlbumSelector';
 import { PhotoCard } from '../../components/PhotoCard';
 import { PendingDeletionButton, PendingDeletionReview } from '../../components/PendingDeletionReview';
+import { RecentDecisionsButton, RecentUndoButton } from '../../components/RecentDecisionControls';
 import { BORDER_RADIUS, SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
@@ -54,13 +55,16 @@ export default function PhotosScreen() {
     const [keptAllReviewPhotos, setKeptAllReviewPhotos] = useState(false);
     const [deckSize, setDeckSize] = useState({ width: 0, height: 0 });
     const sessionActionRef = useRef(false);
+    const photosFocusedRef = useRef(true);
     const session = organizingSessions.photo;
 
     useFocusEffect(useCallback(() => {
+        photosFocusedRef.current = true;
         if (!hasHydrated || !settingsHydrated) return;
         setKeptAllReviewPhotos(false);
         void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
         void loadAlbums();
+        return () => { photosFocusedRef.current = false; };
     }, [
         groupSize,
         displayOrder,
@@ -263,6 +267,12 @@ export default function PhotosScreen() {
             }
         }} />
     );
+    const afterUndo = () => {
+        if (!photosFocusedRef.current) return;
+        setReviewDismissed(false); setKeptAllReviewPhotos(false); setShowHome(false);
+        showToast(t('recent_result_changed'));
+        if (useMediaStore.getState().organizingSessions.photo) void resumeOrganizingSession('photo');
+    };
 
     if (isLoading) {
         return (
@@ -285,6 +295,7 @@ export default function PhotosScreen() {
                 paddingRight: insets.right,
                 backgroundColor: colors.background,
             }]}>
+                <View style={styles.recentRow}><RecentDecisionsButton kind="photo" /><RecentUndoButton kind="photo" onChanged={afterUndo} /></View>
                 {handleBatchFinished()}
                 {toast}
 
@@ -333,6 +344,7 @@ export default function PhotosScreen() {
                 >
                     <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('photos_back_home')}</Text>
                 </Pressable>
+                <View style={styles.recentRow}><RecentDecisionsButton kind="photo" /><RecentUndoButton kind="photo" onChanged={afterUndo} /></View>
                 </ScrollView>
                 {toast}
             </View>
@@ -451,6 +463,7 @@ export default function PhotosScreen() {
                         <Feather name="chevron-right" size={18} color={colors.textSecondary} />
                     </Pressable>
                     {session && <Text style={[styles.homeAlbumHint, { color: colors.textSecondary }]}>{t('session_filter_hint')}</Text>}
+                    <View style={styles.recentRow}><RecentDecisionsButton kind="photo" /><RecentUndoButton kind="photo" onChanged={afterUndo} /></View>
                 </ScrollView>
                 <AlbumSelector
                     visible={showAlbumSelector}
@@ -520,11 +533,11 @@ export default function PhotosScreen() {
             {/* Footer hints - collections disabled for v0.1.1 */}
             <View style={styles.deckFooter}>
                 {photoSessionUnavailableCount > 0 && <Text style={[styles.queueHint, { color: colors.textSecondary }]}>{t('session_partial_hint', { count: photoSessionUnavailableCount })}</Text>}
-                <Pressable accessibilityRole="button" onPress={() => {
+                <View style={styles.recentRow}><Pressable accessibilityRole="button" onPress={() => {
                     if (visiblePhotos[0] && deferSessionMedia('photo', visiblePhotos[0].id)) showToast(t('session_deferred_feedback'));
                 }} style={styles.sessionTextButton}>
                     <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('session_defer')}</Text>
-                </Pressable>
+                </Pressable><RecentUndoButton kind="photo" onChanged={afterUndo} /><RecentDecisionsButton kind="photo" iconOnly /></View>
                 <View style={styles.footerHints}>
                     <View style={styles.hintItem}>
                         <Ionicons name="arrow-up-outline" size={20} color={colors.danger} />
@@ -565,6 +578,7 @@ export default function PhotosScreen() {
 }
 
 const styles = StyleSheet.create({
+    recentRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 8 },
     endHeader: { minHeight: UI_METRICS.touchTarget, alignItems: 'flex-end' },
     endContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingTop: SPACING.l },
     sessionActions: { marginTop: SPACING.s, gap: SPACING.xs, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' },
