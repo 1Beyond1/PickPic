@@ -193,6 +193,7 @@ export default {
     settings_theme: '主题',
     theme_light: '浅色',
     theme_dark: '深色',
+    theme_system: '跟随系统',
     settings_language: '语言',
 
     album_select_title: '选择收藏夹 (最多4个)',

@@ -236,11 +236,11 @@ export default function SettingsScreen() {
     const choiceOptions = choice === 'order'
         ? (['newest', 'oldest', 'random'] as const).map(value => ({ value, label: t(`display_order_${value}`) }))
         : choice === 'theme'
-            ? (['light', 'dark'] as const).map(value => ({ value, label: t(`theme_${value}`) }))
+            ? (['light', 'dark', 'system'] as const).map(value => ({ value, label: t(`theme_${value}`) }))
             : [{ value: 'zh', label: '中文' }, { value: 'en', label: 'English' }];
     const handleChoice = (value: string) => {
         if (choice === 'order' && (value === 'newest' || value === 'oldest' || value === 'random')) setDisplayOrder(value);
-        if (choice === 'theme' && (value === 'light' || value === 'dark')) setTheme(value);
+        if (choice === 'theme' && (value === 'light' || value === 'dark' || value === 'system')) setTheme(value);
         if (choice === 'language' && (value === 'zh' || value === 'en')) setLanguage(value);
         setChoice(null);
     };

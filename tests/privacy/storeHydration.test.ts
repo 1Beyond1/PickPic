@@ -54,6 +54,19 @@ it('hydrates real Zustand stores without startup default snapshots replacing leg
     expect(stores.media.getState().recentDecisions).toEqual([]); // Do not invent legacy undo events.
 });
 
+it('persists the system-theme preference through real authenticated settings and reopen', async () => {
+    const stores = await openStores(); await stores.settings.persist.rehydrate();
+    stores.settings.getState().setTheme('system');
+    await require('../../services/privacy/settingsStorage').flushSettings();
+    const saved = mockDisk.get(settingsName + '.encrypted-v1')!;
+    expect(saved.startsWith('PKLOCAL1:')).toBe(true);
+    expect(saved).not.toContain('private-album'); expect(saved).not.toContain('"system"');
+    jest.resetModules();
+    const reopened = await openStores(); await reopened.settings.persist.rehydrate();
+    expect(reopened.settings.getState()).toMatchObject({ theme: 'system', selectedAlbumIds: ['private-album'], groupSize: 20 });
+    expect(reopened.media.getState().photoProcessedIds).toEqual(['kept']);
+});
+
 it('authenticates the bounded recent journal through real Zustand persistence and reopen', async () => {
     const stores = await openStores(); await stores.media.persist.rehydrate();
     const before = { processed: false, pending: null, collected: false, deferred: false };

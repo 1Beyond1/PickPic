@@ -95,6 +95,7 @@ it('exposes ordinary preferences and classification without putting destructive 
 
 it.each([
   ['theme', zh.settings_theme, zh.theme_light, zh.theme_dark, 'dark', mockSettings.setTheme],
+  ['theme', zh.settings_theme, zh.theme_light, '跟随系统', 'system', mockSettings.setTheme],
   ['order', zh.settings_display_order, zh.display_order_random, zh.display_order_newest, 'newest', mockSettings.setDisplayOrder],
   ['language', zh.settings_language, '中文', 'English', 'en', mockSettings.setLanguage],
 ] as const)('writes the selected %s value only after an explicit choice', async (_kind, label, initial, next, value, setter) => {

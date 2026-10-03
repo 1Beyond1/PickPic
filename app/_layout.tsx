@@ -10,6 +10,7 @@ import { AnnouncementModal } from '../components/AnnouncementModal';
 import { PrivacyRecoveryScreen } from '../components/PrivacyRecoveryScreen';
 import { MLBridge } from '../components/MLBridge';
 import { useThemeColor } from '../hooks/useThemeColor';
+import { syncModalAppearance } from '../services/modalAppearance';
 import { AssetRepository, closeDatabase, getDatabase } from '../database';
 import { flushMediaProgress } from '../services/mediaProgressStorage';
 import { flushSettings } from '../services/privacy/settingsStorage';
@@ -27,6 +28,7 @@ void SplashScreen.preventAutoHideAsync().catch(error => {
 
 export default function RootLayout() {
   const { colors, isDark } = useThemeColor();
+  useEffect(() => { void syncModalAppearance(isDark); }, [isDark]);
   const router = useRouter();
   const pathname = usePathname();
   const privacyFailures = usePrivacyStore(state => state.failures);

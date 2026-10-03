@@ -193,6 +193,7 @@ export default {
     settings_theme: 'Theme',
     theme_light: 'Light',
     theme_dark: 'Dark',
+    theme_system: 'System',
     settings_language: 'Language',
 
     album_select_title: 'Select Albums (Max 4)',

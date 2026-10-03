@@ -9,7 +9,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 export const APP_VERSION = 'v0.4.0';
 
 export type DisplayOrder = 'newest' | 'oldest' | 'random';
-export type ThemeSetting = 'light' | 'dark';
+export type ThemeSetting = 'light' | 'dark' | 'system';
 
 interface SettingsState {
     groupSize: 10 | 20 | 30;
@@ -95,7 +95,7 @@ export const useSettingsStore = create<SettingsState>()(
                 // Older releases persisted WarmTerra, claude and PPstyle.
                 // Preserve every other setting while mapping those modes to
                 // the new neutral light appearance.
-                if (state.theme !== 'light' && state.theme !== 'dark') {
+                if (state.theme !== 'light' && state.theme !== 'dark' && state.theme !== 'system') {
                     state.setTheme('light');
                 }
                 state.setHasHydrated(true);
