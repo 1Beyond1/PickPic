@@ -35,6 +35,20 @@ function validateState(value: string): void {
         if (name in state && (!Array.isArray(state[name]) || !(state[name] as unknown[]).every(item =>
             !!item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' && item.id.length > 0))) throw new LocalPrivacyError();
     }
+    if ('pendingDeletionInfo' in state) {
+        const info = state.pendingDeletionInfo;
+        if (!info || typeof info !== 'object' || Array.isArray(info)) throw new LocalPrivacyError();
+        for (const value of Object.values(info)) {
+            if (!value || typeof value !== 'object' || !('source' in value) || !('addedAt' in value)
+                || !['photos', 'videos', 'blur', 'similar', 'classification', 'unknown'].includes(String(value.source))
+                || !Number.isSafeInteger(value.addedAt) || Number(value.addedAt) < 0) throw new LocalPrivacyError();
+        }
+    }
+    if ('deletedCounts' in state) {
+        const counts = state.deletedCounts;
+        if (!counts || typeof counts !== 'object' || !('photos' in counts) || !('videos' in counts)
+            || ![counts.photos, counts.videos].every(value => Number.isSafeInteger(value) && Number(value) >= 0)) throw new LocalPrivacyError();
+    }
 }
 function aad(name: string): Uint8Array { return new TextEncoder().encode(`PickPic/local/v1/${name}`); }
 async function seal(name: string, value: string, scope: DeviceKeyScope, exists: boolean): Promise<string> {

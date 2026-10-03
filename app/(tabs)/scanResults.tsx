@@ -1,3 +1,4 @@
+import { getReadableMediaInfo } from '../../services/readableMedia';
 /**
  * Scan Results Screen - Display scanned photo analysis
  */
@@ -6,17 +7,19 @@ import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { SimilarGroupCard } from '../../components/SimilarGroupCard';
 import { SimilarGroupDetailOverlay } from '../../components/SimilarGroupDetailOverlay';
+import { PendingDeletionButton } from '../../components/PendingDeletionReview';
+import { getPendingDeletionEntries } from '../../services/pendingDeletion';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { AssetRepository, DupGroupRepository } from '../../database';
 import { CategoryGroup, useAICategories } from '../../hooks/useAICategories';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
-import { getCurrentlyVisibleAssetIds, useMediaStore } from '../../stores/useMediaStore';
+import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 
 interface BlurryPhoto {
@@ -88,6 +91,7 @@ export default function ScanResultsScreen() {
     const loadRequestIdRef = useRef(0);
     const [isDeletingBlurry, setIsDeletingBlurry] = useState(false);
     const isDeletingBlurryRef = useRef(false);
+    const [queueFeedback, setQueueFeedback] = useState<string | null>(null);
 
     // Similar Groups detail modal state
     const [selectedSimilarGroup, setSelectedSimilarGroup] = useState<{
@@ -130,7 +134,7 @@ export default function ScanResultsScreen() {
             const blurryWithUris: (BlurryPhoto | null)[] = await Promise.all(
                 blurryAssets.map(async (asset): Promise<BlurryPhoto | null> => {
                     try {
-                        const info = await MediaLibrary.getAssetInfoAsync(asset.asset_id);
+                        const info = await getReadableMediaInfo(asset.asset_id);
                         const uri = info.localUri || info.uri;
                         if (!uri) return null;
                         return {
@@ -156,7 +160,7 @@ export default function ScanResultsScreen() {
                     const availableMembers = (await Promise.all(
                         members.map(async member => {
                             try {
-                                const info = await MediaLibrary.getAssetInfoAsync(member.asset_id);
+                                const info = await getReadableMediaInfo(member.asset_id);
                                 const uri = info.localUri || info.uri;
                                 return uri ? { member, uri } : null;
                             } catch {
@@ -220,56 +224,31 @@ export default function ScanResultsScreen() {
         }, [activeTab, enableAIClassification, loadResults, refreshAI])
     );
 
-    const handleDeleteBlurry = async (assetId: string) => {
+    const queueFromAI = async (assetId: string, source: 'blur' | 'classification') => {
         if (isDeletingBlurryRef.current) return;
-        Alert.alert(
-            t('scan_delete_blurry_title'),
-            `${t('scan_delete_blurry_message')}\n\n${t('media_delete_warning')}`,
-            [
-                { text: t('cancel'), style: 'cancel' },
-                {
-                    text: t('delete'),
-                    style: 'destructive',
-                    onPress: async () => {
-                        // Alert confirmations can outlive a render. Lock before
-                        // the permission preflight, not only the native request.
-                        if (isDeletingBlurryRef.current) return;
-                        isDeletingBlurryRef.current = true;
-                        setIsDeletingBlurry(true);
-                        try {
-                            const visibleIds = await getCurrentlyVisibleAssetIds([assetId], 'photo');
-                            if (!visibleIds.has(assetId)) {
-                                throw new Error('Photo is no longer available');
-                            }
-                            const deleted = await MediaLibrary.deleteAssetsAsync([assetId]);
-                            if (!deleted) {
-                                throw new Error('Media library did not confirm deletion');
-                            }
-                            useMediaStore.getState().removeDeletedAssets([assetId]);
-                            // Invalidate a load that may have started before
-                            // the deletion and could otherwise reinsert this
-                            // asset into the list when it finishes.
-                            loadRequestIdRef.current += 1;
-                            try {
-                                await AssetRepository.removeAssetAndDerivedData(assetId);
-                            } catch (cleanupError) {
-                                console.error('[ScanResults] Failed to clean deleted asset from index:', cleanupError);
-                            }
-                            setBlurryPhotos(prev => prev.filter(p => p.assetId !== assetId));
-                            // The deleted asset may also belong to a similar
-                            // group, so refresh both result tabs from SQLite.
-                            void loadResults();
-                        } catch (error) {
-                            Alert.alert(t('delete_failed'), String(error));
-                        } finally {
-                            isDeletingBlurryRef.current = false;
-                            setIsDeletingBlurry(false);
-                        }
-                    },
-                },
-            ]
-        );
+        const refreshVersion = useMediaStore.getState().mediaLibraryRefreshVersion;
+        isDeletingBlurryRef.current = true;
+        setIsDeletingBlurry(true);
+        setQueueFeedback(null);
+        try {
+            const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+            if (!permission.granted) throw new Error('Unavailable');
+            const info = await getReadableMediaInfo(assetId, 'photo', { shouldDownloadFromNetwork: false });
+            if (info?.id !== assetId || info.mediaType !== 'photo') throw new Error('Unavailable');
+            const store = useMediaStore.getState();
+            if (refreshVersion !== store.mediaLibraryRefreshVersion) throw new Error('Access changed');
+            const existed = getPendingDeletionEntries(store).some(entry => entry.asset.id === assetId);
+            const added = store.enqueuePendingDeletion([info], source);
+            if (!added && !existed) throw new Error('Record mutation is blocked');
+            setQueueFeedback(t(added ? 'pending_added' : 'pending_already_added'));
+        } catch {
+            setQueueFeedback(t('pending_add_failed'));
+        } finally {
+            isDeletingBlurryRef.current = false;
+            setIsDeletingBlurry(false);
+        }
     };
+    const handleDeleteBlurry = (assetId: string) => queueFromAI(assetId, 'blur');
 
     const renderBlurryItem = ({ item }: { item: BlurryPhoto }) => (
         <View style={[styles.photoCard, { borderBottomColor: colors.divider }]}>
@@ -288,7 +267,7 @@ export default function ScanResultsScreen() {
                 style={({ pressed }) => [styles.deleteButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }, isDeletingBlurry && { opacity: 0.5 }]}
                 disabled={isDeletingBlurry}
                 accessibilityRole="button"
-                accessibilityLabel={t('scan_delete_blurry_title')}
+                accessibilityLabel={t('pending_add')}
                 accessibilityState={{ disabled: isDeletingBlurry, busy: isDeletingBlurry }}
                 onPress={() => handleDeleteBlurry(item.assetId)}
             >
@@ -357,6 +336,7 @@ export default function ScanResultsScreen() {
         setSelectedSimilarGroup(null);
         setSelectedCategory(null);
         setSelectedPhoto(null);
+        setQueueFeedback(null);
 
         if (permissionScope !== 'none') {
             void loadResults();
@@ -444,7 +424,11 @@ export default function ScanResultsScreen() {
             backgroundColor: colors.background,
         }]}>
             <View testID="scan-results-main" style={styles.mainContent} accessibilityElementsHidden={!!selectedSimilarGroup} importantForAccessibility={selectedSimilarGroup ? 'no-hide-descendants' : 'auto'}>
-                <Text accessibilityRole="header" style={[styles.headerTitle, { color: colors.text }]}>{t('tab_scan_results')}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingRight: UI_METRICS.pageInset }}>
+                    <Text accessibilityRole="header" style={[styles.headerTitle, { color: colors.text, flex: 1 }]}>{t('tab_scan_results')}</Text>
+                    <PendingDeletionButton />
+                </View>
+                {queueFeedback && <Text accessibilityLiveRegion="polite" style={{ ...TYPOGRAPHY.secondary, color: colors.textSecondary, paddingHorizontal: UI_METRICS.pageInset, paddingBottom: 12 }}>{queueFeedback}</Text>}
 
                 {/* Tabs */}
                 <View style={styles.tabs}>
@@ -670,7 +654,7 @@ export default function ScanResultsScreen() {
                                     accessibilityRole="button"
                                     accessibilityLabel={t('scan_open_category_photo', { index: index + 1 })}
                                     style={styles.gridItem}
-                                    onPress={() => setSelectedPhoto(item.asset_id)}
+                                    onPress={() => { setQueueFeedback(null); setSelectedPhoto(item.asset_id); }}
                                 >
                                     <CategoryThumbnail assetId={item.asset_id} />
                                 </Pressable>
@@ -698,6 +682,9 @@ export default function ScanResultsScreen() {
                 }]}>
                     <View style={styles.modalHeader}>
                         <Text accessibilityRole="header" style={[styles.viewerTitle, { color: colors.text }]}>{t('photo_detail_title')}</Text>
+                        <Pressable accessibilityRole="button" accessibilityLabel={t('pending_add')} disabled={isDeletingBlurry} onPress={() => selectedPhoto && void queueFromAI(selectedPhoto, 'classification')} style={styles.closeButton}>
+                            <Ionicons name="trash-outline" size={22} color={colors.danger} />
+                        </Pressable>
                         <Pressable
                             style={({ pressed }) => [styles.closeButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
                             accessibilityRole="button"
@@ -707,6 +694,7 @@ export default function ScanResultsScreen() {
                             <Ionicons name="close-outline" size={24} color={colors.text} />
                         </Pressable>
                     </View>
+                    {queueFeedback && <Text testID="category-queue-feedback" accessibilityLiveRegion="polite" style={{ ...TYPOGRAPHY.secondary, color: colors.textSecondary, paddingHorizontal: UI_METRICS.pageInset, paddingBottom: 12 }}>{queueFeedback}</Text>}
                     <View style={styles.viewerMedia}>
                         {selectedPhoto && <FullPhotoViewer assetId={selectedPhoto} />}
                     </View>
@@ -727,7 +715,7 @@ function CategoryThumbnail({ assetId }: { assetId?: string }) {
 
         if (!assetId) return () => { mounted = false; };
 
-        MediaLibrary.getAssetInfoAsync(assetId).then(info => {
+        getReadableMediaInfo(assetId).then(info => {
             const uri = info?.localUri || info?.uri;
             if (mounted && uri) {
                 setImage({ assetId, uri });
@@ -754,7 +742,7 @@ function FullPhotoViewer({ assetId }: { assetId: string }) {
         let mounted = true;
         setImage(null);
 
-        MediaLibrary.getAssetInfoAsync(assetId).then(info => {
+        getReadableMediaInfo(assetId).then(info => {
             const uri = info?.localUri || info?.uri;
             if (mounted) {
                 setImage({ assetId, uri: uri || null, failed: !uri });

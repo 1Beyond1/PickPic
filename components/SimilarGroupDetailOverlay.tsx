@@ -1,10 +1,9 @@
+import { getReadableMediaInfo } from '../services/readableMedia';
 
 import { Ionicons } from '@expo/vector-icons';
-import * as MediaLibrary from 'expo-media-library';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     BackHandler,
     FlatList,
     Image,
@@ -22,11 +21,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
-import { AssetRepository } from '../database';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { getCurrentlyVisibleAssetIds, useMediaStore } from '../stores/useMediaStore';
-import { deleteAssetsInBatches } from '../services/mediaDeletion';
+import { getPendingDeletionEntries } from '../services/pendingDeletion';
+import { PendingDeletionButton } from './PendingDeletionReview';
 
 const COLUMN_COUNT = 3;
 
@@ -48,11 +47,10 @@ export function SimilarGroupDetailOverlay({
     visible,
     memberAssetIds,
     onClose,
-    onComplete,
 }: SimilarGroupDetailOverlayProps) {
     const insets = useSafeAreaInsets();
     const { colors } = useThemeColor();
-    const { t, language } = useI18n();
+    const { t } = useI18n();
 
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
     const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
@@ -60,6 +58,7 @@ export function SimilarGroupDetailOverlay({
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [previewPhoto, setPreviewPhoto] = useState<PhotoItem | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [queueFeedback, setQueueFeedback] = useState<string | null>(null);
     const isDeletingRef = useRef(false);
     const loadRequestIdRef = useRef(0);
 
@@ -74,7 +73,7 @@ export function SimilarGroupDetailOverlay({
         const items: PhotoItem[] = [];
         for (const assetId of memberAssetIds) {
             try {
-                const info = await MediaLibrary.getAssetInfoAsync(assetId);
+                const info = await getReadableMediaInfo(assetId);
                 if (info.localUri || info.uri) {
                     items.push({
                         assetId,
@@ -111,6 +110,7 @@ export function SimilarGroupDetailOverlay({
             loadPhotos();
             setSelectedIds(new Set());
             setPreviewPhoto(null);
+            setQueueFeedback(null);
             // Start enter animation
             overlayOpacity.value = withTiming(1, { duration: 180 });
         } else {
@@ -160,103 +160,34 @@ export function SimilarGroupDetailOverlay({
         }
     };
 
-    const handleDeleteSelected = () => {
-        if (selectedIds.size === 0 || isDeletingRef.current) return;
-        const count = selectedIds.size;
-        Alert.alert(
-            language === 'zh' ? '确认删除' : 'Confirm Delete',
-            `${language === 'zh' ? `确定要删除选中的 ${count} 张照片吗？` : `Delete ${count} selected photo(s)?`}\n\n${t('media_delete_warning')}`,
-            [
-                { text: t('cancel'), style: 'cancel' },
-                {
-                    text: t('confirm'),
-                    style: 'destructive',
-                    onPress: async () => {
-                        if (isDeletingRef.current) return;
-                        const assetIds = Array.from(selectedIds);
-                        const selectedAssetIds = new Set(assetIds);
-                        isDeletingRef.current = true;
-                        setIsDeleting(true);
-                        try {
-                            const visibleIds = await getCurrentlyVisibleAssetIds(assetIds, 'photo');
-                            if (visibleIds.size !== selectedAssetIds.size) {
-                                throw new Error('One or more selected photos are no longer available');
-                            }
-                            await deleteAssetsInBatches(assetIds, async (batch) => {
-                                const batchIds = new Set(batch);
-                                useMediaStore.getState().removeDeletedAssets(batch);
-                                setPhotos(prev => prev.filter(p => !batchIds.has(p.assetId)));
-                                setSelectedIds(prev => new Set(Array.from(prev).filter(id => !batchIds.has(id))));
-                                for (const assetId of batch) {
-                                    try {
-                                        await AssetRepository.removeAssetAndDerivedData(assetId);
-                                    } catch (cleanupError) {
-                                        console.error('[SimilarGroupDetailOverlay] Index cleanup failed:', cleanupError);
-                                    }
-                                }
-                            });
-                            const remainingCount = photos.filter(photo => !selectedAssetIds.has(photo.assetId)).length;
-
-                            // Animate close if all deleted or user done
-                            if (remainingCount <= 1) {
-                                onComplete(); // Mark as done effectively
-                                animateClose();
-                            } else {
-                                // Just update list
-                            }
-                        } catch (error) {
-                            Alert.alert(language === 'zh' ? '删除失败' : 'Delete Failed', String(error));
-                        } finally {
-                            isDeletingRef.current = false;
-                            setIsDeleting(false);
-                        }
-                    },
-                },
-            ]
-        );
-    };
-
-    const handleClosePreview = () => {
-        if (isDeletingRef.current) return;
-        setPreviewPhoto(null);
-    };
-    const handleDeleteFromPreview = async () => {
-        if (!previewPhoto || isDeletingRef.current) return;
-
-        const photoToDelete = previewPhoto;
+    const queuePhotos = async (assetIds: readonly string[]) => {
+        if (!assetIds.length || isDeletingRef.current) return;
+        const generation = loadRequestIdRef.current;
+        const permissionVersion = useMediaStore.getState().permissionRefreshVersion;
         isDeletingRef.current = true;
         setIsDeleting(true);
-
+        setQueueFeedback(null);
         try {
-            const visibleIds = await getCurrentlyVisibleAssetIds([photoToDelete.assetId], 'photo');
-            if (!visibleIds.has(photoToDelete.assetId)) {
-                throw new Error('Photo is no longer available');
-            }
-            const deleted = await MediaLibrary.deleteAssetsAsync([photoToDelete.assetId]);
-            if (!deleted) {
-                throw new Error('Media library did not confirm deletion');
-            }
-            useMediaStore.getState().removeDeletedAssets([photoToDelete.assetId]);
-            try {
-                await AssetRepository.removeAssetAndDerivedData(photoToDelete.assetId);
-            } catch (cleanupError) {
-                console.error('[SimilarGroupDetailOverlay] Index cleanup failed:', cleanupError);
-            }
-            const remainingCount = photos.filter(photo => photo.assetId !== photoToDelete.assetId).length;
-            setPhotos(prev => prev.filter(p => p.assetId !== photoToDelete.assetId));
+            const visibleIds = await getCurrentlyVisibleAssetIds(assetIds, 'photo');
+            if (visibleIds.size !== new Set(assetIds).size) throw new Error('Unavailable');
+            const assets = await Promise.all(assetIds.map(id => getReadableMediaInfo(id, 'photo', { shouldDownloadFromNetwork: false })));
+            if (assets.some((asset, index) => asset?.id !== assetIds[index] || asset.mediaType !== 'photo')) throw new Error('Unavailable');
+            const store = useMediaStore.getState();
+            if (generation !== loadRequestIdRef.current || permissionVersion !== store.permissionRefreshVersion) throw new Error('Access changed');
+            const before = new Set(getPendingDeletionEntries(store).map(entry => entry.asset.id));
+            const added = store.enqueuePendingDeletion(assets, 'similar');
+            if (!added && assetIds.some(id => !before.has(id))) throw new Error('Record mutation is blocked');
+            setQueueFeedback(t(added ? 'pending_added' : 'pending_already_added'));
+            setSelectedIds(new Set());
             setPreviewPhoto(null);
-
-            if (remainingCount <= 1) {
-                onComplete();
-                animateClose();
-            }
-        } catch (error) {
-            Alert.alert(language === 'zh' ? '删除失败' : 'Delete Failed', String(error));
-        } finally {
-            isDeletingRef.current = false;
-            setIsDeleting(false);
-        }
+            // Queuing is not physical deletion, nor an explicit decision to keep
+            // the remaining members. Group completion is handled separately.
+        } catch { setQueueFeedback(t('pending_add_failed')); }
+        finally { isDeletingRef.current = false; setIsDeleting(false); }
     };
+    const handleDeleteSelected = () => queuePhotos(Array.from(selectedIds));
+    const handleClosePreview = () => { if (!isDeletingRef.current) setPreviewPhoto(null); };
+    const handleDeleteFromPreview = () => previewPhoto && queuePhotos([previewPhoto.assetId]);
 
     const renderPhotoItem = ({ item, index }: { item: PhotoItem; index: number }) => {
         const isSelected = selectedIds.has(item.assetId);
@@ -312,12 +243,13 @@ export function SimilarGroupDetailOverlay({
                         onPress={handleDeleteSelected}
                         disabled={isDeleting}
                         accessibilityRole="button"
-                        accessibilityLabel={t('similar_delete_selected')}
+                        accessibilityLabel={t('pending_add')}
                         accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
                     >
                         <Ionicons name="trash-outline" size={20} color={colors.dangerForeground} />
                     </Pressable>
                 )}
+                <PendingDeletionButton />
                 <Pressable
                     style={[styles.closeButton, isDeleting && { opacity: 0.5 }]}
                     onPress={handleClose}
@@ -329,6 +261,7 @@ export function SimilarGroupDetailOverlay({
                     <Ionicons name="close-outline" size={24} color={colors.text} />
                 </Pressable>
             </View>
+            {queueFeedback && <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: colors.textSecondary }]}>{queueFeedback}</Text>}
             {!isLoadingPhotos && photos.length > 0 && <Text style={[styles.hint, { color: colors.textSecondary }]}>{t(selectedIds.size > 0 ? 'similar_toggle_hint' : 'similar_select_hint')}</Text>}
             {!isLoadingPhotos && photos.length > 0 && unavailableCount > 0 && <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: colors.textSecondary }]}>{t('similar_unavailable_count', { count: unavailableCount })}</Text>}
 
@@ -380,13 +313,13 @@ export function SimilarGroupDetailOverlay({
                                 onPress={handleDeleteFromPreview}
                                 disabled={isDeleting}
                                 accessibilityRole="button"
-                                accessibilityLabel={t('delete')}
+                                accessibilityLabel={t('pending_add')}
                                 accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
                             >
                                 <Ionicons name="trash-outline" size={20} color={colors.dangerForeground} />
                             </Pressable>
                         </View>
-                        <Text style={[styles.hint, { color: colors.textSecondary }]}>{t('media_delete_warning')}</Text>
+                        <Text style={[styles.hint, { color: colors.textSecondary }]}>{t('pending_keep_hint')}</Text>
                         <View style={styles.previewMedia}>
                             <SimilarPhotoPreview key={`${previewPhoto.assetId}:${previewPhoto.uri}`} photo={previewPhoto} />
                         </View>
@@ -408,7 +341,7 @@ function SimilarPhotoPreview({ photo }: { photo: PhotoItem }) {
         if (attempt === 0) return;
         let active = true;
         setImage(null);
-        void MediaLibrary.getAssetInfoAsync(photo.assetId).then(info => {
+        void getReadableMediaInfo(photo.assetId).then(info => {
             const uri = info?.localUri || info?.uri || '';
             if (active) setImage({ uri, failed: !uri, attempt });
         }).catch(() => {

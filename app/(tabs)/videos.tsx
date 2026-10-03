@@ -5,12 +5,13 @@ import * as MediaLibrary from 'expo-media-library';
 // import { BlurView } from 'expo-blur'; // Removed to fix crash
 // import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, FlatList, Image, Linking, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, ViewToken } from 'react-native';
+import { ActivityIndicator, Alert, AppState, FlatList, Linking, NativeScrollEvent, NativeSyntheticEvent, Pressable, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
-import { BottomSheet } from '../../components/BottomSheet';
+import { PendingDeletionModal } from '../../components/PendingDeletionReview';
+import { getPendingDeletionEntries } from '../../services/pendingDeletion';
 import { VideoFeedItem } from '../../components/VideoFeedItem';
-import { BORDER_RADIUS, COLORS, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
+import { COLORS, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
@@ -24,9 +25,8 @@ export default function VideosScreen() {
 
     const {
         videos, loadVideos, isLoading, videoLoadFailed, hasHydrated,
-        markVideoForTrash, markVideoAsProcessed, videoTrashBin, confirmVideoTrash, restoreFromTrash,
-        isConfirmingVideoTrash,
-        addAssetToAlbum, hiddenVideoQueuedAssetIds, mediaLibraryRefreshVersion,
+        markVideoForTrash, markVideoAsProcessed,
+        addAssetToAlbum, mediaLibraryRefreshVersion,
     } = useMediaStore();
     const {
         displayOrder,
@@ -37,7 +37,6 @@ export default function VideosScreen() {
     const [activeId, setActiveId] = useState<string | null>(null);
     const [isMuted, setIsMuted] = useState(true);
     const [showTrash, setShowTrash] = useState(false);
-    const [trashDeleteFailed, setTrashDeleteFailed] = useState(false);
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [selectedVideoForCollection, setSelectedVideoForCollection] = useState<any>(null);
     const [isScreenFocused, setIsScreenFocused] = useState(true);
@@ -55,18 +54,8 @@ export default function VideosScreen() {
     const feedRef = useRef<FlatList>(null);
     const videosRef = useRef(videos);
     videosRef.current = videos;
-    const hiddenQueueIds = new Set(hiddenVideoQueuedAssetIds ?? []);
-    const videoPermissionScope = !videoPermission?.granted
-        ? 'none'
-        : videoPermission.accessPrivileges === 'limited'
-            ? 'limited'
-            : 'full';
     const hasLimitedVideoAccess = videoPermission?.accessPrivileges === 'limited';
-    const visibleVideoTrashBin = videoPermissionScope === 'full' && hiddenVideoQueuedAssetIds === null
-        ? videoTrashBin
-        : videoPermissionScope === 'limited' && hasHydrated && hiddenVideoQueuedAssetIds !== null
-            ? videoTrashBin.filter(video => !hiddenQueueIds.has(video.id))
-            : [];
+    const pendingCount = getPendingDeletionEntries(useMediaStore.getState()).length;
 
     const refreshVideoPermission = useCallback(async (): Promise<MediaLibrary.PermissionResponse | null> => {
         const requestId = ++videoPermissionRequestIdRef.current;
@@ -281,14 +270,7 @@ export default function VideosScreen() {
         setSelectedVideoForCollection(null);
     };
 
-    const handleRestoreFromTrash = (assetId: string) => {
-        restoreFromTrash(assetId);
-        setTrashDeleteFailed(false);
-        // A persisted trash item may belong to the filter that was active in
-        // an earlier session. Re-query the current scope instead of blindly
-        // inserting the restored asset into this feed.
-        void loadVideos(50, displayOrder, selectedAlbumIds);
-    };
+
 
     const onLayout = (event: any) => {
         const { height } = event.nativeEvent.layout;
@@ -428,13 +410,13 @@ export default function VideosScreen() {
                 </View>
                 <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`${t('video_trash_title')} · ${visibleVideoTrashBin.length}`}
-                    onPress={() => { setTrashDeleteFailed(false); setShowTrash(true); }}
+                    accessibilityLabel={t('pending_open', { count: pendingCount })}
+                    onPress={() => setShowTrash(true)}
                     style={({ pressed }) => [styles.trashIcon, { backgroundColor: pressed ? colors.selectionBackground : 'transparent', opacity: pressed ? 0.6 : 1 }]}
                 >
                     <Ionicons name="trash-bin-outline" size={20} color={colors.text} />
-                    <Text style={[styles.trashCount, { color: visibleVideoTrashBin.length ? colors.danger : colors.textSecondary }]}>
-                        {visibleVideoTrashBin.length > 99 ? '99+' : visibleVideoTrashBin.length}
+                    <Text style={[styles.trashCount, { color: pendingCount ? colors.danger : colors.textSecondary }]}>
+                        {pendingCount > 99 ? '99+' : pendingCount}
                     </Text>
                 </Pressable>
             </View>
@@ -520,88 +502,7 @@ export default function VideosScreen() {
                 </View>
             )}
 
-            {/* Trash Bin Modal */}
-            {showTrash && (
-                <BottomSheet
-                    visible={isFocused}
-                    title={t('video_trash_title')}
-                    onClose={() => { setShowTrash(false); setTrashDeleteFailed(false); }}
-                    footer={visibleVideoTrashBin.length > 0 ? (
-                        <>
-                            <Text style={[styles.deleteWarning, { color: colors.textSecondary }]}>{t('media_delete_warning')}</Text>
-                            <Pressable
-                                style={[styles.confirmDeleteBtn, { backgroundColor: colors.dangerBackground }, isConfirmingVideoTrash && { opacity: 0.6 }]}
-                                accessibilityRole="button"
-                                accessibilityLabel={t('video_confirm_delete')}
-                                onPress={async () => {
-                                setTrashDeleteFailed(false);
-                                try {
-                                    const requestedIds = visibleVideoTrashBin.map(video => video.id);
-                                    await confirmVideoTrash(requestedIds);
-                                    if (useMediaStore.getState().isConfirmingVideoTrash) return;
-
-                                    // The store keeps assets that failed the
-                                    // last-moment visibility check. Close only
-                                    // when every item that this confirmation
-                                    // started with is gone; otherwise leave the
-                                    // trash open so the remaining items can be
-                                    // retried instead of implying success.
-                                    const remainingTrashIds = new Set(
-                                        useMediaStore.getState().videoTrashBin.map(video => video.id)
-                                    );
-                                    if (requestedIds.every(id => !remainingTrashIds.has(id))) {
-                                        setShowTrash(false);
-                                    }
-                                } catch (error) {
-                                    console.error('Failed to permanently delete videos', error);
-                                    // A native Alert can end up below RN's modal window on
-                                    // Android. Keep recovery feedback inside this sheet.
-                                    setTrashDeleteFailed(true);
-                                }
-                            }}
-                                disabled={isConfirmingVideoTrash}
-                            >
-                                <Text style={[styles.confirmDeleteText, { color: colors.dangerForeground }]}>{t('video_confirm_delete')}</Text>
-                            </Pressable>
-                        </>
-                    ) : undefined}
-                >
-                    <ScrollView style={styles.trashContent}>
-                        {trashDeleteFailed && (
-                            <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.trashError, { color: colors.danger }]}>
-                                {language === 'zh' ? '未删除的视频仍在废纸篓中，请重试。' : 'Undeleted videos remain in the trash. Please try again.'}
-                            </Text>
-                        )}
-                        {visibleVideoTrashBin.length === 0 ? (
-                            <Text style={[styles.emptyTextSmall, { color: colors.textSecondary }]}>{t('video_trash_empty')}</Text>
-                        ) : (
-                            <FlatList
-                                data={visibleVideoTrashBin}
-                                keyExtractor={item => item.id}
-                                horizontal
-                                contentContainerStyle={{ gap: 12, paddingVertical: 8 }}
-                                renderItem={({ item }) => (
-                                    <View style={[styles.trashCard, { backgroundColor: colors.selectionBackground }]}>
-                                        <Image source={{ uri: item.uri }} style={styles.trashThumbnail} resizeMode="cover" />
-                                        <View style={styles.videoIconOverlay}>
-                                            <Ionicons name="videocam" size={20} color="white" />
-                                        </View>
-                                        <Pressable
-                                            style={[styles.restoreBtn, isConfirmingVideoTrash && { opacity: 0.5 }]}
-                                            onPress={() => handleRestoreFromTrash(item.id)}
-                                            disabled={isConfirmingVideoTrash}
-                                            accessibilityRole="button"
-                                            accessibilityLabel={`${t('video_restore')} · ${item.filename || item.id}`}
-                                        >
-                                            <Text style={[styles.restoreText, { color: colors.text }]}>{t('video_restore')}</Text>
-                                        </Pressable>
-                                    </View>
-                                )}
-                            />
-                        )}
-                    </ScrollView>
-                </BottomSheet>
-            )}
+            <PendingDeletionModal visible={showTrash && isFocused} onClose={() => setShowTrash(false)} />
 
             {/* Album Selector Modal */}
             <AlbumSelector
@@ -671,50 +572,5 @@ const styles = StyleSheet.create({
         fontWeight: '500',
         fontVariant: ['tabular-nums'],
     },
-    trashContent: { flexShrink: 1 },
-    trashError: { ...TYPOGRAPHY.body, marginBottom: 12 },
-    deleteWarning: { ...TYPOGRAPHY.secondary, marginBottom: 12 },
-    emptyTextSmall: {
-        textAlign: 'center',
-        paddingVertical: 40,
-    },
-    trashCard: {
-        width: 100,
-        borderRadius: BORDER_RADIUS.m,
-        overflow: 'hidden',
-    },
-    trashThumbnail: {
-        height: 120,
-        width: '100%',
-    },
-    videoIconOverlay: {
-        position: 'absolute',
-        top: 8,
-        left: 8,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-        borderRadius: 4,
-        padding: 2,
-    },
-    restoreBtn: {
-        width: '100%',
-        padding: 10,
-        minHeight: 44,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    restoreText: {
-        color: COLORS.white,
-        ...TYPOGRAPHY.secondary
-    },
-    confirmDeleteBtn: {
-        minHeight: UI_METRICS.buttonHeight,
-        paddingHorizontal: 16,
-        paddingVertical: 14,
-        borderRadius: UI_METRICS.buttonRadius,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    confirmDeleteText: {
-        ...TYPOGRAPHY.button
-    },
+
 });

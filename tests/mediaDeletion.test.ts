@@ -2,7 +2,7 @@ jest.mock('expo-media-library', () => ({ deleteAssetsAsync: jest.fn() }));
 
 import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
-import { deleteAssetsInBatches } from '../services/mediaDeletion';
+import { deleteAssetsInBatches, getDeletionFailureKind } from '../services/mediaDeletion';
 
 const nativeDelete = MediaLibrary.deleteAssetsAsync as jest.Mock;
 const osDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!;
@@ -15,6 +15,19 @@ function platform(os: string, version: number | string) {
 }
 
 beforeEach(() => nativeDelete.mockResolvedValue(true));
+
+it('distinguishes the SDK confirmation refusal from permission and provider failures', () => {
+    expect(getDeletionFailureKind(new Error("Call rejected: User didn't grant write permission to requested files."))).toBe('cancelled');
+    expect(getDeletionFailureKind(new Error('Missing media read permission'))).toBe('failed');
+    expect(getDeletionFailureKind(new Error('Provider unavailable'))).toBe('failed');
+});
+
+it('sanitizes native failure details without claiming a successful batch', async () => {
+    nativeDelete.mockRejectedValue(new Error('private synthetic path /not-a-real-photo.jpg'));
+    const reconcile = jest.fn();
+    await expect(deleteAssetsInBatches(['1'], reconcile)).rejects.toThrow('System deletion failed');
+    expect(reconcile).not.toHaveBeenCalled();
+});
 afterEach(() => {
     Object.defineProperty(Platform, 'OS', osDescriptor);
     Object.defineProperty(Platform, 'Version', versionDescriptor);

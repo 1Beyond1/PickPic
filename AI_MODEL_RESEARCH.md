@@ -51,6 +51,14 @@ MobileCLIP **代码 MIT 与权重许可不同**。当前官方 S0 与 V2 S0 权�
 
 ## 建议与后续验证
 
+### 追加：无需用户训练的其他现成路线
+
+- **Paddle 多标签分类**：官方提供 PP-LCNet_x1_0_ML（29.4 MB）和 PP-HGNetV2-B0_ML（39.6 MB）推理资源，COCO2017 mAP 分别为 77.96、80.98。任务本身比 ImageNet 单一竞争类别更适合同时出现猫、狗、食物等对象；不是私人相册准确率，也不能证明截图、文档、风景覆盖。官方耗时来自 Xeon / Tesla T4，不用于估算手机。需要确认 Android 转换/运行兼容、量化损失、APK 增量、内存及耗电，均未实测；PaddleX 代码 Apache-2.0，具体下载权重的许可链仍需核对。作为 ML Kit 后的专项候选，不要求用户训练。[官方模型及测试条件](https://paddlepaddle.github.io/PaddleX/latest/module_usage/tutorials/cv_modules/image_multilabel_classification.html)、[代码许可](https://github.com/PaddlePaddle/PaddleX/blob/develop/LICENSE)。
+- **Places365**：现成场景分类，可研究室内、街道、海边等场景，而非替代猫狗或文档模型。官方预训练模型为 CC BY，代码 MIT，分发需要适当署名；仓库未在该许可说明中指定 CC BY 版本，正式使用需确认对应文件条款。官方架构和部署格式不等于可直接接入手机，实际转换体积、速度、内存未知。本轮只作场景专项备选。[官方资源与许可说明](https://github.com/CSAILVision/places365)。
+- **华为 ML Kit**：官方列有图像分类与场景检测，可作为国内设备路线调查。这里未核实具体功能的本地/云端组合、首次下载、HMS 服务依赖、分发条款、体积与 RN 兼容，不能据产品页宣传全离线或通用机型可用；这些未决点使其暂不进入优先实施。[官方能力目录](https://developer.huawei.com/consumer/en/hms/huawei-mlkit/)。
+
+建议顺序仍为：bundled ML Kit 先做兼容性对比，Paddle 多标签做第二候选；模糊判断单独比较现成 PULC，不为了一个专项把整个相册分类换成大模型。场景专项和厂商 SDK 保留调查，不叠加多个引擎增加本轮包体与维护风险。所有评测与默认策略由开发者负责。
+
 1. 首先保留当前权重并验收大类展示，解决细分类目录和分数叠加问题。
 2. 若用户决定试新模型，第一候选为 ML Kit bundled 通用标签；先测常见相册类别与无 Play 服务环境，再决定迁移，不保证识别提升。
 3. 轻量 EfficientNet 可在明确速度瓶颈时比较，目标是耗时/内存取舍，而非凭空增加相册知识。当前文件与候选权重来源、许可、索引必须先核对。

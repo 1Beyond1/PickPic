@@ -2,6 +2,17 @@
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
+// Native rendering/decoding is verified on the isolated Android emulator.
+// These boundaries let feature tests exercise real review decisions in Jest.
+jest.mock('expo-image', () => ({ Image: require('react-native').Image }));
+jest.mock('expo-video', () => ({
+  VideoView: require('react-native').View,
+  useVideoPlayer: () => require('react').useMemo(() => ({
+    replaceAsync: jest.fn().mockResolvedValue(undefined),
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+  }), []),
+}));
+
 // Jest has no native binary. Exercise real portable scrypt here; the native
 // adapter has its own contract tests and an Android build/runtime smoke test.
 jest.mock('../services/backup/keyDerivation', () => jest.requireActual('../services/backup/keyDerivation.ts'));

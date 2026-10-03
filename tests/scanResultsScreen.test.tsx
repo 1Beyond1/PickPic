@@ -1,11 +1,12 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { ActivityIndicator, Alert, Image, Modal, StyleSheet } from 'react-native';
+import { act, fireEvent, renderAsync, screen, waitFor } from '@testing-library/react-native';
+import { ActivityIndicator, Image, Modal, StyleSheet } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 
 const mockMediaState = {
   permissionScope: 'full', mediaLibraryRefreshVersion: 0,
   removeDeletedAssets: jest.fn(),
+  deleteQueue: [], videoTrashBin: [], pendingDeletionInfo: {}, enqueuePendingDeletion: jest.fn(() => 1),
 };
 const mockRefreshAI = jest.fn().mockResolvedValue(undefined);
 const mockRouter = { navigate: jest.fn() };
@@ -57,7 +58,6 @@ jest.mock('../database', () => ({
 
 import ScanResultsScreen from '../app/(tabs)/scanResults';
 import { AssetRepository, DupGroupRepository } from '../database';
-import { getCurrentlyVisibleAssetIds } from '../stores/useMediaStore';
 
 describe('empty results and read failures', () => {
   beforeEach(() => {
@@ -80,7 +80,7 @@ describe('empty results and read failures', () => {
 
   it('does not claim a clean scan when no visible photos have completed analysis', async () => {
     (AssetRepository.getStatusCounts as jest.Mock).mockResolvedValue({ pending: 3, done: 0, error: 2 });
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_results_not_ready');
     expect(screen.queryByText('scan_no_blurry')).toBeNull();
     await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
@@ -93,7 +93,7 @@ describe('empty results and read failures', () => {
   it('shows a read error, not a clean scan, and retries the same result surface', async () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     (AssetRepository.getBlurryAssets as jest.Mock).mockRejectedValueOnce(new Error('SQLite busy'));
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_results_load_failed');
     expect(screen.queryByText('scan_no_blurry')).toBeNull();
     await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'retry' })); });
@@ -105,7 +105,7 @@ describe('empty results and read failures', () => {
 
   it('does not show stale category cards as actionable after a category read failure', async () => {
     mockCategories.hasError = true;
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
     expect(screen.getByText('scan_results_load_failed')).toBeTruthy();
@@ -120,7 +120,7 @@ describe('empty results and read failures', () => {
     (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'limited' });
     (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({ assets: [{ id: 'visible' }], hasNextPage: false });
     (AssetRepository.getStatusCounts as jest.Mock).mockResolvedValue({ pending: 0, done: 0, error: 0 });
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_results_not_ready');
     expect(AssetRepository.getStatusCounts).toHaveBeenCalledWith(['visible']);
     expect(AssetRepository.getBlurryAssets).toHaveBeenCalledWith(['visible'], 50);
@@ -128,7 +128,7 @@ describe('empty results and read failures', () => {
   });
 
   it('keeps the existing no-match copy after some visible photos actually completed scanning', async () => {
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
     expect(screen.getByText('scan_no_similar')).toBeTruthy();
@@ -141,7 +141,7 @@ describe('empty results and read failures', () => {
     mockCategories.objectGroups = [];
     mockCategories.completedCount = 0;
     try {
-      render(<ScanResultsScreen />);
+      await renderAsync(<ScanResultsScreen />);
       await screen.findByText('scan_no_blurry');
       await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
       expect(screen.getByText('scan_results_not_ready')).toBeTruthy();
@@ -159,10 +159,10 @@ describe('empty results and read failures', () => {
     let fail!: (error: Error) => void;
     const stale = new Promise<never>((_resolve, reject) => { fail = reject; });
     (AssetRepository.getBlurryAssets as jest.Mock).mockReturnValueOnce(stale).mockResolvedValue([]);
-    const view = render(<ScanResultsScreen />);
+    const view = await renderAsync(<ScanResultsScreen />);
     await waitFor(() => expect(AssetRepository.getBlurryAssets).toHaveBeenCalledTimes(1));
     mockMediaState.mediaLibraryRefreshVersion += 1;
-    view.rerender(<ScanResultsScreen />);
+    await view.rerenderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { fail(new Error('Old read failed')); });
     expect(screen.queryByText('scan_results_load_failed')).toBeNull();
@@ -181,7 +181,7 @@ describe('result navigation preserves media decisions', () => {
   });
 
   it('switches among all result types without deleting media or marking a group', async () => {
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
     expect(screen.getByText('scan_no_similar')).toBeTruthy();
@@ -194,7 +194,7 @@ describe('result navigation preserves media decisions', () => {
   });
 
   it('returns from a category on system back without changing the selected result tab', async () => {
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
     fireEvent.press(screen.getByText('Cat'));
@@ -209,7 +209,7 @@ describe('result navigation preserves media decisions', () => {
   });
 
   it('exposes named, selected, wrapping result tabs with at least 44dp targets', async () => {
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     const blurry = screen.getByRole('tab', { name: 'scan_tab_blur' });
     const similar = screen.getByRole('tab', { name: 'scan_tab_similar' });
@@ -225,7 +225,7 @@ describe('result navigation preserves media decisions', () => {
   });
 
   it('names a category entry and keeps its full title outside the media preview', async () => {
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
     const category = screen.getByRole('button', { name: 'Cat, scan_photo_count' });
@@ -237,7 +237,7 @@ describe('result navigation preserves media decisions', () => {
   });
 
   it('reserves the actual Dock and safe areas outside every result list', async () => {
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     expect(screen.getByTestId('scan-results')).toHaveStyle({ paddingTop: 60, paddingBottom: 89, paddingLeft: 0, paddingRight: 0 });
     expect(screen.getByRole('header', { name: 'tab_scan_results' })).toHaveStyle({ fontSize: 22, lineHeight: 30 });
@@ -245,7 +245,7 @@ describe('result navigation preserves media decisions', () => {
 
   it('does not offer the AI tab when classification is disabled', async () => {
     mockClassificationEnabled = false;
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     expect(screen.queryByRole('tab', { name: 'scan_tab_ai' })).toBeNull();
     expect(screen.getAllByRole('tab')).toHaveLength(2);
@@ -255,7 +255,7 @@ describe('result navigation preserves media decisions', () => {
   it('hides the covered result controls from accessibility until the similar detail closes', async () => {
     (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([{ group_id: 'group', representative_asset_id: 'first', best_asset_id: 'first' }]);
     (DupGroupRepository.getGroupMembers as jest.Mock).mockResolvedValue([{ asset_id: 'first' }, { asset_id: 'second' }]);
-    const view = render(<ScanResultsScreen />);
+    const view = await renderAsync(<ScanResultsScreen />);
     try {
       await screen.findByText('scan_no_blurry');
       await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
@@ -267,7 +267,7 @@ describe('result navigation preserves media decisions', () => {
       expect(screen.getByRole('tab', { name: 'scan_tab_similar' })).toBeSelected();
       expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
     } finally {
-      view.unmount();
+      await view.unmountAsync();
       (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([]);
     }
   });
@@ -281,7 +281,7 @@ function deferred<T>() {
 }
 
 async function openPhoto(beforePreview?: () => void) {
-  const view = render(<ScanResultsScreen />);
+  const view = await renderAsync(<ScanResultsScreen />);
   await screen.findByText('scan_no_blurry');
   await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
   await act(async () => { fireEvent.press(screen.getByText('Cat')); });
@@ -300,115 +300,66 @@ describe('scan result deletion safety', () => {
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([
       { asset_id: 'blurred', blur_score: 12, mean_luma: 80 },
     ]);
-    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));
-    (getCurrentlyVisibleAssetIds as jest.Mock).mockImplementation(async (ids: string[]) => new Set(ids));
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` }));
     (MediaLibrary.deleteAssetsAsync as jest.Mock).mockResolvedValue(true);
     (AssetRepository.removeAssetAndDerivedData as jest.Mock).mockResolvedValue(undefined);
   });
 
-  it('warns about unrecoverable deletion and cloud sync before confirming a blurry photo', async () => {
-    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
-    render(<ScanResultsScreen />);
-    const button = await screen.findByRole('button', { name: 'scan_delete_blurry_title' });
-    fireEvent.press(button);
-    expect(alert.mock.calls[0][1]).toContain('media_delete_warning');
-    expect(alert.mock.calls[0][2]![0]).toMatchObject({ text: 'cancel', style: 'cancel' });
-    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
-    expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
-  });
-
-  it('allows only one native deletion while a confirmed request is pending, then unlocks on failure', async () => {
-    const nativeDelete = deferred<boolean>();
-    (MediaLibrary.deleteAssetsAsync as jest.Mock).mockReturnValueOnce(nativeDelete.promise);
-    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
-    render(<ScanResultsScreen />);
+  it('adds a blurry result to pending deletion without a system deletion or index removal', async () => {
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_blur_score');
-    const deleteButton = screen.getByRole('button', { name: 'scan_delete_blurry_title' });
-    fireEvent.press(deleteButton);
-    const confirm = alert.mock.calls[0][2]![1].onPress!;
-    let first!: Promise<void>;
-    try {
-      await act(async () => {
-        first = confirm() as unknown as Promise<void>;
-        await Promise.resolve();
-      });
-      await act(async () => { await confirm(); });
-      expect(MediaLibrary.deleteAssetsAsync).toHaveBeenCalledTimes(1);
-      expect(deleteButton.props.accessibilityState.disabled).toBe(true);
-      expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
-    } finally {
-      await act(async () => { nativeDelete.resolve(false); await first; });
-    }
-    expect(screen.getByText('scan_blur_score')).toBeTruthy();
-    expect(deleteButton.props.accessibilityState.disabled).toBe(false);
-    expect(AssetRepository.removeAssetAndDerivedData).not.toHaveBeenCalled();
-    expect(alert).toHaveBeenLastCalledWith('delete_failed', expect.any(String));
-    fireEvent.press(deleteButton);
-    (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
-    await act(async () => { await alert.mock.calls.at(-1)![2]![1].onPress!(); });
-    expect(MediaLibrary.deleteAssetsAsync).toHaveBeenCalledTimes(2);
-    expect(mockMediaState.removeDeletedAssets).toHaveBeenCalledWith(['blurred']);
-    await screen.findByText('scan_no_blurry');
-  });
-
-  it('locks during preflight and fails closed when the selected photo is no longer visible', async () => {
-    const visibility = deferred<Set<string>>();
-    (getCurrentlyVisibleAssetIds as jest.Mock).mockReturnValueOnce(visibility.promise);
-    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
-    render(<ScanResultsScreen />);
-    const deleteButton = await screen.findByRole('button', { name: 'scan_delete_blurry_title' });
-    fireEvent.press(deleteButton);
-    const confirm = alert.mock.calls[0][2]![1].onPress!;
-    let request!: Promise<void>;
-    try {
-      await act(async () => { request = confirm() as unknown as Promise<void>; });
-      await act(async () => { await confirm(); });
-      expect(getCurrentlyVisibleAssetIds).toHaveBeenCalledTimes(1);
-      expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
-      fireEvent.press(deleteButton);
-      expect(alert).toHaveBeenCalledTimes(1);
-    } finally {
-      await act(async () => { visibility.resolve(new Set()); await request; });
-    }
+    await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'pending_add' })); });
+    expect(mockMediaState.enqueuePendingDeletion).toHaveBeenCalledWith([expect.objectContaining({ id: 'blurred', mediaType: 'photo' })], 'blur');
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
     expect(mockMediaState.removeDeletedAssets).not.toHaveBeenCalled();
     expect(AssetRepository.removeAssetAndDerivedData).not.toHaveBeenCalled();
-    expect(screen.getByText('scan_blur_score')).toBeTruthy();
-    expect(deleteButton.props.accessibilityState.disabled).toBe(false);
+    expect(screen.getByText('pending_added')).toBeTruthy();
   });
 
-  it('does not preflight or delete when the application confirmation is cancelled', async () => {
-    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
-    render(<ScanResultsScreen />);
-    const deleteButton = await screen.findByRole('button', { name: 'scan_delete_blurry_title' });
-    fireEvent.press(deleteButton);
-    expect(alert.mock.calls[0][2]![0]).toMatchObject({ text: 'cancel', style: 'cancel' });
-    expect(getCurrentlyVisibleAssetIds).not.toHaveBeenCalled();
+  it('locks during an asset read and leaves the queue unchanged when that read fails', async () => {
+    const info = deferred<any>();
+    await renderAsync(<ScanResultsScreen />);
+    await screen.findByText('scan_blur_score');
+    mockMediaState.enqueuePendingDeletion.mockClear();
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockReturnValueOnce(info.promise);
+    fireEvent.press(screen.getByRole('button', { name: 'pending_add' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'pending_add' })).toBeDisabled());
+    fireEvent.press(screen.getByRole('button', { name: 'pending_add' }));
+    await act(async () => { info.reject(new Error('Synthetic unavailable photo')); });
+    expect(screen.getByRole('button', { name: 'pending_add' })).toBeEnabled();
+    expect(screen.getByText('pending_add_failed')).toBeTruthy();
+    expect(mockMediaState.enqueuePendingDeletion).not.toHaveBeenCalled();
     expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
-    expect(deleteButton.props.accessibilityState.disabled).toBe(false);
   });
 
-  it('keeps a successful native deletion successful even if best-effort index cleanup fails', async () => {
-    jest.spyOn(console, 'error').mockImplementation(() => {});
-    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
-    (AssetRepository.removeAssetAndDerivedData as jest.Mock).mockRejectedValueOnce(new Error('SQLite busy'));
-    render(<ScanResultsScreen />);
-    fireEvent.press(await screen.findByRole('button', { name: 'scan_delete_blurry_title' }));
+  it('shows a classification queue decision inside the open photo preview without physically deleting', async () => {
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
-    await act(async () => { await alert.mock.calls[0][2]![1].onPress!(); });
-    await screen.findByText('scan_no_blurry');
-    expect(mockMediaState.removeDeletedAssets).toHaveBeenCalledWith(['blurred']);
-    expect(MediaLibrary.deleteAssetsAsync).toHaveBeenCalledTimes(1);
-    expect(alert).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('button', { name: 'scan_delete_blurry_title' })).toBeNull();
+    await openPhoto();
+    await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'pending_add' })); });
+    await waitFor(() => expect(screen.getByTestId('category-queue-feedback').props.children).toBe('pending_added'));
+    expect(mockMediaState.enqueuePendingDeletion).toHaveBeenCalledWith([expect.objectContaining({ id: 'category-photo', mediaType: 'photo' })], 'classification');
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    expect(screen.getByTestId('category-photo-preview')).toBeTruthy();
+  });
+
+  it('fails closed on denied permission without queueing or requesting deletion', async () => {
+    await renderAsync(<ScanResultsScreen />);
+    await screen.findByText('scan_blur_score');
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: false });
+    mockMediaState.enqueuePendingDeletion.mockClear();
+    await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'pending_add' })); });
+    expect(screen.getByText('pending_add_failed')).toBeTruthy();
+    expect(mockMediaState.enqueuePendingDeletion).not.toHaveBeenCalled();
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
   });
 
   it('does not republish a delayed full-access result after the visible media selection changes', async () => {
     const staleRead = deferred<{ asset_id: string; blur_score: number; mean_luma: number }[]>();
     (AssetRepository.getBlurryAssets as jest.Mock).mockReturnValueOnce(staleRead.promise).mockResolvedValue([]);
-    const view = render(<ScanResultsScreen />);
+    const view = await renderAsync(<ScanResultsScreen />);
     await waitFor(() => expect(AssetRepository.getBlurryAssets).toHaveBeenCalledTimes(1));
     mockMediaState.mediaLibraryRefreshVersion += 1;
-    view.rerender(<ScanResultsScreen />);
+    await view.rerenderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { staleRead.resolve([{ asset_id: 'old-hidden', blur_score: 5, mean_luma: 90 }]); });
     expect(screen.queryByText('scan_blur_score')).toBeNull();
@@ -426,7 +377,7 @@ describe('category photo viewing', () => {
   });
 
   it('provides a named and reachable category close control without changing media', async () => {
-    render(<ScanResultsScreen />);
+    await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
     await act(async () => { fireEvent.press(screen.getByText('Cat')); });
@@ -451,7 +402,7 @@ describe('category photo viewing', () => {
   });
 
   it('gives each category photo a named open action rather than an unnamed image target', async () => {
-    const view = render(<ScanResultsScreen />);
+    const view = await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
     await act(async () => { fireEvent.press(screen.getByText('Cat')); });
@@ -459,14 +410,14 @@ describe('category photo viewing', () => {
     await act(async () => { fireEvent.press(photo); });
     expect(screen.getByRole('button', { name: 'close' })).toBeTruthy();
     expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
-    view.unmount();
+    await view.unmountAsync();
   });
 
   it('keeps long category headings flexible while reserving a non-shrinking close target', async () => {
     const originalTitle = mockCategory.title;
     mockCategory.title = 'A category with a long translated title';
     try {
-      render(<ScanResultsScreen />);
+      await renderAsync(<ScanResultsScreen />);
       await screen.findByText('scan_no_blurry');
       await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
       await act(async () => { fireEvent.press(screen.getByRole('button', { name: `${mockCategory.title}, scan_photo_count` })); });
@@ -551,7 +502,7 @@ describe('category photo viewing', () => {
       (MediaLibrary.getAssetInfoAsync as jest.Mock).mockReturnValueOnce(lookup.promise);
     });
     mockMediaState.mediaLibraryRefreshVersion += 1;
-    view.rerender(<ScanResultsScreen />);
+    await view.rerenderAsync(<ScanResultsScreen />);
     await act(async () => { lookup.resolve({ uri: 'file:///stale.jpg' }); await lookup.promise; });
     expect(screen.UNSAFE_getAllByType(Modal).every(modal => !modal.props.visible)).toBe(true);
     expect(screen.UNSAFE_getAllByType(Image).some(image => image.props.source.uri === 'file:///stale.jpg')).toBe(false);

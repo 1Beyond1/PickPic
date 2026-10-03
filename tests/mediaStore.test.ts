@@ -32,6 +32,7 @@ import { waitFor } from '@testing-library/react-native';
 import { Platform } from 'react-native';
 import { AssetRepository } from '../database';
 import { getCurrentlyVisibleAssetIds, useMediaStore } from '../stores/useMediaStore';
+import { getPendingDeletionEntries } from '../services/pendingDeletion';
 
 const mockRemoveAssetAndDerivedData = AssetRepository.removeAssetAndDerivedData as jest.Mock;
 
@@ -60,6 +61,9 @@ describe('media visibility checks', () => {
       deleteQueue: [],
       collectionQueue: [],
       videoTrashBin: [],
+      pendingDeletionInfo: {},
+      deletedCounts: { photos: 0, videos: 0 },
+      lastDeletionResult: null,
       photoProcessedIds: [],
       videoProcessedIds: [],
       totalPhotos: 0,
@@ -113,6 +117,109 @@ describe('media visibility checks', () => {
     expect(useMediaStore.getState().keepPhotoFromDeleteQueue('restored')).toBe(true);
     expect(useMediaStore.getState().photoProcessedIds).toEqual(['restored']);
     expect(useMediaStore.getState().deleteQueue).toEqual([]);
+  });
+
+  describe('shared pending deletion decisions', () => {
+    const photo = { id: 'photo', mediaType: 'photo', uri: 'file:///synthetic-photo.jpg' } as any;
+    const video = { id: 'video', mediaType: 'video', uri: 'file:///synthetic-video.mp4' } as any;
+
+    beforeEach(() => getAssetInfoAsync.mockImplementation(async (id: string) => ({ id })));
+
+    it('queues mixed media once without physically deleting or losing the first source', () => {
+      useMediaStore.setState({ photoProcessedIds: ['photo'], collectionQueue: [photo], videos: [video] });
+      expect(useMediaStore.getState().enqueuePendingDeletion([photo, video, photo], 'similar')).toBe(2);
+      const firstInfo = useMediaStore.getState().pendingDeletionInfo;
+      expect(useMediaStore.getState().enqueuePendingDeletion([photo, video], 'classification')).toBe(0);
+      expect(getPendingDeletionEntries(useMediaStore.getState()).map(entry => [entry.asset.id, entry.type, entry.source]))
+        .toEqual([['photo', 'photo', 'similar'], ['video', 'video', 'similar']]);
+      expect(useMediaStore.getState()).toMatchObject({
+        collectionQueue: [], videos: [], photoProcessedIds: ['photo'], videoProcessedIds: ['video'],
+        deletedCounts: { photos: 0, videos: 0 }, pendingDeletionInfo: firstInfo,
+      });
+      expect(deleteAssetsAsync).not.toHaveBeenCalled();
+    });
+
+    it('keeping a queued video remains processed and removes only its deletion decision', () => {
+      useMediaStore.getState().enqueuePendingDeletion([photo, video], 'blur');
+      useMediaStore.getState().restoreFromTrash('video');
+      expect(useMediaStore.getState()).toMatchObject({
+        deleteQueue: [photo], videoTrashBin: [], videoProcessedIds: ['video'],
+        pendingDeletionInfo: { photo: expect.objectContaining({ source: 'blur' }) },
+      });
+      expect(useMediaStore.getState().pendingDeletionInfo.video).toBeUndefined();
+      expect(deleteAssetsAsync).not.toHaveBeenCalled();
+    });
+
+    it('keeping and undoing a photo have different processing semantics', () => {
+      useMediaStore.getState().enqueuePendingDeletion([photo], 'photos');
+      expect(useMediaStore.getState().keepPendingDeletion('photo')).toBe(true);
+      expect(useMediaStore.getState().photoProcessedIds).toEqual(['photo']);
+      useMediaStore.getState().enqueuePendingDeletion([photo], 'classification');
+      useMediaStore.getState().undoAction('photo');
+      expect(useMediaStore.getState()).toMatchObject({ deleteQueue: [], photoProcessedIds: [], pendingDeletionInfo: {} });
+    });
+
+    it('records a mixed partial confirmation without discarding the cancelled video', async () => {
+      useMediaStore.getState().enqueuePendingDeletion([photo, video], 'photos');
+      deleteAssetsAsync.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      const result = await useMediaStore.getState().confirmPendingDeletion();
+      expect(result).toEqual({ status: 'partial', requestedIds: ['photo', 'video'], deletedIds: ['photo'], remainingIds: ['video'], failureKind: 'cancelled' });
+      expect(deleteAssetsAsync.mock.calls.map(([batch]) => batch.map((item: any) => typeof item === 'string' ? item : item.id)))
+        .toEqual([['photo'], ['video']]);
+      expect(useMediaStore.getState()).toMatchObject({
+        deleteQueue: [], videoTrashBin: [video], deletedCounts: { photos: 1, videos: 0 },
+        isConfirmingDeletion: false, isConfirmingVideoTrash: false,
+      });
+      expect(mockRemoveAssetAndDerivedData).toHaveBeenCalledWith('photo');
+      expect(getAssetsAsync).not.toHaveBeenCalled(); // A cancellation is not a deletion receipt.
+    });
+
+    it('does not open the second media prompt after the first is cancelled', async () => {
+      useMediaStore.getState().enqueuePendingDeletion([photo, video], 'photos');
+      deleteAssetsAsync.mockResolvedValue(false);
+      expect(await useMediaStore.getState().confirmPendingDeletion()).toMatchObject({ status: 'cancelled', deletedIds: [], remainingIds: ['photo', 'video'] });
+      expect(deleteAssetsAsync).toHaveBeenCalledTimes(1);
+      expect(useMediaStore.getState().deletedCounts).toEqual({ photos: 0, videos: 0 });
+    });
+
+    it('does not turn externally removed media into app deletion statistics', () => {
+      useMediaStore.getState().enqueuePendingDeletion([photo, video], 'photos');
+      useMediaStore.getState().removeDeletedAssets(['photo', 'video']);
+      expect(getPendingDeletionEntries(useMediaStore.getState())).toEqual([]);
+      expect(useMediaStore.getState().deletedCounts).toEqual({ photos: 0, videos: 0 });
+    });
+
+    it('reconciles a provider rejection after one item is gone only with complete full-access evidence', async () => {
+      const other = { ...photo, id: 'other' };
+      useMediaStore.getState().enqueuePendingDeletion([photo, other], 'photos');
+      getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+      deleteAssetsAsync.mockRejectedValue(new Error('Provider stopped after first deletion'));
+      getAssetsAsync.mockResolvedValue({ assets: [other], hasNextPage: false, endCursor: '', totalCount: 1 });
+      expect(await useMediaStore.getState().confirmPendingDeletion()).toMatchObject({ status: 'partial', deletedIds: ['photo'], remainingIds: ['other'], failureKind: 'failed' });
+      expect(useMediaStore.getState()).toMatchObject({ deleteQueue: [other], deletedCounts: { photos: 1, videos: 0 } });
+      expect(deleteAssetsAsync).toHaveBeenCalledTimes(1); // No fallback or automatic retry.
+    });
+
+    it.each(['limited', 'read-error', 'permission-changed', 'cursor-cycle'] as const)
+      ('retains all unresolved items after a failed delete with %s evidence', async evidence => {
+        useMediaStore.getState().enqueuePendingDeletion([photo], 'photos');
+        getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: evidence === 'limited' ? 'limited' : 'all' });
+        deleteAssetsAsync.mockRejectedValue(new Error('Provider unavailable'));
+        if (evidence === 'read-error') getAssetsAsync.mockRejectedValue(new Error('Read unavailable'));
+        if (evidence === 'permission-changed') getAssetsAsync.mockImplementation(async () => {
+          useMediaStore.getState().notifyPermissionRefresh();
+          return { assets: [], hasNextPage: false, endCursor: '' };
+        });
+        if (evidence === 'cursor-cycle') {
+          getAssetsAsync.mockResolvedValueOnce({ assets: [], hasNextPage: true, endCursor: 'a' })
+            .mockResolvedValueOnce({ assets: [], hasNextPage: true, endCursor: 'b' })
+            .mockResolvedValueOnce({ assets: [], hasNextPage: true, endCursor: 'a' });
+        }
+        expect(await useMediaStore.getState().confirmPendingDeletion()).toMatchObject({ status: 'failed', deletedIds: [], remainingIds: ['photo'] });
+        expect(useMediaStore.getState()).toMatchObject({ deleteQueue: [photo], deletedCounts: { photos: 0, videos: 0 } });
+        expect(mockRemoveAssetAndDerivedData).not.toHaveBeenCalled();
+        if (evidence === 'cursor-cycle') expect(getAssetsAsync).toHaveBeenCalledTimes(3);
+      });
   });
 
   it.each(['photo', 'video'] as const)('exposes a recoverable %s read failure without changing queued decisions', async mediaType => {

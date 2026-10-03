@@ -48,6 +48,35 @@ it('reopens encrypted records with the same system key and a fresh adapter', asy
     expect(await createEncryptedStorage('records').getItem(name)).toBe(legacy);
 });
 
+it('protects pending-deletion sources and confirmed counts in the same authenticated record', async () => {
+    const snapshot = JSON.stringify({ state: {
+        photoProcessedIds: ['fixture-id'], deleteQueue: [{ id: 'fixture-delete' }],
+        pendingDeletionInfo: { 'fixture-delete': { source: 'similar', addedAt: 123 } },
+        deletedCounts: { photos: 2, videos: 1 },
+    }, version: 0 });
+    const storage = createEncryptedStorage('records');
+    await storage.getItem(name);
+    await storage.setItem(name, snapshot);
+    expect(disk.get(encryptedName)).not.toContain('fixture-delete');
+    expect(disk.get(encryptedName)).not.toContain('similar');
+    expect(await createEncryptedStorage('records').getItem(name)).toBe(snapshot);
+});
+
+it.each([
+    { pendingDeletionInfo: { fixture: { source: 'invented', addedAt: 1 } } },
+    { pendingDeletionInfo: { fixture: { source: 'photos', addedAt: -1 } } },
+    { pendingDeletionInfo: [] },
+    { deletedCounts: { photos: -1, videos: 0 } },
+    { deletedCounts: { photos: 0, videos: 0.5 } },
+])('preserves malformed queue metadata rather than migrating and overwriting it: %j', async extra => {
+    const snapshot = JSON.stringify({ state: { photoProcessedIds: ['fixture-id'], ...extra }, version: 0 });
+    disk.set(name, snapshot);
+    await expect(createEncryptedStorage('records').getItem(name)).rejects.toThrow();
+    expect(disk.get(name)).toBe(snapshot);
+    expect(AsyncStorage.removeItem).not.toHaveBeenCalled();
+    expect(disk.get(encryptedName)).toBeUndefined();
+});
+
 it('leaves old records intact when migration write or verification fails', async () => {
     disk.set(name, legacy);
     jest.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('disk full'));

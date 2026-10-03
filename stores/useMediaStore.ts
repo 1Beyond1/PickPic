@@ -8,7 +8,10 @@ import { usePrivacyStore } from './usePrivacyStore';
 import { isRecordTransferActive } from '../services/recordOperationLock';
 import { Platform } from 'react-native';
 import { AssetRepository } from '../database';
-import { deleteAssetsInBatches } from '../services/mediaDeletion';
+import { deleteAssetsInBatches, getDeletionFailureKind } from '../services/mediaDeletion';
+import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
+import { getPendingDeletionEntries, retainPendingDeletionInfo, PendingDeletionIncompleteError } from '../services/pendingDeletion';
+import type { PendingDeletionInfo, PendingDeletionResult, PendingDeletionSource } from '../services/pendingDeletion';
 import { DisplayOrder, useSettingsStore } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
@@ -58,18 +61,8 @@ export async function getCurrentlyVisibleAssetIds(
 
     if (!permission.granted) return new Set();
 
-    const visible = await Promise.all(requestedIds.map(async assetId => {
-        try {
-            const info = await MediaLibrary.getAssetInfoAsync(assetId, {
-                shouldDownloadFromNetwork: false,
-            });
-            return info?.id === assetId ? assetId : null;
-        } catch {
-            return null;
-        }
-    }));
-
-    return new Set(visible.filter((assetId): assetId is string => assetId !== null));
+    const visible = await getReadableMediaInfos(requestedIds, mediaType);
+    return new Set(visible.keys());
 }
 
 async function getCurrentlyVisibleQueuedAssets<T extends { id: string }>(
@@ -82,6 +75,32 @@ async function getCurrentlyVisibleQueuedAssets<T extends { id: string }>(
         mediaType,
     );
     return assets.filter(asset => visibleIds.has(asset.id));
+}
+
+/** SDK deletion can reject after deleting some members of one request. Only
+ * a successful full-access enumeration can establish absence: a denied,
+ * limited, failed or incomplete lookup must never stand for physical deletion. */
+async function findGoneAfterFailedDeletion(assets: readonly PhotoAsset[], type: MediaType): Promise<PhotoAsset[]> {
+    try {
+        const before = await MediaLibrary.getPermissionsAsync(false, [type]);
+        if (!before.granted || before.accessPrivileges !== 'all') return [];
+        const permissionVersion = useMediaStore.getState().permissionRefreshVersion;
+        const remaining = new Set(assets.map(asset => asset.id));
+        const seenCursors = new Set<string>();
+        let after: string | undefined;
+        while (true) {
+            const result = await MediaLibrary.getAssetsAsync({ mediaType: type, first: 200, ...(after ? { after } : {}) });
+            for (const asset of result.assets) remaining.delete(asset.id);
+            if (!result.hasNextPage) break;
+            if (!result.endCursor || seenCursors.has(result.endCursor)) return [];
+            seenCursors.add(result.endCursor);
+            after = result.endCursor;
+        }
+        const finalPermission = await MediaLibrary.getPermissionsAsync(false, [type]);
+        if (!finalPermission.granted || finalPermission.accessPrivileges !== 'all'
+            || permissionVersion !== useMediaStore.getState().permissionRefreshVersion) return [];
+        return assets.filter(asset => remaining.has(asset.id));
+    } catch { return []; }
 }
 
 function retainHiddenQueuedAssetIds(
@@ -108,6 +127,9 @@ interface MediaState {
     deleteQueue: PhotoAsset[];
     collectionQueue: PhotoAsset[];
     videoTrashBin: PhotoAsset[];
+    pendingDeletionInfo: Record<string, PendingDeletionInfo>;
+    deletedCounts: { photos: number; videos: number };
+    lastDeletionResult: PendingDeletionResult | null;
 
     // Separated progress tracking
     photoProcessedIds: string[];
@@ -138,6 +160,9 @@ interface MediaState {
     loadVideos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[]) => Promise<void>;
 
     markForDeletion: (asset: PhotoAsset) => void;
+    enqueuePendingDeletion: (assets: readonly PhotoAsset[], source: PendingDeletionSource) => number;
+    keepPendingDeletion: (assetId: string) => boolean;
+    confirmPendingDeletion: (assetIds?: readonly string[]) => Promise<PendingDeletionResult>;
     markForCollection: (asset: PhotoAsset) => void;
     markAsSkipped: (asset: PhotoAsset) => void;
     undoAction: (assetId: string) => void;
@@ -175,6 +200,18 @@ interface OrderedAlbumPage {
     index: number;
     hasNextPage: boolean;
     endCursor: string;
+}
+
+function removeDeletedState(state: MediaState, deletedIds: ReadonlySet<string>): Partial<MediaState> {
+    const deleteQueue = state.deleteQueue.filter(asset => !deletedIds.has(asset.id));
+    const videoTrashBin = state.videoTrashBin.filter(asset => !deletedIds.has(asset.id));
+    return { deleteQueue, videoTrashBin,
+        collectionQueue: state.collectionQueue.filter(asset => !deletedIds.has(asset.id)),
+        pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue, videoTrashBin }),
+        photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
+        videoProcessedIds: state.videoProcessedIds.filter(id => !deletedIds.has(id)),
+        hiddenPhotoQueuedAssetIds: state.hiddenPhotoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
+        hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null };
 }
 
 async function normalizeAlbumIds(albumIds: readonly string[]): Promise<string[]> {
@@ -509,6 +546,9 @@ export const useMediaStore = create<MediaState>()(
     deleteQueue: [],
     collectionQueue: [],
     videoTrashBin: [],
+    pendingDeletionInfo: {},
+    deletedCounts: { photos: 0, videos: 0 },
+    lastDeletionResult: null,
 
     isLoading: false,
     photoLoadFailed: false,
@@ -563,7 +603,7 @@ export const useMediaStore = create<MediaState>()(
 
         void Promise.all(queuedAssetIds.map(async assetId => {
             try {
-                const info = await MediaLibrary.getAssetInfoAsync(assetId, {
+                const info = await getReadableMediaInfo(assetId, mediaType, {
                     shouldDownloadFromNetwork: false,
                 });
                 return info?.id === assetId ? null : assetId;
@@ -754,15 +794,31 @@ export const useMediaStore = create<MediaState>()(
         }
     },
 
-    markForDeletion: (asset) => {
-        set((state) => {
-            if (state.photoProcessedIds.includes(asset.id)) return state;
-            return {
-                deleteQueue: [...state.deleteQueue, asset],
-                photoProcessedIds: [...state.photoProcessedIds, asset.id]
-            };
+    enqueuePendingDeletion: (assets, source) => {
+        if (isRecordTransferActive()) return 0;
+        let added = 0;
+        set(state => {
+            const alreadyQueued = new Set(getPendingDeletionEntries(state).map(entry => entry.asset.id));
+            const deleteQueue = [...state.deleteQueue], videoTrashBin = [...state.videoTrashBin];
+            const photoProcessed = new Set(state.photoProcessedIds), videoProcessed = new Set(state.videoProcessedIds);
+            const pendingDeletionInfo = { ...state.pendingDeletionInfo };
+            const newlyQueued = new Set<string>();
+            for (const asset of assets) {
+                if (!asset.id || (asset.mediaType !== 'photo' && asset.mediaType !== 'video') || alreadyQueued.has(asset.id)) continue;
+                alreadyQueued.add(asset.id); newlyQueued.add(asset.id); added++;
+                pendingDeletionInfo[asset.id] = { source, addedAt: Date.now() };
+                if (asset.mediaType === 'video') { videoTrashBin.push(asset); videoProcessed.add(asset.id); }
+                else { deleteQueue.push(asset); photoProcessed.add(asset.id); }
+            }
+            if (!added) return state;
+            return { deleteQueue, videoTrashBin, pendingDeletionInfo, lastDeletionResult: null,
+                collectionQueue: state.collectionQueue.filter(asset => !newlyQueued.has(asset.id)),
+                videos: state.videos.filter(asset => !newlyQueued.has(asset.id)),
+                photoProcessedIds: [...photoProcessed], videoProcessedIds: [...videoProcessed] };
         });
+        return added;
     },
+    markForDeletion: asset => { get().enqueuePendingDeletion([asset], 'photos'); },
 
     markForCollection: (asset) => {
         set((state) => {
@@ -780,27 +836,37 @@ export const useMediaStore = create<MediaState>()(
             : { photoProcessedIds: [...state.photoProcessedIds, asset.id] });
     },
 
-    keepPhotoFromDeleteQueue: (assetId) => {
+    keepPendingDeletion: (assetId) => {
         let kept = false;
         set((state) => {
-            if (state.isConfirmingDeletion || !state.deleteQueue.some(photo => photo.id === assetId)) return state;
+            if (state.isConfirmingDeletion || state.isConfirmingVideoTrash || isRecordTransferActive()) return state;
+            const entry = getPendingDeletionEntries(state).find(item => item.asset.id === assetId);
+            if (!entry) return state;
             kept = true;
             const deleteQueue = state.deleteQueue.filter(photo => photo.id !== assetId);
+            const videoTrashBin = state.videoTrashBin.filter(video => video.id !== assetId);
             return {
-                deleteQueue,
-                photoProcessedIds: state.photoProcessedIds.includes(assetId)
+                deleteQueue, videoTrashBin,
+                pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue, videoTrashBin }),
+                lastDeletionResult: null,
+                photoProcessedIds: entry.type !== 'photo' || state.photoProcessedIds.includes(assetId)
                     ? state.photoProcessedIds
                     : [...state.photoProcessedIds, assetId],
+                videoProcessedIds: entry.type !== 'video' || state.videoProcessedIds.includes(assetId)
+                    ? state.videoProcessedIds : [...state.videoProcessedIds, assetId],
                 hiddenPhotoQueuedAssetIds: state.permissionScope === 'full'
                     ? null
                     : retainHiddenQueuedAssetIds(state.hiddenPhotoQueuedAssetIds, [
                         ...deleteQueue.map(photo => photo.id),
                         ...state.collectionQueue.map(photo => photo.id),
                     ]),
+                hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds === null ? null
+                    : retainHiddenQueuedAssetIds(state.hiddenVideoQueuedAssetIds, videoTrashBin.map(asset => asset.id)),
             };
         });
         return kept;
     },
+    keepPhotoFromDeleteQueue: assetId => get().deleteQueue.some(asset => asset.id === assetId) && get().keepPendingDeletion(assetId),
 
     undoAction: (assetId) => {
         set((state) => state.isConfirmingDeletion
@@ -808,22 +874,12 @@ export const useMediaStore = create<MediaState>()(
             : {
                 deleteQueue: state.deleteQueue.filter(p => p.id !== assetId),
                 collectionQueue: state.collectionQueue.filter(p => p.id !== assetId),
+                pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue: state.deleteQueue.filter(asset => asset.id !== assetId) }),
                 photoProcessedIds: state.photoProcessedIds.filter(id => id !== assetId)
             });
     },
 
-    markVideoForTrash: (asset) => {
-        set((state) => {
-            if (state.videoTrashBin.some(video => video.id === asset.id)) return state;
-            return {
-                videos: state.videos.filter(v => v.id !== asset.id),
-                videoTrashBin: [...state.videoTrashBin, asset],
-                videoProcessedIds: state.videoProcessedIds.includes(asset.id)
-                    ? state.videoProcessedIds
-                    : [...state.videoProcessedIds, asset.id]
-            };
-        });
-    },
+    markVideoForTrash: asset => { get().enqueuePendingDeletion([asset], 'videos'); },
 
     markVideoAsProcessed: (asset) => {
         set((state) => state.videoProcessedIds.includes(asset.id)
@@ -832,32 +888,14 @@ export const useMediaStore = create<MediaState>()(
     },
 
     restoreFromTrash: (assetId) => {
-        const trash = get().videoTrashBin;
-        const asset = trash.find(v => v.id === assetId);
-        if (asset) {
-            set((state) => state.isConfirmingVideoTrash
-                ? state
-                : {
-                    videoTrashBin: state.videoTrashBin.filter(v => v.id !== assetId),
-                    videos: [asset, ...state.videos],
-                    videoProcessedIds: state.videoProcessedIds.filter(id => id !== assetId)
-            });
-        }
+        if (get().videoTrashBin.some(asset => asset.id === assetId)) get().keepPendingDeletion(assetId);
     },
 
     removeDeletedAssets: (assetIds) => {
         const deletedIds = new Set(assetIds);
         if (deletedIds.size === 0) return;
 
-        set((state) => ({
-            deleteQueue: state.deleteQueue.filter(asset => !deletedIds.has(asset.id)),
-            collectionQueue: state.collectionQueue.filter(asset => !deletedIds.has(asset.id)),
-            videoTrashBin: state.videoTrashBin.filter(asset => !deletedIds.has(asset.id)),
-            photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
-            videoProcessedIds: state.videoProcessedIds.filter(id => !deletedIds.has(id)),
-            hiddenPhotoQueuedAssetIds: state.hiddenPhotoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
-            hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
-        }));
+        set(state => removeDeletedState(state, deletedIds));
     },
 
     pruneUnavailableQueuedAssets: (scope, mediaType = 'photo') => {
@@ -876,7 +914,7 @@ export const useMediaStore = create<MediaState>()(
 
         void Promise.all(queuedAssetIds.map(async assetId => {
             try {
-                const info = await MediaLibrary.getAssetInfoAsync(assetId, {
+                const info = await getReadableMediaInfo(assetId, mediaType, {
                     shouldDownloadFromNetwork: false,
                 });
                 return info?.id === assetId ? null : assetId;
@@ -985,89 +1023,69 @@ export const useMediaStore = create<MediaState>()(
             });
     },
 
-    confirmDeletion: async (assetIds) => {
-        if (isRecordTransferActive()) return [];
-        if (get().isConfirmingDeletion) return [];
-        const requestedIds = assetIds === undefined ? null : new Set(assetIds);
-        if (requestedIds?.size === 0) return [];
-        set({ isConfirmingDeletion: true });
+    confirmPendingDeletion: async assetIds => {
+        const requested = assetIds === undefined ? null : new Set(assetIds);
+        const snapshot = getPendingDeletionEntries(get()).filter(entry => requested === null || requested.has(entry.asset.id));
+        const requestedIds = snapshot.map(entry => entry.asset.id);
+        if (isRecordTransferActive() || get().isConfirmingDeletion || get().isConfirmingVideoTrash) {
+            return { status: 'busy', requestedIds, deletedIds: [], remainingIds: requestedIds, failureKind: null };
+        }
+        const deleted = new Set<string>();
+        let failed: 'cancelled' | 'failed' | null = null;
+        // One lock across photo/video requests prevents overlapping OS dialogs
+        // and keeps changes to a decision frozen while it is being confirmed.
+        set({ isConfirmingDeletion: true, isConfirmingVideoTrash: true, lastDeletionResult: null });
+        const settle = async (assets: readonly PhotoAsset[], type: MediaType) => {
+            const newAssets = assets.filter(asset => !deleted.has(asset.id));
+            if (!newAssets.length) return;
+            newAssets.forEach(asset => deleted.add(asset.id));
+            set(state => ({ ...removeDeletedState(state, new Set(newAssets.map(asset => asset.id))), deletedCounts: {
+                photos: (state.deletedCounts?.photos ?? 0) + (type === 'photo' ? newAssets.length : 0),
+                videos: (state.deletedCounts?.videos ?? 0) + (type === 'video' ? newAssets.length : 0),
+            } }));
+            if (type === 'photo') for (const asset of newAssets) {
+                try { await AssetRepository.removeAssetAndDerivedData(asset.id); }
+                catch { console.error('[PendingDeletion] Confirmed deletion index cleanup failed.'); }
+            }
+        };
         try {
-            const state = get();
-            const queueToVerify = requestedIds === null
-                ? state.deleteQueue
-                : state.deleteQueue.filter(asset => requestedIds.has(asset.id));
-            const visibleDeleteQueue = await getCurrentlyVisibleQueuedAssets(queueToVerify, 'photo');
-            const verifiedIds = new Set(visibleDeleteQueue.map(asset => asset.id));
-            // The queue can change while native visibility checks are in
-            // flight. Re-read it before selecting so an undo/removal wins
-            // over this confirmation, while newly-added entries are not
-            // deleted without having gone through the preflight.
-            const currentDeleteQueue = get().deleteQueue;
-            const selectedDeleteQueue = currentDeleteQueue.filter(asset => (
-                verifiedIds.has(asset.id)
-                && (requestedIds === null || requestedIds.has(asset.id))
-            ));
-            const ids = Array.from(new Set(selectedDeleteQueue.map(asset => asset.id)));
-            if (ids.length === 0) return [];
-
-            await deleteAssetsInBatches(ids, async (batch) => {
-                // Persist confirmed deletions even if a later batch is denied.
-                // Deleted media no longer needs a queued decision or progress ID.
-                get().removeDeletedAssets(batch);
-                for (const id of batch) {
-                    try {
-                        await AssetRepository.removeAssetAndDerivedData(id);
-                    } catch (cleanupError) {
-                        // A later scanner sync can repair the local index.
-                        console.error("Failed to clean deleted photo from scan index", cleanupError);
+            for (const type of ['photo', 'video'] as const) {
+                const assets = snapshot.filter(entry => entry.type === type).map(entry => entry.asset);
+                if (!assets.length) continue;
+                const visible = await getCurrentlyVisibleQueuedAssets(assets, type);
+                const stillQueued = new Set(getPendingDeletionEntries(get()).map(entry => entry.asset.id));
+                const selected = visible.filter(asset => stillQueued.has(asset.id));
+                try {
+                    if (type === 'photo') {
+                        const byId = new Map(selected.map(asset => [asset.id, asset]));
+                        await deleteAssetsInBatches(selected.map(asset => asset.id), batch => settle(batch.map(id => byId.get(id)!), type));
+                    } else await deleteAssetsInBatches(selected, batch => settle(batch, type));
+                } catch (error) {
+                    failed = getDeletionFailureKind(error);
+                    if (failed === 'failed') {
+                        const unresolved = selected.filter(asset => !deleted.has(asset.id));
+                        await settle(await findGoneAfterFailedDeletion(unresolved, type), type);
                     }
+                    break; // Never retry deletion or open another type's prompt after a refusal.
                 }
-            });
-            console.log(`Batch deletion: ${ids.length} items deleted`);
-
-            return ids;
-        } catch (e) {
-            // Keep the queue so the user can retry after fixing permissions or
-            // another temporary media-library failure.
-            console.error("Batch deletion failed", e);
-            throw e;
-        } finally {
-            set({ isConfirmingDeletion: false });
-        }
-
+            }
+            const remainingIds = requestedIds.filter(id => !deleted.has(id));
+            const status = remainingIds.length === 0 ? 'success'
+                : deleted.size > 0 ? 'partial' : failed ?? 'unavailable';
+            const result: PendingDeletionResult = { status, requestedIds, deletedIds: [...deleted], remainingIds, failureKind: failed };
+            set({ lastDeletionResult: result });
+            return result;
+        } finally { set({ isConfirmingDeletion: false, isConfirmingVideoTrash: false }); }
     },
-
-    confirmVideoTrash: async (assetIds) => {
-        if (isRecordTransferActive()) return [];
-        if (get().isConfirmingVideoTrash) return [];
-        const requestedIds = assetIds === undefined ? null : new Set(assetIds);
-        if (requestedIds?.size === 0) return [];
-        set({ isConfirmingVideoTrash: true });
-        try {
-            const state = get();
-            const queueToVerify = requestedIds === null
-                ? state.videoTrashBin
-                : state.videoTrashBin.filter(video => requestedIds.has(video.id));
-            const visibleVideoTrashBin = await getCurrentlyVisibleQueuedAssets(queueToVerify, 'video');
-            const verifiedIds = new Set(visibleVideoTrashBin.map(video => video.id));
-            const currentVideoTrashBin = get().videoTrashBin;
-            const selectedVideoTrashBin = currentVideoTrashBin.filter(video => (
-                verifiedIds.has(video.id)
-                && (requestedIds === null || requestedIds.has(video.id))
-            ));
-            const deletedIds = new Set(selectedVideoTrashBin.map(video => video.id));
-            if (deletedIds.size === 0) return [];
-
-            await deleteAssetsInBatches(selectedVideoTrashBin, (batch) => {
-                get().removeDeletedAssets(batch.map(video => video.id));
-            });
-            return Array.from(deletedIds);
-        } catch (e) {
-            console.error("Video deletion failed", e);
-            throw e;
-        } finally {
-            set({ isConfirmingVideoTrash: false });
-        }
+    confirmDeletion: async assetIds => {
+        const result = await get().confirmPendingDeletion(assetIds ?? get().deleteQueue.map(asset => asset.id));
+        if (result.status !== 'success' && result.failureKind) throw new PendingDeletionIncompleteError(result);
+        return result.deletedIds;
+    },
+    confirmVideoTrash: async assetIds => {
+        const result = await get().confirmPendingDeletion(assetIds ?? get().videoTrashBin.map(asset => asset.id));
+        if (result.status !== 'success' && result.failureKind) throw new PendingDeletionIncompleteError(result);
+        return result.deletedIds;
     },
 
     refreshTotalCounts: async () => {
@@ -1136,6 +1154,8 @@ export const useMediaStore = create<MediaState>()(
                 deleteQueue: state.deleteQueue,
                 collectionQueue: state.collectionQueue,
                 videoTrashBin: state.videoTrashBin,
+                pendingDeletionInfo: retainPendingDeletionInfo(state),
+                deletedCounts: state.deletedCounts,
             }),
             onRehydrateStorage: () => (state, error) => {
                 if (error) { usePrivacyStore.getState().block('records', 'read'); return; }
