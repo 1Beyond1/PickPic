@@ -76,6 +76,7 @@ describe('media visibility checks', () => {
       hasPermission: true,
       hasHydrated: true,
       organizingSessions: { photo: null, video: null },
+      photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0,
       permissionScope: 'full',
       hiddenPhotoQueuedAssetIds: null,
       hiddenVideoQueuedAssetIds: null,
@@ -134,6 +135,89 @@ describe('media visibility checks', () => {
       expect(useMediaStore.getState().photos.map(asset => asset.id)).toEqual(['a', 'b']);
       expect(useMediaStore.getState().organizingSessions.photo).toBe(session);
       expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
+  });
+
+  it('preserves the saved album and order on an automatic refresh even if new settings select a different scope', async () => {
+      getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+      getAlbumsAsync.mockResolvedValue([{ id: 'saved-album' }]);
+      getAssetsAsync.mockResolvedValue({ assets: ['a', 'b'].map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })), hasNextPage: false });
+      const saved = useMediaStore.getState().startOrganizingSession('photo', { albumIds: ['saved-album'], order: 'oldest' }, ['b', 'a']);
+      await useMediaStore.getState().loadPhotos(10, 'newest', ['new-setting']);
+      expect(getAssetsAsync).toHaveBeenCalledWith(expect.objectContaining({ album: 'saved-album', first: 200, resolveWithFullInfo: false }));
+      expect(useMediaStore.getState().photos.map(asset => asset.id)).toEqual(['b', 'a']);
+      expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+  });
+
+  it('continues only the saved scope, excluding deferred items, while a deliberate new round includes them again', async () => {
+      useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'oldest' }, ['deferred', 'kept']);
+      useMediaStore.getState().deferSessionMedia('photo', 'deferred');
+      useMediaStore.getState().markAsSkipped({ id: 'kept', mediaType: 'photo' } as any);
+      const savedId = useMediaStore.getState().organizingSessions.photo!.sessionId;
+      getAssetsAsync.mockResolvedValue({ assets: ['deferred', 'kept', 'new'].map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })), hasNextPage: false, totalCount: 3 });
+      await useMediaStore.getState().loadPhotos(10, 'newest', ['must-not-use'], 'continue');
+      expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ sessionId: savedId, scope: { albumIds: [], order: 'oldest' },
+          assetIds: ['new'], deferredIds: ['deferred'] });
+      expect(getAssetsAsync).toHaveBeenCalledWith(expect.objectContaining({ sortBy: [['creationTime', true]] }));
+      await useMediaStore.getState().loadPhotos(10, 'oldest', [], 'new');
+      expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ assetIds: ['deferred', 'new'], deferredIds: [] });
+      expect(useMediaStore.getState().organizingSessions.photo!.sessionId).not.toBe(savedId);
+      expect(useMediaStore.getState().photoProcessedIds).toEqual(['kept']);
+  });
+
+  it('preserves an inaccessible earlier member when the user defers a readable later photo', async () => {
+      const saved = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'oldest' }, ['unavailable', 'readable']);
+      useMediaStore.setState({ photos: [{ id: 'readable', mediaType: 'photo', uri: 'file:///readable.jpg' } as any] });
+      expect(useMediaStore.getState().deferSessionMedia('photo', 'readable')).toBe(true);
+      expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ assetIds: saved!.assetIds, position: 0, deferredIds: ['readable'], phase: 'organizing' });
+      getAssetsAsync.mockResolvedValue({ assets: [{ id: 'unavailable', mediaType: 'photo', uri: 'file:///new-grant.jpg' }], hasNextPage: false });
+      expect((await useMediaStore.getState().resumeOrganizingSession('photo')).status).toBe('ready');
+      expect(useMediaStore.getState().photos.map(asset => asset.id)).toEqual(['unavailable']);
+      expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
+      useMediaStore.getState().markAsSkipped({ id: 'unavailable', mediaType: 'photo' } as any);
+      expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ position: 2, phase: 'review', deferredIds: ['readable'] });
+      expect(useMediaStore.getState().photoProcessedIds).toEqual(['unavailable']);
+  });
+
+  it('removes old preview URIs and preserves session data when recovery fails', async () => {
+      const saved = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'oldest' }, ['a']);
+      useMediaStore.setState({ photos: [{ id: 'a', uri: 'file:///old-authorized.jpg' } as any] });
+      getAssetsAsync.mockRejectedValue(new Error('Synthetic provider failure'));
+      expect((await useMediaStore.getState().resumeOrganizingSession('photo')).status).toBe('failed');
+      expect(useMediaStore.getState().photos).toEqual([]);
+      expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+      expect(useMediaStore.getState().photoSessionRecoveryStatus).toBe('failed');
+  });
+
+  it('reconciles an old cursor with restored decisions so a settled batch can continue without resetting progress', async () => {
+      useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'oldest' }, ['a', 'b']);
+      // A password backup can restore decisions made after this saved cursor.
+      useMediaStore.setState({ photoProcessedIds: ['a', 'b'] });
+      expect((await useMediaStore.getState().resumeOrganizingSession('photo')).status).toBe('review');
+      expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ position: 2, phase: 'review' });
+      expect(useMediaStore.getState().continueSessionBatch('photo', ['new'])).toBe(true);
+      expect(useMediaStore.getState().photoProcessedIds).toEqual(['a', 'b']);
+  });
+
+  it('does not replace a saved session if photo permission changes during explicit new-round loading', async () => {
+      const saved = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'oldest' }, ['old']);
+      getPermissionsAsync.mockResolvedValueOnce({ granted: true, accessPrivileges: 'all' }).mockResolvedValueOnce({ granted: true, accessPrivileges: 'limited' });
+      getAssetsAsync.mockResolvedValue({ assets: [{ id: 'new', mediaType: 'photo' }], hasNextPage: false, totalCount: 1 });
+      await useMediaStore.getState().loadPhotos(10, 'oldest', [], 'new');
+      expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+      expect(useMediaStore.getState().photos).toEqual([]);
+      expect(useMediaStore.getState().photoSessionRecoveryStatus).toBe('permission');
+  });
+
+  it('does not overwrite an independently started video session when an older photo recovery finishes', async () => {
+      let finish!: (value: any) => void;
+      getAssetsAsync.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+      useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'oldest' }, ['a']);
+      const recovery = useMediaStore.getState().resumeOrganizingSession('photo');
+      await waitFor(() => expect(getAssetsAsync).toHaveBeenCalled());
+      const videoSession = useMediaStore.getState().startOrganizingSession('video', { albumIds: [], order: 'random' }, ['video']);
+      finish({ assets: [{ id: 'a', mediaType: 'photo', uri: 'file:///fresh-a.jpg' }], hasNextPage: false });
+      expect((await recovery).status).toBe('ready');
+      expect(useMediaStore.getState().organizingSessions.video).toBe(videoSession);
   });
 
   it('advances the saved photo cursor for collection decisions without changing their existing meaning', () => {

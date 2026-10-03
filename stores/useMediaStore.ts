@@ -12,7 +12,7 @@ import { deleteAssetsInBatches, getDeletionFailureKind } from '../services/media
 import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
 import { getPendingDeletionEntries, retainPendingDeletionInfo, PendingDeletionIncompleteError } from '../services/pendingDeletion';
 import type { PendingDeletionInfo, PendingDeletionResult, PendingDeletionSource } from '../services/pendingDeletion';
-import { advanceOrganizingSession, continueOrganizingSession, createOrganizingSession, revisitDeferredMedia } from '../services/organizingSession';
+import { advanceOrganizingSession, continueOrganizingSession, createOrganizingSession, removeDeletedSessionMedia, revisitDeferredMedia } from '../services/organizingSession';
 import type { OrganizingSession, SessionScope } from '../services/organizingSession';
 import { recoverOrganizingSession } from '../services/sessionRecovery';
 import type { SessionRecoveryResult } from '../services/sessionRecovery';
@@ -135,6 +135,8 @@ interface MediaState {
     deletedCounts: { photos: number; videos: number };
     lastDeletionResult: PendingDeletionResult | null;
     organizingSessions: { photo: OrganizingSession | null; video: OrganizingSession | null };
+    photoSessionRecoveryStatus: SessionRecoveryResult['status'] | null;
+    photoSessionUnavailableCount: number;
 
     // Separated progress tracking
     photoProcessedIds: string[];
@@ -166,7 +168,7 @@ interface MediaState {
     createAlbum: (name: string, asset: PhotoAsset) => Promise<void>;
     addAssetToAlbum: (albumId: string, asset: PhotoAsset) => Promise<void>;
 
-    loadPhotos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[]) => Promise<void>;
+    loadPhotos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[], sessionMode?: 'new' | 'continue') => Promise<void>;
     loadVideos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[]) => Promise<void>;
 
     markForDeletion: (asset: PhotoAsset) => void;
@@ -216,8 +218,10 @@ function advancePhotoSession(state: MediaState, processed: ReadonlySet<string>):
     let session = state.organizingSessions.photo;
     if (!session || session.phase !== 'organizing') return state.organizingSessions;
     const original = session;
-    while (session.phase === 'organizing' && processed.has(session.assetIds[session.position])) {
-        session = advanceOrganizingSession(session, session.assetIds[session.position], 'processed');
+    while (session.phase === 'organizing' && (processed.has(session.assetIds[session.position])
+        || session.deferredIds.includes(session.assetIds[session.position]))) {
+        const assetId = session.assetIds[session.position];
+        session = advanceOrganizingSession(session, assetId, processed.has(assetId) ? 'processed' : 'skip');
     }
     return session === original ? state.organizingSessions : { ...state.organizingSessions, photo: session };
 }
@@ -226,6 +230,8 @@ function removeDeletedState(state: MediaState, deletedIds: ReadonlySet<string>):
     const deleteQueue = state.deleteQueue.filter(asset => !deletedIds.has(asset.id));
     const videoTrashBin = state.videoTrashBin.filter(asset => !deletedIds.has(asset.id));
     return { deleteQueue, videoTrashBin,
+        organizingSessions: { photo: removeDeletedSessionMedia(state.organizingSessions.photo, deletedIds),
+            video: removeDeletedSessionMedia(state.organizingSessions.video, deletedIds) },
         collectionQueue: state.collectionQueue.filter(asset => !deletedIds.has(asset.id)),
         pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue, videoTrashBin }),
         photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
@@ -571,6 +577,8 @@ export const useMediaStore = create<MediaState>()(
     deletedCounts: { photos: 0, videos: 0 },
     lastDeletionResult: null,
     organizingSessions: { photo: null, video: null },
+    photoSessionRecoveryStatus: null,
+    photoSessionUnavailableCount: 0,
 
     isLoading: false,
     photoLoadFailed: false,
@@ -651,17 +659,26 @@ export const useMediaStore = create<MediaState>()(
         if (!state.hasHydrated || isRecordTransferActive() || state.isConfirmingDeletion || state.isConfirmingVideoTrash) return null;
         const now = Date.now();
         const session = createOrganizingSession(kind, scope, assetIds, `${kind}-${now}-${++organizingSessionSequence}`, now);
-        set({ organizingSessions: { ...state.organizingSessions, [kind]: session } });
+        set({ organizingSessions: { ...state.organizingSessions, [kind]: session },
+            ...(kind === 'photo' ? { photoSessionRecoveryStatus: session.phase === 'complete' ? 'complete' as const : 'ready' as const,
+                photoSessionUnavailableCount: 0 } : {}) });
         return session;
     },
     deferSessionMedia: (kind, assetId) => {
         const state = get(), session = state.organizingSessions[kind];
+        const visibleCurrent = kind === 'photo' ? state.photos.find(asset => !state.photoProcessedIds.includes(asset.id))?.id : undefined;
         if (!state.hasHydrated || !session || session.phase !== 'organizing'
-            || session.assetIds[session.position] !== assetId || isRecordTransferActive()
+            || (session.assetIds[session.position] !== assetId && (kind !== 'photo' || visibleCurrent !== assetId
+                || !session.assetIds.slice(session.position).includes(assetId))) || isRecordTransferActive()
             || state.isConfirmingDeletion || state.isConfirmingVideoTrash
             || (kind === 'photo' ? state.photoProcessedIds : state.videoProcessedIds).includes(assetId)
             || getPendingDeletionEntries(state).some(entry => entry.asset.id === assetId)) return false;
-        set({ organizingSessions: { ...state.organizingSessions, [kind]: advanceOrganizingSession(session, assetId, 'skip') },
+        // A preceding member can be inaccessible after permission changes.
+        // Deferring a readable later member must not abandon that earlier ID.
+        const deferred = session.assetIds[session.position] === assetId ? advanceOrganizingSession(session, assetId, 'skip')
+            : { ...session, deferredIds: [...new Set([...session.deferredIds, assetId])], updatedAt: Math.max(session.startedAt, Date.now()) };
+        const sessions = { ...state.organizingSessions, [kind]: deferred };
+        set({ organizingSessions: kind === 'photo' ? advancePhotoSession({ ...state, organizingSessions: sessions }, new Set(state.photoProcessedIds)) : sessions,
             ...(kind === 'photo' ? { photos: state.photos.filter(asset => asset.id !== assetId) }
                 : { videos: state.videos.filter(asset => asset.id !== assetId) }) });
         return true;
@@ -693,14 +710,17 @@ export const useMediaStore = create<MediaState>()(
                 : get().videoProcessedIds === initial.videoProcessedIds && get().videoTrashBin === initial.videoTrashBin)
             && requestId === (kind === 'photo' ? photoLoadRequestId : videoLoadRequestId);
         activeMediaLoads++;
-        set({ isLoading: true });
+        set({ isLoading: true, ...(kind === 'photo' ? { photos: [], photoLoadFailed: false, photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0 }
+            : { videos: [] }) });
         try {
             const result = await recoverOrganizingSession(session,
                 new Set(kind === 'photo' ? initial.photoProcessedIds : initial.videoProcessedIds), current,
                 new Set(getPendingDeletionEntries(initial).filter(entry => entry.type === kind).map(entry => entry.asset.id)));
             if (!current()) return empty('stale');
+            if (kind === 'photo') set({ photoSessionRecoveryStatus: result.status, photoSessionUnavailableCount: result.unavailableCount });
             if (result.status === 'ready' || result.status === 'review' || result.status === 'complete') {
-                set(kind === 'photo' ? { photos: result.assets, currentIndex: result.position, photoLoadFailed: false }
+                set(state => !current() ? state : kind === 'photo' ? { photos: result.assets, currentIndex: result.position, photoLoadFailed: false,
+                    organizingSessions: advancePhotoSession(state, new Set([...state.photoProcessedIds, ...state.deleteQueue.map(asset => asset.id)])) }
                     : { videos: result.assets, videoCurrentIndex: result.position, videoLoadFailed: false });
             }
             return result;
@@ -776,15 +796,46 @@ export const useMediaStore = create<MediaState>()(
         }
     },
 
-    loadPhotos: async (count, displayOrder = 'random', albumIds: string[] = []) => {
+    loadPhotos: async (count, displayOrder = 'random', albumIds: string[] = [], sessionMode) => {
+        const initialSession = get().organizingSessions.photo;
+        if (!sessionMode && initialSession) {
+            await get().resumeOrganizingSession('photo');
+            return;
+        }
+        if (sessionMode && (!get().hasHydrated || isRecordTransferActive() || get().isConfirmingDeletion || get().isConfirmingVideoTrash)) return;
+        if (sessionMode === 'continue') {
+            if (!initialSession || initialSession.phase === 'organizing') return;
+            displayOrder = initialSession.scope.order;
+            albumIds = initialSession.scope.albumIds;
+        }
         const requestId = ++photoLoadRequestId;
         activeMediaLoads++;
         // Do not keep showing a batch that belongs to a previous filter while
         // the current request is loading or if it fails. The old batch could
         // otherwise make out-of-scope media appear actionable.
-        set({ isLoading: true, photos: [], currentIndex: 0, photoLoadFailed: false });
+        set({ isLoading: true, photos: [], currentIndex: 0, photoLoadFailed: false, photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0 });
         try {
             const { photoProcessedIds } = get();
+            let sessionPermission: MediaLibrary.PermissionResponse | undefined;
+            if (sessionMode) {
+                const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+                sessionPermission = permission;
+                if (!permission.granted) {
+                    if (requestId === photoLoadRequestId) set({ photoSessionRecoveryStatus: 'permission' });
+                    return;
+                }
+                if (albumIds.length) {
+                    if (Platform.OS === 'ios' && permission.accessPrivileges !== 'all') {
+                        if (requestId === photoLoadRequestId) set({ photoSessionRecoveryStatus: 'unavailable' });
+                        return;
+                    }
+                    const availableAlbums = new Set((await MediaLibrary.getAlbumsAsync()).map(album => album.id));
+                    if (albumIds.some(id => !availableAlbums.has(id))) {
+                        if (requestId === photoLoadRequestId) set({ photoSessionRecoveryStatus: 'unavailable' });
+                        return;
+                    }
+                }
+            }
 
             // Determine sort order
             const sortBy: MediaLibrary.SortByValue[] = displayOrder === 'oldest'
@@ -796,29 +847,45 @@ export const useMediaStore = create<MediaState>()(
                 sortBy,
                 count,
                 displayOrder,
-                photoProcessedIds,
+                sessionMode === 'continue' ? [...photoProcessedIds, ...initialSession!.deferredIds] : photoProcessedIds,
                 albumIds
             );
+            if (sessionPermission) {
+                const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+                if (!permission.granted || permission.accessPrivileges !== sessionPermission.accessPrivileges) {
+                    if (requestId === photoLoadRequestId) set({ photoSessionRecoveryStatus: 'permission' });
+                    return;
+                }
+                await assertAlbumsStillAvailable(albumIds);
+            }
 
             // A newer request owns the visible list. Read processed IDs in
             // the same state update so a swipe/action that completes while
             // MediaLibrary is paging cannot put that asset back on screen.
             set((state) => {
-                if (requestId !== photoLoadRequestId) return state;
+                if (requestId !== photoLoadRequestId || (sessionMode && (state.organizingSessions.photo !== initialSession
+                    || isRecordTransferActive() || state.isConfirmingDeletion || state.isConfirmingVideoTrash))) return state;
 
                 const processed = new Set(state.photoProcessedIds);
-                const photos = result.assets.filter(asset => !processed.has(asset.id));
+                const deferred = new Set(sessionMode === 'continue' ? initialSession!.deferredIds : []);
+                const photos = result.assets.filter(asset => !processed.has(asset.id) && !deferred.has(asset.id));
+                const now = Date.now();
+                const session = sessionMode === 'new' ? createOrganizingSession('photo', { albumIds, order: displayOrder },
+                    photos.map(asset => asset.id), `photo-${now}-${++organizingSessionSequence}`, now)
+                    : sessionMode === 'continue' ? continueOrganizingSession(initialSession!, photos.map(asset => asset.id), now) : undefined;
 
                 return {
                     photos,
                     currentIndex: 0,
+                    ...(session ? { organizingSessions: { ...state.organizingSessions, photo: session },
+                        photoSessionRecoveryStatus: session.phase === 'complete' ? 'complete' as const : 'ready' as const } : {}),
                     ...(albumIds.length === 0 && result.totalCount !== null
                         ? { totalPhotos: result.totalCount }
                         : {}),
                 };
             });
-        } catch (error) {
-            console.error("Failed to load photos", error);
+        } catch {
+            console.error('Failed to load photos.');
             // Only the current request owns feedback, just as it owns the list.
             set((state) => requestId === photoLoadRequestId ? { photoLoadFailed: true } : state);
         } finally {

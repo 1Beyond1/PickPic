@@ -86,6 +86,17 @@ export function moveOrganizingSession(session: OrganizingSession, position: numb
     return { ...session, position, phase: position === session.assetIds.length ? 'review' : 'organizing', updatedAt: Math.max(session.startedAt, now) };
 }
 
+/** Only a confirmed physical deletion may remove saved members. A failed or
+ * limited visibility lookup must retain them for later permission recovery. */
+export function removeDeletedSessionMedia(session: OrganizingSession | null, deletedIds: ReadonlySet<string>, now = Date.now()): OrganizingSession | null {
+    if (!session || (!session.assetIds.some(id => deletedIds.has(id)) && !session.deferredIds.some(id => deletedIds.has(id)))) return session;
+    const assetIds = session.assetIds.filter(id => !deletedIds.has(id));
+    const position = session.position - session.assetIds.slice(0, session.position).filter(id => deletedIds.has(id)).length;
+    return { ...session, assetIds, position, deferredIds: session.deferredIds.filter(id => !deletedIds.has(id)),
+        phase: session.phase === 'organizing' && position === assetIds.length ? 'review' : session.phase,
+        updatedAt: Math.max(session.startedAt, now) };
+}
+
 /** Read-only resume projection: permission failure/limited visibility must
  * not rewrite saved scope/order or claim inaccessible files were deleted. */
 export function getSessionResumeIds(session: OrganizingSession, visibleIds: ReadonlySet<string>, processedIds: ReadonlySet<string>, pendingIds: ReadonlySet<string> = new Set()) {

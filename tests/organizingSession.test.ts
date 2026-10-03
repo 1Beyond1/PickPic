@@ -1,5 +1,5 @@
 import { advanceOrganizingSession, continueOrganizingSession, createOrganizingSession, getSessionResumeIds,
-    isOrganizingSession, moveOrganizingSession, revisitDeferredMedia, sameSessionScope } from '../services/organizingSession';
+    isOrganizingSession, moveOrganizingSession, removeDeletedSessionMedia, revisitDeferredMedia, sameSessionScope } from '../services/organizingSession';
 
 const scope = { albumIds: ['family'], order: 'random' } as const;
 const start = () => createOrganizingSession('photo', { ...scope, albumIds: [...scope.albumIds] }, ['a', 'b', 'c'], 'synthetic-session', 10);
@@ -73,6 +73,14 @@ it('treats sliding back to a kept video as cursor movement, not undoing its proc
 it('requires a finished batch before continuing so unseen media cannot be silently abandoned', () => {
     const session = start();
     expect(continueOrganizingSession(session, ['new'])).toBe(session);
+});
+it('removes only confirmed deleted members without shifting the cursor to a different surviving item', () => {
+    const saved = advanceOrganizingSession(start(), 'a', 'skip', 11);
+    const pruned = removeDeletedSessionMedia(saved, new Set(['a']), 12)!;
+    expect(pruned).toMatchObject({ assetIds: ['b', 'c'], position: 0, deferredIds: [], phase: 'organizing' });
+    expect(isOrganizingSession(pruned)).toBe(true);
+    expect(removeDeletedSessionMedia(pruned, new Set(['foreign']))).toBe(pruned);
+    expect(removeDeletedSessionMedia(pruned, new Set(['b', 'c']), 13)).toMatchObject({ assetIds: [], position: 0, phase: 'review' });
 });
 it.each([
     { position: -1 }, { position: 4 }, { position: 1.5 }, { phase: 'unknown' }, { phase: 'organizing', position: 3 }, { phase: 'review', position: 0 },

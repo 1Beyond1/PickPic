@@ -111,7 +111,9 @@ export default function RootLayout() {
         const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
         void mediaStore.loadAlbums();
         void mediaStore.refreshTotalCounts();
-        void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+        // A saved session is recovered by the photo page's generation-aware
+        // refresh. Do not also sample a replacement batch here.
+        if (!mediaStore.organizingSessions.photo) void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
       }
     }
 

@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, renderAsync, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, fireEventAsync, renderAsync, screen, waitFor } from '@testing-library/react-native';
 import { Image, ScrollView, StyleSheet } from 'react-native';
 
 let mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
@@ -17,6 +17,11 @@ const mockMediaState = {
   photoLoadFailed: false,
   hasHydrated: true,
   photoProcessedIds: [] as string[],
+  organizingSessions: { photo: null, video: null },
+  startOrganizingSession: jest.fn().mockReturnValue({ sessionId: 'synthetic' }),
+  resumeOrganizingSession: jest.fn().mockResolvedValue({ status: 'ready' }),
+  deferSessionMedia: jest.fn(), revisitSessionDeferred: jest.fn(),
+  photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0,
   markForDeletion: jest.fn(),
   markAsSkipped: jest.fn(),
   undoAction: jest.fn(),
@@ -131,8 +136,8 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.queryByText('photos_empty')).toBeNull();
     expect(screen.getByText('—')).toBeTruthy(); // The pending-entry count is independent of a failed feed read.
     mockLoadPhotos.mockClear();
-    fireEvent.press(screen.getByRole('button', { name: 'photos_reload' }));
-    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', []);
+    await fireEventAsync.press(screen.getByRole('button', { name: 'photos_reload' }));
+    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', [], 'new');
     expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
     expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
     expect(mockMediaState.resetBatch).not.toHaveBeenCalled();

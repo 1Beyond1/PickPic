@@ -31,6 +31,9 @@ export default function PhotosScreen() {
         deleteQueue, resetBatch,
         createAlbum, addAssetToAlbum, loadAlbums,
         permissionScope, mediaLibraryRefreshVersion,
+        permissionRefreshVersion, organizingSessions, startOrganizingSession,
+        resumeOrganizingSession, deferSessionMedia, revisitSessionDeferred,
+        photoSessionRecoveryStatus, photoSessionUnavailableCount,
     } = useMediaStore();
 
     const {
@@ -50,6 +53,8 @@ export default function PhotosScreen() {
     const [reviewDismissed, setReviewDismissed] = useState(false);
     const [keptAllReviewPhotos, setKeptAllReviewPhotos] = useState(false);
     const [deckSize, setDeckSize] = useState({ width: 0, height: 0 });
+    const sessionActionRef = useRef(false);
+    const session = organizingSessions.photo;
 
     useFocusEffect(useCallback(() => {
         if (!hasHydrated || !settingsHydrated) return;
@@ -95,15 +100,59 @@ export default function PhotosScreen() {
                 loadPhotos(groupSize, displayOrder, selectedAlbumIds),
                 loadAlbums(),
             ]);
-        } catch (error) {
-            console.error('[Photos] Failed to manage photo access:', error);
+        } catch {
+            console.error('[Photos] Failed to manage photo access.');
         } finally {
             setManagingPhotoAccess(false);
         }
     }, [displayOrder, groupSize, loadAlbums, loadPhotos, managingPhotoAccess, router, selectedAlbumIds]);
 
     const processedIds = new Set(photoProcessedIds);
-    const visiblePhotos = photos.filter(p => !processedIds.has(p.id));
+    const deferredIds = new Set(session?.deferredIds ?? []);
+    const visiblePhotos = photos.filter(p => !processedIds.has(p.id) && !deferredIds.has(p.id));
+    const deckTotal = session?.assetIds.length ?? photos.length;
+    const deckPosition = session ? Math.max(0, session.assetIds.indexOf(visiblePhotos[0]?.id)) + 1 : photos.length - visiblePhotos.length + 1;
+    const unresolvedCount = session?.assetIds.slice(session.position).filter(id => !processedIds.has(id) && !deferredIds.has(id)).length ?? 0;
+    const sessionUnavailable = photoSessionRecoveryStatus === 'unavailable'
+        || (session?.phase === 'organizing' && !isLoading && visiblePhotos.length === 0 && unresolvedCount > 0);
+    const sessionReadFailed = photoLoadFailed || photoSessionRecoveryStatus === 'failed';
+    const sessionPermissionRequired = photoSessionRecoveryStatus === 'permission';
+    const emptyTitle = sessionReadFailed ? 'photos_load_failed' : sessionPermissionRequired ? 'session_permission'
+        : sessionUnavailable ? 'session_unavailable' : session?.phase === 'review' ? 'photos_finished' : session?.phase === 'complete'
+            ? session.deferredIds.length > 0 ? 'session_rest_complete' : session.scope.albumIds.length > 0 ? 'session_scope_complete' : permissionScope === 'limited' ? 'session_accessible_complete' : 'session_library_complete'
+            : permissionScope === 'limited' ? 'photos_limited_access_desc' : 'photos_empty';
+
+    const openSession = async (action: 'start' | 'resume' | 'new' | 'next' | 'deferred') => {
+        if (sessionActionRef.current) return;
+        sessionActionRef.current = true;
+        try {
+            if (action === 'start' && !session && visiblePhotos.length > 0) {
+                const created = startOrganizingSession('photo', { albumIds: selectedAlbumIds, order: displayOrder }, visiblePhotos.map(photo => photo.id));
+                if (!created) return;
+            } else if (action === 'resume') {
+                const result = await resumeOrganizingSession('photo');
+                if (result.status === 'busy' || result.status === 'stale') return;
+            } else if (action === 'deferred') {
+                if (!revisitSessionDeferred('photo')) return;
+                const result = await resumeOrganizingSession('photo');
+                if (result.status === 'busy' || result.status === 'stale') return;
+            } else {
+                await loadPhotos(groupSize, displayOrder, selectedAlbumIds, action === 'next' ? 'continue' : 'new');
+            }
+            setReviewDismissed(false);
+            setShowHome(false);
+        } catch {
+            showToast(t('session_preserved_hint'));
+        } finally { sessionActionRef.current = false; }
+    };
+
+    const homeAction = session?.phase === 'organizing' ? 'resume' : session?.phase === 'review' && !reviewDismissed && deleteQueue.length > 0 ? 'resume'
+        : session ? 'next' : 'start';
+    const homeActionTitle = session?.phase === 'organizing' ? 'session_continue' : session?.phase === 'review' && !reviewDismissed && deleteQueue.length > 0 ? 'session_review'
+        : session ? 'session_next_batch' : visiblePhotos.length > 0 ? 'photos_home_start' : 'photos_reload';
+    const scopeCaption = session ? t(session.scope.albumIds.length ? 'session_album_scope' : 'session_all_scope', {
+        count: session.scope.albumIds.length, order: t(session.scope.order === 'newest' ? 'session_order_newest' : session.scope.order === 'oldest' ? 'session_order_oldest' : 'session_order_random'),
+    }) : t('photos_home_scope');
 
 
     useEffect(() => {
@@ -113,9 +162,12 @@ export default function PhotosScreen() {
     }, [visiblePhotos.length]);
 
     const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
+    const previousPermissionRefreshVersionRef = useRef(permissionRefreshVersion);
     useEffect(() => {
-        if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current) return;
+        if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current
+            && permissionRefreshVersion === previousPermissionRefreshVersionRef.current) return;
         previousMediaLibraryRefreshVersionRef.current = mediaLibraryRefreshVersion;
+        previousPermissionRefreshVersionRef.current = permissionRefreshVersion;
 
         // A library or permission change invalidates the local preview and
         // collection dialog, whose route/asset snapshot may no longer be
@@ -125,7 +177,10 @@ export default function PhotosScreen() {
         setPendingCollectionPhoto(null);
         setNewAlbumName('');
         setShowNewAlbumModal(false);
-    }, [mediaLibraryRefreshVersion]);
+        if (hasHydrated && settingsHydrated && useMediaStore.getState().organizingSessions.photo) {
+            void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+        }
+    }, [mediaLibraryRefreshVersion, permissionRefreshVersion, hasHydrated, settingsHydrated, loadPhotos, groupSize, displayOrder, selectedAlbumIds]);
 
     // Drop zones disabled for v0.1.1
     const dropZones: any[] = [];
@@ -135,10 +190,13 @@ export default function PhotosScreen() {
     };
 
     const [toastMessage, setToastMessage] = useState<string | null>(null);
+    const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
     const showToast = (message: string) => {
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
         setToastMessage(message);
-        setTimeout(() => setToastMessage(null), 1500);
+        toastTimerRef.current = setTimeout(() => setToastMessage(null), 1500);
     };
 
     // Batch review returns before the deck; feedback must exist in both.
@@ -199,8 +257,10 @@ export default function PhotosScreen() {
             setKeptAllReviewPhotos(false);
             setReviewDismissed(true);
             setShowHome(true);
-            resetBatch([]); // Continuing must not silently discard pending decisions.
-            void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+            if (!session) {
+                resetBatch([]); // Legacy batches still retain pending decisions.
+                void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+            }
         }} />
     );
 
@@ -215,7 +275,8 @@ export default function PhotosScreen() {
     // A persisted delete queue can outlive the in-memory review batch. Keep
     // the confirmation screen reachable after a restart, even when there
     // are no remaining photos to load.
-    if (!reviewDismissed && visiblePhotos.length === 0 && (photos.length > 0 || deleteQueue.length > 0 || (keptAllReviewPhotos && permissionScope !== 'none'))) {
+    if (!reviewDismissed && ((session?.phase === 'review' && !showHome && (deleteQueue.length > 0 || keptAllReviewPhotos))
+        || (!session && visiblePhotos.length === 0 && (photos.length > 0 || deleteQueue.length > 0 || (keptAllReviewPhotos && permissionScope !== 'none'))))) {
         return (
             <View testID="photo-review" style={[styles.container, {
                 paddingTop: insets.top,
@@ -231,15 +292,18 @@ export default function PhotosScreen() {
         )
     }
 
-    if (photos.length === 0 && !showHome) {
+    if (visiblePhotos.length === 0 && !showHome) {
         const hasLimitedPhotoAccess = permissionScope === 'limited';
         return (
-            <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
-                <Text accessibilityRole={photoLoadFailed ? 'alert' : undefined} style={[styles.emptyText, { color: colors.text }]}>
-                    {photoLoadFailed ? t('photos_load_failed') : hasLimitedPhotoAccess ? t('photos_limited_access_desc') : t('photos_empty')}
+            <View testID="photos-end" style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+                <View style={[styles.endHeader, { paddingHorizontal: UI_METRICS.pageInset }]}><PendingDeletionButton /></View>
+                <ScrollView contentContainerStyle={[styles.endContent, { paddingBottom: UI_METRICS.dockHeight + insets.bottom + 24,
+                    paddingLeft: UI_METRICS.pageInset + insets.left, paddingRight: UI_METRICS.pageInset + insets.right }]}>
+                <Text accessibilityRole={sessionReadFailed || sessionUnavailable || sessionPermissionRequired ? 'alert' : undefined} style={[styles.emptyText, { color: colors.text }]}>
+                    {t(emptyTitle)}
                 </Text>
-                {photoLoadFailed && <Text style={[styles.readErrorDescription, { color: colors.textSecondary }]}>{t('media_load_retry_desc')}</Text>}
-                {hasLimitedPhotoAccess && (
+                {(sessionReadFailed || sessionUnavailable || sessionPermissionRequired) && <Text style={[styles.readErrorDescription, { color: colors.textSecondary }]}>{t('session_preserved_hint')}</Text>}
+                {(hasLimitedPhotoAccess || sessionPermissionRequired) && (
                     <Pressable
                         onPress={handleManagePhotoAccess}
                         disabled={managingPhotoAccess}
@@ -252,12 +316,16 @@ export default function PhotosScreen() {
                 )}
                 <Pressable
                     accessibilityRole="button"
-                    onPress={() => loadPhotos(groupSize, displayOrder, selectedAlbumIds)}
+                    onPress={() => session?.phase === 'organizing' ? void openSession('resume') : void openSession(session ? 'next' : 'start')}
                     disabled={managingPhotoAccess}
                     style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: managingPhotoAccess ? 0.6 : 1, marginTop: hasLimitedPhotoAccess ? 10 : 0 }]}
                 >
-                    <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('photos_reload')}</Text>
+                    <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t(session?.phase === 'review' || session?.phase === 'complete' ? 'session_next_batch' : 'photos_reload')}</Text>
                 </Pressable>
+                {!!session?.deferredIds.length && <Pressable accessibilityRole="button" onPress={() => void openSession('deferred')}
+                    style={[styles.actionButton, { backgroundColor: colors.surface, marginTop: SPACING.m }]}>
+                    <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('session_deferred_count', { count: session.deferredIds.length })}</Text>
+                </Pressable>}
                 <Pressable
                     accessibilityRole="button"
                     onPress={() => setShowHome(true)}
@@ -265,13 +333,14 @@ export default function PhotosScreen() {
                 >
                     <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('photos_back_home')}</Text>
                 </Pressable>
+                </ScrollView>
+                {toast}
             </View>
         )
     }
 
-    // Only offer the visual entry for an untouched in-memory batch. The
-    // already-open deck stays open as items are processed.
-    if (showHome && visiblePhotos.length === photos.length) {
+    // Home is reachable during a session without undoing any decisions.
+    if (showHome) {
         const previewPhotos = visiblePhotos.slice(0, 3);
         return (
             <View testID="photos-home" style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
@@ -289,7 +358,7 @@ export default function PhotosScreen() {
                     <View style={styles.homeHero}>
                         <Text accessibilityRole="header" style={[styles.homeTitle, { color: colors.text }]}>{t('photos_home_title')}</Text>
                         <View style={styles.homeCountRow}>
-                            <Text style={[styles.homeScope, { color: colors.textSecondary }]}>{t('photos_home_scope')}</Text>
+                            <Text style={[styles.homeScope, { color: colors.textSecondary }]}>{scopeCaption}</Text>
                             <View style={styles.homeCountSummary}>
                                 <Text style={[styles.homeCount, { color: colors.text }]}>{photoLoadFailed ? '—' : visiblePhotos.length}</Text>
                                 <Text style={[styles.homeCountLabel, { color: colors.textSecondary }]}>{t('photos_home_pending')}</Text>
@@ -308,10 +377,10 @@ export default function PhotosScreen() {
                                 </View>
                             )}
                         </View> : <View style={styles.homeEmpty}>
-                            <Text accessibilityRole={photoLoadFailed ? 'alert' : undefined} style={[{ color: colors.textSecondary, textAlign: 'center', fontSize: 15, lineHeight: 22 }, photoLoadFailed && styles.readErrorTitle]}>
-                                {t(photoLoadFailed ? 'photos_load_failed' : permissionScope === 'limited' ? 'photos_limited_access_desc' : 'photos_empty')}
+                            <Text accessibilityRole={sessionReadFailed || sessionUnavailable || sessionPermissionRequired ? 'alert' : undefined} style={[{ color: colors.textSecondary, textAlign: 'center', fontSize: 15, lineHeight: 22 }, sessionReadFailed && styles.readErrorTitle]}>
+                                {t(session?.phase === 'review' && !sessionReadFailed && !sessionPermissionRequired && !sessionUnavailable ? 'photos_finished' : emptyTitle)}
                             </Text>
-                            {photoLoadFailed && <Text style={[styles.readErrorDescription, { color: colors.textSecondary }]}>{t('media_load_retry_desc')}</Text>}
+                            {(sessionReadFailed || sessionUnavailable || sessionPermissionRequired) && <Text style={[styles.readErrorDescription, { color: colors.textSecondary }]}>{t('session_preserved_hint')}</Text>}
                             {permissionScope === 'limited' && (
                                 <Pressable
                                     accessibilityRole="button"
@@ -327,11 +396,12 @@ export default function PhotosScreen() {
                         </View>}
                     </View>
 
+                    {photoSessionUnavailableCount > 0 && visiblePhotos.length > 0 && <Text accessibilityLiveRegion="polite" style={[styles.homeAlbumHint, { color: colors.textSecondary }]}>
+                        {t('session_partial_hint', { count: photoSessionUnavailableCount })}
+                    </Text>}
+
                     <Pressable
-                        onPress={() => {
-                            if (visiblePhotos.length > 0) { setReviewDismissed(false); setShowHome(false); }
-                            else void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-                        }}
+                        onPress={() => void openSession(homeAction)}
                         accessibilityRole="button"
                         style={({ pressed }) => [styles.homeStart, {
                             backgroundColor: colors.actionBackground,
@@ -339,9 +409,18 @@ export default function PhotosScreen() {
                             transform: [{ scale: pressed ? 0.985 : 1 }],
                         }]}
                     >
-                        <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t(visiblePhotos.length > 0 ? 'photos_home_start' : 'photos_reload')}</Text>
+                        <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t(homeActionTitle)}</Text>
                         <Feather name={visiblePhotos.length > 0 ? 'arrow-right' : 'refresh-cw'} size={19} color={colors.actionForeground} />
                     </Pressable>
+                    {session && <View style={styles.sessionActions}>
+                        <Pressable accessibilityRole="button" onPress={() => void openSession('new')} style={styles.sessionTextButton}>
+                            <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('session_new_round')}</Text>
+                        </Pressable>
+                        {!!session.deferredIds.length && <Pressable accessibilityRole="button" onPress={() => void openSession('deferred')} style={styles.sessionTextButton}>
+                            <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('session_deferred_count', { count: session.deferredIds.length })}</Text>
+                        </Pressable>}
+                        <Text style={[styles.queueHint, { color: colors.textSecondary, width: '100%' }]}>{t('session_new_round_hint')}</Text>
+                    </View>}
 
                     {permissionScope === 'limited' && previewPhotos.length > 0 && (
                         <Pressable
@@ -371,6 +450,7 @@ export default function PhotosScreen() {
                         </View>
                         <Feather name="chevron-right" size={18} color={colors.textSecondary} />
                     </Pressable>
+                    {session && <Text style={[styles.homeAlbumHint, { color: colors.textSecondary }]}>{t('session_filter_hint')}</Text>}
                 </ScrollView>
                 <AlbumSelector
                     visible={showAlbumSelector}
@@ -395,16 +475,19 @@ export default function PhotosScreen() {
         }]}>
             <View style={styles.header}>
                 <View style={styles.deckHeaderRow}>
+                    <Pressable accessibilityRole="button" accessibilityLabel={t('photos_back_home')} onPress={() => setShowHome(true)} style={styles.deckBackButton}>
+                        <Feather name="chevron-left" size={22} color={colors.text} />
+                    </Pressable>
                     <Text style={[styles.headerTitle, { color: colors.text }]}>{t('photos_header')}</Text>
                     <Text style={[styles.deckCounter, { color: colors.textSecondary }]}>
-                        {photos.length - visiblePhotos.length + 1} / {photos.length}
+                        {deckPosition} / {deckTotal}
                     </Text>
                     <PendingDeletionButton />
                 </View>
-                <View style={[styles.deckProgressTrack, { backgroundColor: colors.divider }]}>
+                <View accessible accessibilityRole="progressbar" accessibilityLabel={t('session_position')} accessibilityValue={{ min: 0, max: deckTotal, now: deckPosition }} style={[styles.deckProgressTrack, { backgroundColor: colors.divider }]}>
                     <View style={[styles.deckProgressFill, {
                         backgroundColor: colors.text,
-                        width: `${((photos.length - visiblePhotos.length + 1) / photos.length) * 100}%`,
+                        width: `${Math.min(100, deckPosition / Math.max(1, deckTotal) * 100)}%`,
                     }]} />
                 </View>
             </View>
@@ -436,6 +519,12 @@ export default function PhotosScreen() {
 
             {/* Footer hints - collections disabled for v0.1.1 */}
             <View style={styles.deckFooter}>
+                {photoSessionUnavailableCount > 0 && <Text style={[styles.queueHint, { color: colors.textSecondary }]}>{t('session_partial_hint', { count: photoSessionUnavailableCount })}</Text>}
+                <Pressable accessibilityRole="button" onPress={() => {
+                    if (visiblePhotos[0] && deferSessionMedia('photo', visiblePhotos[0].id)) showToast(t('session_deferred_feedback'));
+                }} style={styles.sessionTextButton}>
+                    <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('session_defer')}</Text>
+                </Pressable>
                 <View style={styles.footerHints}>
                     <View style={styles.hintItem}>
                         <Ionicons name="arrow-up-outline" size={20} color={colors.danger} />
@@ -476,6 +565,12 @@ export default function PhotosScreen() {
 }
 
 const styles = StyleSheet.create({
+    endHeader: { minHeight: UI_METRICS.touchTarget, alignItems: 'flex-end' },
+    endContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingTop: SPACING.l },
+    sessionActions: { marginTop: SPACING.s, gap: SPACING.xs, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' },
+    sessionTextButton: { minHeight: UI_METRICS.touchTarget, paddingHorizontal: SPACING.m, paddingVertical: SPACING.s,
+        alignItems: 'center', justifyContent: 'center' },
+    deckBackButton: { minWidth: UI_METRICS.touchTarget, minHeight: UI_METRICS.touchTarget, alignItems: 'center', justifyContent: 'center' },
     homeAccessButton: {
         minHeight: 44,
         marginTop: SPACING.s,
@@ -672,7 +767,8 @@ const styles = StyleSheet.create({
     },
     emptyText: {
         fontSize: 20,
-        marginBottom: 20
+        marginBottom: 20,
+        textAlign: 'center',
     },
     actionButton: {
         minHeight: UI_METRICS.buttonHeight,
