@@ -12,6 +12,10 @@ import { deleteAssetsInBatches, getDeletionFailureKind } from '../services/media
 import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
 import { getPendingDeletionEntries, retainPendingDeletionInfo, PendingDeletionIncompleteError } from '../services/pendingDeletion';
 import type { PendingDeletionInfo, PendingDeletionResult, PendingDeletionSource } from '../services/pendingDeletion';
+import { advanceOrganizingSession, continueOrganizingSession, createOrganizingSession, revisitDeferredMedia } from '../services/organizingSession';
+import type { OrganizingSession, SessionScope } from '../services/organizingSession';
+import { recoverOrganizingSession } from '../services/sessionRecovery';
+import type { SessionRecoveryResult } from '../services/sessionRecovery';
 import { DisplayOrder, useSettingsStore } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
@@ -130,6 +134,7 @@ interface MediaState {
     pendingDeletionInfo: Record<string, PendingDeletionInfo>;
     deletedCounts: { photos: number; videos: number };
     lastDeletionResult: PendingDeletionResult | null;
+    organizingSessions: { photo: OrganizingSession | null; video: OrganizingSession | null };
 
     // Separated progress tracking
     photoProcessedIds: string[];
@@ -152,6 +157,11 @@ interface MediaState {
     hasHydrated: boolean;
 
     // Actions
+    startOrganizingSession: (kind: MediaType, scope: SessionScope, assetIds: readonly string[]) => OrganizingSession | null;
+    deferSessionMedia: (kind: MediaType, assetId: string) => boolean;
+    continueSessionBatch: (kind: MediaType, assetIds: readonly string[]) => boolean;
+    revisitSessionDeferred: (kind: MediaType, assetIds?: readonly string[]) => boolean;
+    resumeOrganizingSession: (kind: MediaType) => Promise<SessionRecoveryResult>;
     loadAlbums: () => Promise<void>;
     createAlbum: (name: string, asset: PhotoAsset) => Promise<void>;
     addAssetToAlbum: (albumId: string, asset: PhotoAsset) => Promise<void>;
@@ -200,6 +210,16 @@ interface OrderedAlbumPage {
     index: number;
     hasNextPage: boolean;
     endCursor: string;
+}
+
+function advancePhotoSession(state: MediaState, processed: ReadonlySet<string>): MediaState['organizingSessions'] {
+    let session = state.organizingSessions.photo;
+    if (!session || session.phase !== 'organizing') return state.organizingSessions;
+    const original = session;
+    while (session.phase === 'organizing' && processed.has(session.assetIds[session.position])) {
+        session = advanceOrganizingSession(session, session.assetIds[session.position], 'processed');
+    }
+    return session === original ? state.organizingSessions : { ...state.organizingSessions, photo: session };
 }
 
 function removeDeletedState(state: MediaState, deletedIds: ReadonlySet<string>): Partial<MediaState> {
@@ -528,6 +548,7 @@ let photoQueueVisibilityRequestId = 0;
 let videoQueueVisibilityRequestId = 0;
 let photoQueuePruneRequestId = 0;
 let videoQueuePruneRequestId = 0;
+let organizingSessionSequence = 0; // Identity only, never a cryptographic key.
 
 export const useMediaStore = create<MediaState>()(
     persist(
@@ -549,6 +570,7 @@ export const useMediaStore = create<MediaState>()(
     pendingDeletionInfo: {},
     deletedCounts: { photos: 0, videos: 0 },
     lastDeletionResult: null,
+    organizingSessions: { photo: null, video: null },
 
     isLoading: false,
     photoLoadFailed: false,
@@ -623,6 +645,70 @@ export const useMediaStore = create<MediaState>()(
         });
     },
     setHasHydrated: (status) => set({ hasHydrated: status }),
+
+    startOrganizingSession: (kind, scope, assetIds) => {
+        const state = get();
+        if (!state.hasHydrated || isRecordTransferActive() || state.isConfirmingDeletion || state.isConfirmingVideoTrash) return null;
+        const now = Date.now();
+        const session = createOrganizingSession(kind, scope, assetIds, `${kind}-${now}-${++organizingSessionSequence}`, now);
+        set({ organizingSessions: { ...state.organizingSessions, [kind]: session } });
+        return session;
+    },
+    deferSessionMedia: (kind, assetId) => {
+        const state = get(), session = state.organizingSessions[kind];
+        if (!state.hasHydrated || !session || session.phase !== 'organizing'
+            || session.assetIds[session.position] !== assetId || isRecordTransferActive()
+            || state.isConfirmingDeletion || state.isConfirmingVideoTrash
+            || (kind === 'photo' ? state.photoProcessedIds : state.videoProcessedIds).includes(assetId)
+            || getPendingDeletionEntries(state).some(entry => entry.asset.id === assetId)) return false;
+        set({ organizingSessions: { ...state.organizingSessions, [kind]: advanceOrganizingSession(session, assetId, 'skip') },
+            ...(kind === 'photo' ? { photos: state.photos.filter(asset => asset.id !== assetId) }
+                : { videos: state.videos.filter(asset => asset.id !== assetId) }) });
+        return true;
+    },
+    continueSessionBatch: (kind, assetIds) => {
+        const state = get(), session = state.organizingSessions[kind];
+        if (!state.hasHydrated || !session || session.phase === 'organizing' || isRecordTransferActive() || state.isConfirmingDeletion || state.isConfirmingVideoTrash) return false;
+        set({ organizingSessions: { ...state.organizingSessions, [kind]: continueOrganizingSession(session, assetIds) } });
+        return true;
+    },
+    revisitSessionDeferred: (kind, assetIds) => {
+        const state = get(), session = state.organizingSessions[kind];
+        if (!state.hasHydrated || !session || isRecordTransferActive() || state.isConfirmingDeletion || state.isConfirmingVideoTrash) return false;
+        const next = revisitDeferredMedia(session, assetIds);
+        if (next === session) return false;
+        set({ organizingSessions: { ...state.organizingSessions, [kind]: next } });
+        return true;
+    },
+    resumeOrganizingSession: async kind => {
+        const initial = get(), session = initial.organizingSessions[kind];
+        const empty = (status: SessionRecoveryResult['status']): SessionRecoveryResult => ({ status, assets: [], unavailableCount: 0, position: 0 });
+        if (!initial.hasHydrated || isRecordTransferActive() || initial.isConfirmingDeletion || initial.isConfirmingVideoTrash) return empty('busy');
+        if (!session) return empty('unavailable');
+        const requestId = kind === 'photo' ? ++photoLoadRequestId : ++videoLoadRequestId;
+        const generation = initial.mediaLibraryRefreshVersion, permissionGeneration = initial.permissionRefreshVersion;
+        const current = () => get().organizingSessions[kind] === session
+            && get().mediaLibraryRefreshVersion === generation && get().permissionRefreshVersion === permissionGeneration
+            && (kind === 'photo' ? get().photoProcessedIds === initial.photoProcessedIds && get().deleteQueue === initial.deleteQueue
+                : get().videoProcessedIds === initial.videoProcessedIds && get().videoTrashBin === initial.videoTrashBin)
+            && requestId === (kind === 'photo' ? photoLoadRequestId : videoLoadRequestId);
+        activeMediaLoads++;
+        set({ isLoading: true });
+        try {
+            const result = await recoverOrganizingSession(session,
+                new Set(kind === 'photo' ? initial.photoProcessedIds : initial.videoProcessedIds), current,
+                new Set(getPendingDeletionEntries(initial).filter(entry => entry.type === kind).map(entry => entry.asset.id)));
+            if (!current()) return empty('stale');
+            if (result.status === 'ready' || result.status === 'review' || result.status === 'complete') {
+                set(kind === 'photo' ? { photos: result.assets, currentIndex: result.position, photoLoadFailed: false }
+                    : { videos: result.assets, videoCurrentIndex: result.position, videoLoadFailed: false });
+            }
+            return result;
+        } finally {
+            activeMediaLoads--;
+            if (activeMediaLoads === 0) set({ isLoading: false });
+        }
+    },
 
     loadAlbums: async () => {
         const requestId = ++albumLoadRequestId;
@@ -812,6 +898,7 @@ export const useMediaStore = create<MediaState>()(
             }
             if (!added) return state;
             return { deleteQueue, videoTrashBin, pendingDeletionInfo, lastDeletionResult: null,
+                organizingSessions: advancePhotoSession(state, photoProcessed),
                 collectionQueue: state.collectionQueue.filter(asset => !newlyQueued.has(asset.id)),
                 videos: state.videos.filter(asset => !newlyQueued.has(asset.id)),
                 photoProcessedIds: [...photoProcessed], videoProcessedIds: [...videoProcessed] };
@@ -825,7 +912,8 @@ export const useMediaStore = create<MediaState>()(
             if (state.photoProcessedIds.includes(asset.id)) return state;
             return {
                 collectionQueue: [...state.collectionQueue, asset],
-                photoProcessedIds: [...state.photoProcessedIds, asset.id]
+                photoProcessedIds: [...state.photoProcessedIds, asset.id],
+                organizingSessions: advancePhotoSession(state, new Set([...state.photoProcessedIds, asset.id]))
             };
         });
     },
@@ -833,7 +921,8 @@ export const useMediaStore = create<MediaState>()(
     markAsSkipped: (asset) => {
         set((state) => state.photoProcessedIds.includes(asset.id)
             ? state
-            : { photoProcessedIds: [...state.photoProcessedIds, asset.id] });
+            : { photoProcessedIds: [...state.photoProcessedIds, asset.id],
+                organizingSessions: advancePhotoSession(state, new Set([...state.photoProcessedIds, asset.id])) });
     },
 
     keepPendingDeletion: (assetId) => {
@@ -998,6 +1087,7 @@ export const useMediaStore = create<MediaState>()(
             ? state
             : {
                 photoProcessedIds: [],
+                organizingSessions: { ...state.organizingSessions, photo: null },
                 photos: [],
                 deleteQueue: [],
                 collectionQueue: [],
@@ -1017,6 +1107,7 @@ export const useMediaStore = create<MediaState>()(
             ? state
             : {
                 videoProcessedIds: [],
+                organizingSessions: { ...state.organizingSessions, video: null },
                 videos: [],
                 videoTrashBin: [],
                 hiddenVideoQueuedAssetIds: null,
@@ -1156,6 +1247,7 @@ export const useMediaStore = create<MediaState>()(
                 videoTrashBin: state.videoTrashBin,
                 pendingDeletionInfo: retainPendingDeletionInfo(state),
                 deletedCounts: state.deletedCounts,
+                organizingSessions: state.organizingSessions,
             }),
             onRehydrateStorage: () => (state, error) => {
                 if (error) { usePrivacyStore.getState().block('records', 'read'); return; }

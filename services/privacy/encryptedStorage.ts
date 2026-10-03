@@ -6,6 +6,7 @@ import { fromByteArray, toByteArray } from 'react-native-quick-base64';
 import type { StateStorage } from 'zustand/middleware';
 import { getDeviceKeyHex } from './deviceKey';
 import { LocalPrivacyError, DeviceKeyScope, usePrivacyStore } from '../../stores/usePrivacyStore';
+import { isOrganizingSession } from '../organizingSession';
 
 const suffix = '.encrypted-v1';
 const prefix = 'PKLOCAL1:';
@@ -48,6 +49,15 @@ function validateState(value: string): void {
         const counts = state.deletedCounts;
         if (!counts || typeof counts !== 'object' || !('photos' in counts) || !('videos' in counts)
             || ![counts.photos, counts.videos].every(value => Number.isSafeInteger(value) && Number(value) >= 0)) throw new LocalPrivacyError();
+    }
+    if ('organizingSessions' in state) {
+        const sessions = state.organizingSessions;
+        if (!sessions || typeof sessions !== 'object' || Array.isArray(sessions)
+            || Object.keys(sessions).sort().join(',') !== 'photo,video') throw new LocalPrivacyError();
+        for (const kind of ['photo', 'video'] as const) {
+            const session = (sessions as Record<string, unknown>)[kind];
+            if (session !== null && (!isOrganizingSession(session) || session.kind !== kind)) throw new LocalPrivacyError();
+        }
     }
 }
 function aad(name: string): Uint8Array { return new TextEncoder().encode(`PickPic/local/v1/${name}`); }

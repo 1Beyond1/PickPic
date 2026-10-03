@@ -170,3 +170,18 @@ it('does not migrate malformed decision fields that would crash or replace resto
     expect(disk.get(name)).toBe(malformed);
     expect(disk.has(encryptedName)).toBe(false);
 });
+
+it.each([
+    null, [], {}, { photo: null }, { photo: null, video: null, extra: null },
+    { photo: { version: 2 }, video: null },
+    { photo: { version: 1, sessionId: 'invalid', kind: 'video', scope: { albumIds: [], order: 'random' },
+        assetIds: ['a'], position: 0, deferredIds: [], phase: 'organizing', startedAt: 1, updatedAt: 1 }, video: null },
+])('preserves unsupported or malformed sensitive session records rather than replacing them %j', async organizingSessions => {
+    const original = JSON.stringify({ state: { organizingSessions }, version: 0 });
+    disk.set(name, original);
+    const storage = createEncryptedStorage('records');
+    await expect(storage.getItem(name)).rejects.toThrow();
+    await expect(storage.setItem(name, JSON.stringify({ state: {} }))).rejects.toThrow();
+    expect(disk.get(name)).toBe(original);
+    expect(disk.has(encryptedName)).toBe(false);
+});

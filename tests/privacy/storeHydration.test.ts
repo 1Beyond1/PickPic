@@ -49,6 +49,28 @@ it('hydrates real Zustand stores without startup default snapshots replacing leg
     expect(mockDisk.get(settingsName + '.encrypted-v1')).not.toContain('private-album');
 });
 
+it('encrypts session scope, exact order, position and deferred media, then restores them without changing old decisions', async () => {
+    const stores = await openStores();
+    await stores.media.persist.rehydrate();
+    const session = stores.media.getState().startOrganizingSession('photo', { albumIds: ['session-private-album'], order: 'random' }, ['session-a', 'session-b']);
+    expect(session).not.toBeNull();
+    expect(stores.media.getState().deferSessionMedia('photo', 'session-a')).toBe(true);
+    await require('../../services/mediaProgressStorage').flushMediaProgress();
+    const saved = mockDisk.get(recordsName + '.encrypted-v1')!;
+    expect(saved.startsWith('PKLOCAL1:')).toBe(true);
+    expect(saved).not.toContain('session-private-album');
+    expect(saved).not.toContain('session-a');
+    jest.resetModules();
+    const reopened = await openStores();
+    await reopened.media.persist.rehydrate();
+    expect(reopened.media.getState().organizingSessions.photo).toMatchObject({
+        sessionId: session.sessionId, scope: { albumIds: ['session-private-album'], order: 'random' },
+        assetIds: ['session-a', 'session-b'], position: 1, deferredIds: ['session-a'], phase: 'organizing',
+    });
+    expect(reopened.media.getState().photoProcessedIds).toEqual(['kept']);
+    expect(reopened.media.getState().deleteQueue).toEqual([{ id: 'pending', mediaType: 'photo' }]);
+});
+
 it('keeps failed hydration closed and preserves old records, then restores them on explicit retry', async () => {
     mockLocked = true;
     const stores = await openStores();

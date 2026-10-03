@@ -74,6 +74,8 @@ describe('media visibility checks', () => {
       isConfirmingDeletion: false,
       isConfirmingVideoTrash: false,
       hasPermission: true,
+      hasHydrated: true,
+      organizingSessions: { photo: null, video: null },
       permissionScope: 'full',
       hiddenPhotoQueuedAssetIds: null,
       hiddenVideoQueuedAssetIds: null,
@@ -110,6 +112,76 @@ describe('media visibility checks', () => {
     useMediaStore.getState().resetBatch([]);
     expect(useMediaStore.getState().deleteQueue).toEqual([hidden]);
     expect(useMediaStore.getState().photoProcessedIds).toEqual(['kept', 'hidden', 'collection']);
+  });
+
+  it('defers the current session member without recording it as organized or pending deletion', () => {
+      useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'random' }, ['a', 'b']);
+      expect(useMediaStore.getState().deferSessionMedia('photo', 'b')).toBe(false);
+      expect(useMediaStore.getState().deferSessionMedia('photo', 'a')).toBe(true);
+      expect(useMediaStore.getState()).toMatchObject({ photoProcessedIds: [], deleteQueue: [],
+          organizingSessions: { photo: { position: 1, deferredIds: ['a'], assetIds: ['a', 'b'] } } });
+      expect(useMediaStore.getState().continueSessionBatch('photo', ['new'])).toBe(false);
+      useMediaStore.getState().markAsSkipped({ id: 'b', mediaType: 'photo' } as any); // Existing downward keep, not new defer.
+      expect(useMediaStore.getState().continueSessionBatch('photo', ['a', 'new'])).toBe(true);
+      expect(useMediaStore.getState().organizingSessions.photo?.assetIds).toEqual(['new']);
+  });
+
+  it('resumes a captured randomized batch in original order without replacing its saved scope or processed decisions', async () => {
+      getAssetsAsync.mockResolvedValue({ assets: ['b', 'a'].map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })), hasNextPage: false });
+      const session = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'random' }, ['a', 'b']);
+      const result = await useMediaStore.getState().resumeOrganizingSession('photo');
+      expect(result.status).toBe('ready');
+      expect(useMediaStore.getState().photos.map(asset => asset.id)).toEqual(['a', 'b']);
+      expect(useMediaStore.getState().organizingSessions.photo).toBe(session);
+      expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
+  });
+
+  it('advances the saved photo cursor for collection decisions without changing their existing meaning', () => {
+      const a = { id: 'a', mediaType: 'photo' } as any;
+      const b = { id: 'b', mediaType: 'photo' } as any;
+      useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'random' }, ['a', 'b']);
+      useMediaStore.getState().markForCollection(a);
+      expect(useMediaStore.getState()).toMatchObject({ collectionQueue: [a], photoProcessedIds: ['a'],
+          deleteQueue: [], organizingSessions: { photo: { position: 1, phase: 'organizing' } } });
+      useMediaStore.getState().markForCollection(b);
+      expect(useMediaStore.getState()).toMatchObject({ collectionQueue: [a, b], photoProcessedIds: ['a', 'b'],
+          deleteQueue: [], organizingSessions: { photo: { position: 2, phase: 'review' } } });
+  });
+
+  it('does not abandon the unseen current photo when an AI result queues a later session member', () => {
+      useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'random' }, ['a', 'b']);
+      useMediaStore.getState().enqueuePendingDeletion([{ id: 'b', mediaType: 'photo' } as any], 'classification');
+      expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ position: 0, phase: 'organizing' });
+      useMediaStore.getState().markAsSkipped({ id: 'a', mediaType: 'photo' } as any);
+      expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ position: 2, phase: 'review' });
+      expect(useMediaStore.getState().deleteQueue.map(asset => asset.id)).toEqual(['b']);
+  });
+
+  it('does not publish an old resume snapshot after a selection generation changes', async () => {
+      let finish!: (value: any) => void;
+      getAssetsAsync.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+      const saved = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'random' }, ['a']);
+      const recovery = useMediaStore.getState().resumeOrganizingSession('photo');
+      await waitFor(() => expect(getAssetsAsync).toHaveBeenCalled());
+      useMediaStore.getState().notifyPermissionRefresh();
+      finish({ assets: [{ id: 'a', mediaType: 'photo', uri: 'file:///stale.jpg' }], hasNextPage: false });
+      expect((await recovery).status).toBe('stale');
+      expect(useMediaStore.getState().photos).toEqual([]);
+      expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+  });
+
+  it('does not reinsert a video newly queued for deletion while its session metadata is being read', async () => {
+      let finish!: (value: any) => void;
+      getAssetsAsync.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+      const asset = { id: 'video-resume', mediaType: 'video', uri: 'file:///synthetic-video.mp4' } as any;
+      useMediaStore.getState().startOrganizingSession('video', { albumIds: [], order: 'random' }, [asset.id]);
+      const recovery = useMediaStore.getState().resumeOrganizingSession('video');
+      await waitFor(() => expect(getAssetsAsync).toHaveBeenCalled());
+      useMediaStore.getState().enqueuePendingDeletion([asset], 'videos');
+      finish({ assets: [asset], hasNextPage: false });
+      expect((await recovery).status).toBe('stale');
+      expect(useMediaStore.getState().videos).toEqual([]);
+      expect(useMediaStore.getState().videoTrashBin).toEqual([asset]);
   });
 
   it('repairs a restored queue item without a processed record when it is explicitly kept', () => {
