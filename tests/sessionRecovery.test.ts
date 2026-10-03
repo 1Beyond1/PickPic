@@ -2,6 +2,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
 import { createOrganizingSession } from '../services/organizingSession';
 import { recoverOrganizingSession } from '../services/sessionRecovery';
+import { createMediaMonth, mediaMonthQuery } from '../services/mediaMonth';
 
 jest.mock('expo-media-library', () => ({ getPermissionsAsync: jest.fn(), getAlbumsAsync: jest.fn(), getAssetsAsync: jest.fn() }));
 const permissions = MediaLibrary.getPermissionsAsync as jest.Mock;
@@ -26,6 +27,14 @@ it('recovers the exact original randomized order from fresh URIs without writing
     expect(page).toHaveBeenCalledWith({ mediaType: 'photo', first: 200, resolveWithFullInfo: false });
     expect(JSON.stringify(saved)).toBe(snapshot);
 });
+it('resumes only saved members still inside the captured month, without changing the original boundaries', async () => {
+    const date = createMediaMonth(2026, 10);
+    const saved = createOrganizingSession('photo', { albumIds: [], order: 'oldest', date }, ['a', 'b'], 'month-session', 1);
+    page.mockResolvedValue({ assets: [{ ...asset('a'), creationTime: date.startInclusive }, { ...asset('b'), creationTime: date.endExclusive }], hasNextPage: false });
+    expect(await recoverOrganizingSession(saved, new Set())).toMatchObject({ status: 'ready', unavailableCount: 1, assets: [{ id: 'a' }] });
+    expect(page).toHaveBeenCalledWith(expect.objectContaining(mediaMonthQuery(date)));
+    expect(saved.scope.date).toEqual(date); expect(saved.assetIds).toEqual(['a', 'b']);
+});
 it('excludes already processed, deferred and earlier navigation positions', async () => {
     const saved = { ...session(), position: 1, deferredIds: ['b'] };
     expect((await recoverOrganizingSession(saved, new Set(['a']))).status).toBe('review');
@@ -35,6 +44,11 @@ it('does not silently widen a disappeared album to all media', async () => {
     albums.mockResolvedValue([]);
     expect((await recoverOrganizingSession(session(['missing']), new Set())).status).toBe('unavailable');
     expect(page).not.toHaveBeenCalled();
+});
+it('does not mistake a still-accessible iOS smart album for a missing album during recovery', async () => {
+    Platform.OS = 'ios';
+    albums.mockImplementation(async (options: any) => options?.includeSmartAlbums ? [{ id: 'family', type: 'smartAlbum' }] : []);
+    expect((await recoverOrganizingSession(session(['family']), new Set())).status).toBe('ready');
 });
 it('keeps album constraints and rejects disappearance during enumeration', async () => {
     albums.mockResolvedValueOnce([{ id: 'family' }]).mockResolvedValueOnce([]);

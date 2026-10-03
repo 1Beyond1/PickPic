@@ -34,6 +34,7 @@ jest.mock('../hooks/useI18n', () => ({ useI18n: () => ({ language: 'zh', t: (key
 
 import PhotosScreen from '../app/(tabs)/photos';
 import { useMediaStore } from '../stores/useMediaStore';
+import { createMediaMonth } from '../services/mediaMonth';
 
 const photo = (id: string) => ({ id, uri: `file:///synthetic-${id}.jpg`, filename: `${id}.jpg`, mediaType: 'photo', creationTime: 1, width: 800, height: 600 }) as any;
 let mockLibrary = [photo('one'), photo('two'), photo('three')];
@@ -67,6 +68,33 @@ async function start() {
     measureDeck();
     return view;
 }
+
+it('keeps the range page mounted while a new month loads, then opens only that month without resetting decisions', async () => {
+    const date = createMediaMonth(2026, 10);
+    mockLibrary = [{ ...photo('one'), creationTime: date.startInclusive }, { ...photo('two'), creationTime: date.endExclusive }];
+    await renderAsync(<PhotosScreen />);
+    await fireEventAsync.press(await screen.findByRole('button', { name: '整理范围' }));
+    await fireEventAsync.press(await screen.findByRole('radio', { name: '2026 年 10 月' }));
+    let release!: (value: any) => void;
+    (MediaLibrary.getAssetsAsync as jest.Mock).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    await act(async () => { fireEvent.press(screen.getByRole('button', { name: '按此范围开始整理' })); });
+    expect(useMediaStore.getState().isLoading).toBe(true);
+    expect(screen.getByTestId('organizing-scope')).toBeTruthy();
+    await act(async () => release({ assets: mockLibrary, totalCount: 2, hasNextPage: false }));
+    await waitFor(() => expect(screen.queryByTestId('organizing-scope')).toBeNull());
+    measureDeck();
+    expect(screen.getByTestId('card:one')).toBeTruthy(); expect(screen.queryByTestId('card:two')).toBeNull();
+    expect(useMediaStore.getState().organizingSessions.photo?.scope.date).toEqual(date);
+    expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    const saved = useMediaStore.getState().organizingSessions.photo;
+    await fireEventAsync.press(screen.getByRole('button', { name: '返回首页' }));
+    await fireEventAsync.press(screen.getByRole('button', { name: '开始新一轮' }));
+    expect(await screen.findByRole('radio', { name: '2026 年 10 月', checked: true })).toBeTruthy();
+    expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+    await fireEventAsync.press(screen.getByRole('button', { name: '返回整理' }));
+    expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+});
 
 it('uses real decisions: skip is neither processed nor pending, and can be revisited after batch review', async () => {
     await start();

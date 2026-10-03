@@ -74,7 +74,8 @@ it('authenticates the bounded recent journal through real Zustand persistence an
 it('encrypts session scope, exact order, position and deferred media, then restores them without changing old decisions', async () => {
     const stores = await openStores();
     await stores.media.persist.rehydrate();
-    const session = stores.media.getState().startOrganizingSession('photo', { albumIds: ['session-private-album'], order: 'random' }, ['session-a', 'session-b']);
+    const date = require('../../services/mediaMonth').createMediaMonth(2026, 10);
+    const session = stores.media.getState().startOrganizingSession('photo', { albumIds: ['session-private-album'], order: 'random', date }, ['session-a', 'session-b']);
     expect(session).not.toBeNull();
     expect(stores.media.getState().deferSessionMedia('photo', 'session-a')).toBe(true);
     await require('../../services/mediaProgressStorage').flushMediaProgress();
@@ -82,11 +83,12 @@ it('encrypts session scope, exact order, position and deferred media, then resto
     expect(saved.startsWith('PKLOCAL1:')).toBe(true);
     expect(saved).not.toContain('session-private-album');
     expect(saved).not.toContain('session-a');
+    expect(saved).not.toContain(String(date.startInclusive));
     jest.resetModules();
     const reopened = await openStores();
     await reopened.media.persist.rehydrate();
     expect(reopened.media.getState().organizingSessions.photo).toMatchObject({
-        sessionId: session.sessionId, scope: { albumIds: ['session-private-album'], order: 'random' },
+        sessionId: session.sessionId, scope: { albumIds: ['session-private-album'], order: 'random', date },
         assetIds: ['session-a', 'session-b'], position: 1, deferredIds: ['session-a'], phase: 'organizing',
     });
     expect(reopened.media.getState().photoProcessedIds).toEqual(['kept']);

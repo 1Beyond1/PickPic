@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { ActivityIndicator, Alert, AppState, BackHandler, FlatList, Linking, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
+import { OrganizingScopeButton, OrganizingScopeModal } from '../../components/OrganizingScopeModal';
 import { PendingDeletionModal } from '../../components/PendingDeletionReview';
 import { RecentDecisionsButton, RecentUndoButton } from '../../components/RecentDecisionControls';
 import { getPendingDeletionEntries } from '../../services/pendingDeletion';
@@ -45,6 +46,7 @@ export default function VideosScreen() {
     const [selectedVideoForCollection, setSelectedVideoForCollection] = useState<any>(null);
     const [isScreenFocused, setIsScreenFocused] = useState(true);
     const [showHome, setShowHome] = useState(false);
+    const [showScopeSelector, setShowScopeSelector] = useState(false);
     const session = organizingSessions?.video;
     const batchFinished = !!session && session.assetIds.every(id => videoProcessedIds.includes(id) || session.deferredIds.includes(id));
     // Derive the notice from the current feed and visible identity. Removing
@@ -285,6 +287,7 @@ export default function VideosScreen() {
     }, [feedHeight, markVideoAsProcessed, moveVideoSession]);
 
     const openSession = async (mode?: 'new' | 'continue') => {
+        if (mode === 'new' && session?.scope.date !== undefined) { setShowScopeSelector(true); return; }
         if (mode) await loadVideos(50, displayOrder, selectedAlbumIds, mode);
         else await loadVideos(50, displayOrder, selectedAlbumIds);
         if (useMediaStore.getState().videos.length) setShowHome(false);
@@ -429,13 +432,13 @@ export default function VideosScreen() {
     const readFailed = videoLoadFailed || videoSessionRecoveryStatus === 'failed';
     const emptyTitle = readFailed ? 'video_load_failed' : unavailable ? 'session_unavailable'
         : session?.phase === 'complete' ? session.deferredIds.length ? 'video_rest_complete'
-            : session.scope.albumIds.length ? 'session_scope_complete' : hasLimitedVideoAccess ? 'video_accessible_complete' : 'video_library_complete'
+            : session.scope.albumIds.length || session.scope.date !== undefined ? 'session_scope_complete' : hasLimitedVideoAccess ? 'video_accessible_complete' : 'video_library_complete'
         : batchFinished ? 'video_batch_complete' : showHome && videos.length ? 'video_organize'
         : hasLimitedVideoAccess ? 'video_permission_desc' : 'video_empty';
     const scope = session?.scope;
     const scopeText = scope ? t(scope.albumIds.length ? 'session_album_scope' : 'session_all_scope', {
         count: scope.albumIds.length, order: t(`session_order_${scope.order}`),
-    }) : null;
+    }) + (scope.date !== undefined ? ` · ${scope.date === 'unknown' ? t('scope_unknown_date') : t('scope_month_value', { year: scope.date.year, month: scope.date.month })}` : '') : null;
     const activeIsProcessed = !!activeId && videoProcessedIds.includes(activeId);
 
     if (!videoPermissionChecked) {
@@ -609,6 +612,7 @@ export default function VideosScreen() {
                         <Text style={[styles.actionButtonText, { color: colors.text }]}>{t('session_new_round')}</Text>
                     </Pressable>}
                     {session && <Text style={[styles.scopeHint, { color: colors.textSecondary, marginTop: 12 }]}>{t('session_new_round_hint')}</Text>}
+                    <OrganizingScopeButton onPress={() => setShowScopeSelector(true)} />
                     <View style={styles.recentRow}><RecentDecisionsButton kind="video" /><RecentUndoButton kind="video" onChanged={afterUndo} /></View>
                 </ScrollView>
             ) : null}
@@ -640,6 +644,9 @@ export default function VideosScreen() {
             <PendingDeletionModal visible={showTrash && isFocused} onClose={() => setShowTrash(false)} />
 
             {/* Album Selector Modal */}
+            <OrganizingScopeModal visible={showScopeSelector} kind="video" onClose={() => setShowScopeSelector(false)} onStarted={() => {
+                setShowScopeSelector(false); setShowHome(false); dragStartIdRef.current = null;
+            }} />
             <AlbumSelector
                 visible={showAlbumSelector}
                 onClose={() => setShowAlbumSelector(false)}

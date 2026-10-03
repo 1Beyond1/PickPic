@@ -19,6 +19,8 @@ import type { SessionRecoveryResult } from '../services/sessionRecovery';
 import { appendRecentDecision, sameDecisionSnapshot } from '../services/recentDecisions';
 import type { DecisionSnapshot, RecentDecision, RecentDecisionResult } from '../services/recentDecisions';
 import { readRecentDecisionMedia } from '../services/recentDecisionMedia';
+import { isMediaDateFilter, mediaDateQuery, mediaMatchesDate } from '../services/mediaMonth';
+import type { MediaDateFilter } from '../services/mediaMonth';
 import { DisplayOrder, useSettingsStore } from './useSettingsStore';
 
 export interface PhotoAsset extends MediaLibrary.Asset {
@@ -176,8 +178,8 @@ interface MediaState {
     createAlbum: (name: string, asset: PhotoAsset) => Promise<void>;
     addAssetToAlbum: (albumId: string, asset: PhotoAsset) => Promise<void>;
 
-    loadPhotos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[], sessionMode?: 'new' | 'continue') => Promise<void>;
-    loadVideos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[], sessionMode?: 'new' | 'continue') => Promise<void>;
+    loadPhotos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[], sessionMode?: 'new' | 'continue', date?: MediaDateFilter) => Promise<void>;
+    loadVideos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[], sessionMode?: 'new' | 'continue', date?: MediaDateFilter) => Promise<void>;
 
     markForDeletion: (asset: PhotoAsset) => void;
     enqueuePendingDeletion: (assets: readonly PhotoAsset[], source: PendingDeletionSource) => number;
@@ -391,13 +393,15 @@ async function assertAlbumsStillAvailable(albumIds: readonly string[]): Promise<
 async function loadAlbumPage(
     state: OrderedAlbumPage,
     mediaType: MediaType,
-    sortBy: MediaLibrary.SortByValue[]
+    sortBy: MediaLibrary.SortByValue[],
+    date?: MediaDateFilter,
 ): Promise<void> {
     const result = await MediaLibrary.getAssetsAsync({
         mediaType,
         first: 100,
         sortBy,
         album: state.albumId,
+        ...mediaDateQuery(date),
         ...(state.after ? { after: state.after } : {}),
     });
 
@@ -419,7 +423,8 @@ async function loadOrderedAlbumAssets(
     count: number,
     displayOrder: DisplayOrder,
     processed: ReadonlySet<string>,
-    albumIds: readonly string[]
+    albumIds: readonly string[],
+    date?: MediaDateFilter,
 ): Promise<MediaLibrary.Asset[]> {
     const states: OrderedAlbumPage[] = Array.from(new Set(albumIds)).map(albumId => ({
         albumId,
@@ -429,7 +434,7 @@ async function loadOrderedAlbumAssets(
         endCursor: '',
     }));
 
-    await Promise.all(states.map(state => loadAlbumPage(state, mediaType, sortBy)));
+    await Promise.all(states.map(state => loadAlbumPage(state, mediaType, sortBy, date)));
 
     const selected: MediaLibrary.Asset[] = [];
     const seenAssetIds = new Set<string>();
@@ -439,7 +444,7 @@ async function loadOrderedAlbumAssets(
             while (true) {
                 if (state.index < state.assets.length) {
                     const asset = state.assets[state.index];
-                    if (processed.has(asset.id) || seenAssetIds.has(asset.id)) {
+                    if (processed.has(asset.id) || seenAssetIds.has(asset.id) || !mediaMatchesDate(asset.creationTime, date)) {
                         state.index++;
                         continue;
                     }
@@ -453,7 +458,7 @@ async function loadOrderedAlbumAssets(
                     throw new Error(`Media library returned an invalid pagination cursor for album ${state.albumId}`);
                 }
                 state.after = nextCursor;
-                await loadAlbumPage(state, mediaType, sortBy);
+                await loadAlbumPage(state, mediaType, sortBy, date);
             }
         }))).filter((candidate): candidate is { state: OrderedAlbumPage; asset: MediaLibrary.Asset } => (
             candidate !== null
@@ -489,7 +494,8 @@ async function loadAssetsForReview(
     count: number,
     displayOrder: DisplayOrder,
     processedIds: readonly string[],
-    albumIds: readonly string[]
+    albumIds: readonly string[],
+    date?: MediaDateFilter,
 ): Promise<{ assets: MediaLibrary.Asset[]; totalCount: number | null }> {
     if (count <= 0) {
         return { assets: [], totalCount: 0 };
@@ -513,7 +519,8 @@ async function loadAssetsForReview(
             count,
             displayOrder,
             processed,
-            normalizedAlbumIds
+            normalizedAlbumIds,
+            date,
         );
         // iOS falls back to an unscoped query if an album disappears while a
         // page is being fetched. Do not publish that page to the feed.
@@ -543,6 +550,7 @@ async function loadAssetsForReview(
                 mediaType,
                 first: 100,
                 sortBy,
+                ...mediaDateQuery(date),
                 ...(albumId ? { album: albumId } : {}),
                 ...(after ? { after } : {}),
             });
@@ -551,14 +559,14 @@ async function loadAssetsForReview(
                 throw new Error('Media library returned an invalid pagination cursor');
             }
 
-            if (totalCount === null && normalizedAlbumIds.length === 0) {
+            if (totalCount === null && normalizedAlbumIds.length === 0 && date === undefined) {
                 totalCount = result.totalCount;
             }
 
             for (const asset of result.assets) {
                 if (seenAssetIds?.has(asset.id)) continue;
                 seenAssetIds?.add(asset.id);
-                if (processed.has(asset.id)) continue;
+                if (processed.has(asset.id) || !mediaMatchesDate(asset.creationTime, date)) continue;
 
                 if (displayOrder === 'random') {
                     eligibleCount++;
@@ -925,8 +933,8 @@ export const useMediaStore = create<MediaState>()(
         }
     },
 
-    loadPhotos: async (count, displayOrder = 'random', albumIds: string[] = [], sessionMode) => {
-        const initialSession = get().organizingSessions.photo;
+    loadPhotos: async (count, displayOrder = 'random', albumIds: string[] = [], sessionMode, date) => {
+        const initial = get(), initialSession = initial.organizingSessions.photo;
         if (!sessionMode && initialSession) {
             await get().resumeOrganizingSession('photo');
             return;
@@ -936,8 +944,16 @@ export const useMediaStore = create<MediaState>()(
             if (!initialSession || initialSession.phase === 'organizing') return;
             displayOrder = initialSession.scope.order;
             albumIds = initialSession.scope.albumIds;
+            date = initialSession.scope.date;
         }
+        if (date !== undefined && !isMediaDateFilter(date)) { set({ photoLoadFailed: true }); return; }
+        date = typeof date === 'object' ? { ...date } : date;
+        albumIds = [...albumIds];
         const requestId = ++photoLoadRequestId;
+        const isCurrent = () => requestId === photoLoadRequestId && get().mediaLibraryRefreshVersion === initial.mediaLibraryRefreshVersion
+            && get().permissionRefreshVersion === initial.permissionRefreshVersion
+            && (!sessionMode || (get().organizingSessions.photo === initialSession && !isRecordTransferActive()
+                && !get().isConfirmingDeletion && !get().isConfirmingVideoTrash));
         activeMediaLoads++;
         // Do not keep showing a batch that belongs to a previous filter while
         // the current request is loading or if it fails. The old batch could
@@ -949,18 +965,19 @@ export const useMediaStore = create<MediaState>()(
             if (sessionMode) {
                 const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
                 sessionPermission = permission;
+                if (!isCurrent()) return;
                 if (!permission.granted) {
-                    if (requestId === photoLoadRequestId) set({ photoSessionRecoveryStatus: 'permission' });
+                    if (isCurrent()) set({ photoSessionRecoveryStatus: 'permission' });
                     return;
                 }
                 if (albumIds.length) {
                     if (Platform.OS === 'ios' && permission.accessPrivileges !== 'all') {
-                        if (requestId === photoLoadRequestId) set({ photoSessionRecoveryStatus: 'unavailable' });
+                        if (isCurrent()) set({ photoSessionRecoveryStatus: 'unavailable' });
                         return;
                     }
-                    const availableAlbums = new Set((await MediaLibrary.getAlbumsAsync()).map(album => album.id));
+                    const availableAlbums = new Set((await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true })).map(album => album.id));
                     if (albumIds.some(id => !availableAlbums.has(id))) {
-                        if (requestId === photoLoadRequestId) set({ photoSessionRecoveryStatus: 'unavailable' });
+                        if (isCurrent()) set({ photoSessionRecoveryStatus: 'unavailable' });
                         return;
                     }
                 }
@@ -977,12 +994,13 @@ export const useMediaStore = create<MediaState>()(
                 count,
                 displayOrder,
                 sessionMode === 'continue' ? [...photoProcessedIds, ...initialSession!.deferredIds] : photoProcessedIds,
-                albumIds
+                albumIds,
+                date,
             );
             if (sessionPermission) {
                 const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
                 if (!permission.granted || permission.accessPrivileges !== sessionPermission.accessPrivileges) {
-                    if (requestId === photoLoadRequestId) set({ photoSessionRecoveryStatus: 'permission' });
+                    if (isCurrent()) set({ photoSessionRecoveryStatus: 'permission' });
                     return;
                 }
                 await assertAlbumsStillAvailable(albumIds);
@@ -992,14 +1010,13 @@ export const useMediaStore = create<MediaState>()(
             // the same state update so a swipe/action that completes while
             // MediaLibrary is paging cannot put that asset back on screen.
             set((state) => {
-                if (requestId !== photoLoadRequestId || (sessionMode && (state.organizingSessions.photo !== initialSession
-                    || isRecordTransferActive() || state.isConfirmingDeletion || state.isConfirmingVideoTrash))) return state;
+                if (!isCurrent()) return state;
 
                 const processed = new Set(state.photoProcessedIds);
                 const deferred = new Set(sessionMode === 'continue' ? initialSession!.deferredIds : []);
                 const photos = result.assets.filter(asset => !processed.has(asset.id) && !deferred.has(asset.id));
                 const now = Date.now();
-                const session = sessionMode === 'new' ? createOrganizingSession('photo', { albumIds, order: displayOrder },
+                const session = sessionMode === 'new' ? createOrganizingSession('photo', { albumIds, order: displayOrder, ...(date !== undefined ? { date } : {}) },
                     photos.map(asset => asset.id), `photo-${now}-${++organizingSessionSequence}`, now)
                     : sessionMode === 'continue' ? continueOrganizingSession(initialSession!, photos.map(asset => asset.id), now) : undefined;
 
@@ -1016,14 +1033,14 @@ export const useMediaStore = create<MediaState>()(
         } catch {
             console.error('Failed to load photos.');
             // Only the current request owns feedback, just as it owns the list.
-            set((state) => requestId === photoLoadRequestId ? { photoLoadFailed: true } : state);
+            set((state) => isCurrent() ? { photoLoadFailed: true } : state);
         } finally {
             activeMediaLoads--;
             if (activeMediaLoads === 0) set({ isLoading: false });
         }
     },
 
-    loadVideos: async (count, displayOrder = 'random', albumIds: string[] = [], sessionMode) => {
+    loadVideos: async (count, displayOrder = 'random', albumIds: string[] = [], sessionMode, date) => {
         if (!sessionMode && get().organizingSessions.video) {
             await get().resumeOrganizingSession('video');
             return;
@@ -1035,7 +1052,11 @@ export const useMediaStore = create<MediaState>()(
             if (!initialSession) return;
             displayOrder = initialSession.scope.order;
             albumIds = initialSession.scope.albumIds;
+            date = initialSession.scope.date;
         }
+        if (date !== undefined && !isMediaDateFilter(date)) { set({ videoLoadFailed: true }); return; }
+        date = typeof date === 'object' ? { ...date } : date;
+        albumIds = [...albumIds];
         const requestId = ++videoLoadRequestId;
         const mediaGeneration = initial.mediaLibraryRefreshVersion, permissionGeneration = initial.permissionRefreshVersion;
         const isCurrent = () => requestId === videoLoadRequestId && get().organizingSessions.video === initialSession
@@ -1061,7 +1082,7 @@ export const useMediaStore = create<MediaState>()(
                     if (isCurrent()) set({ videoSessionRecoveryStatus: 'unavailable' });
                     return;
                 }
-                const albums = new Set((await MediaLibrary.getAlbumsAsync()).map(album => album.id));
+                const albums = new Set((await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true })).map(album => album.id));
                 if (albumIds.some(id => !albums.has(id))) {
                     if (isCurrent()) set({ videoSessionRecoveryStatus: 'unavailable' });
                     return;
@@ -1080,7 +1101,8 @@ export const useMediaStore = create<MediaState>()(
                 count,
                 displayOrder,
                 sessionMode === 'continue' ? [...videoProcessedIds, ...initialSession!.deferredIds] : videoProcessedIds,
-                albumIds
+                albumIds,
+                date,
             );
             const latestPermission = await MediaLibrary.getPermissionsAsync(false, ['video']);
             if (!isCurrent()) return;
@@ -1098,7 +1120,7 @@ export const useMediaStore = create<MediaState>()(
                 const videos = result.assets.filter(asset => !processed.has(asset.id) && !deferred.has(asset.id));
                 const now = Date.now();
                 const session = sessionMode === 'continue' ? continueOrganizingSession(initialSession!, videos.map(asset => asset.id), now)
-                    : createOrganizingSession('video', { albumIds, order: displayOrder }, videos.map(asset => asset.id), `video-${now}-${++organizingSessionSequence}`, now);
+                    : createOrganizingSession('video', { albumIds, order: displayOrder, ...(date !== undefined ? { date } : {}) }, videos.map(asset => asset.id), `video-${now}-${++organizingSessionSequence}`, now);
 
                 return {
                     videos, videoCurrentIndex: 0,

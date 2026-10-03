@@ -168,7 +168,7 @@ describe('PhotosScreen visual entry', () => {
     await renderAsync(<PhotosScreen />);
     expect(screen.getByText('PickPic')).toBeTruthy();
     expect(screen.queryByLabelText('tab_settings')).toBeNull();
-    expect(screen.getByRole('button', { name: 'photos_home_album' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'scope_title' })).toBeTruthy();
     expect(screen.queryByText('photos_manage_access')).toBeNull();
   });
 
@@ -306,7 +306,7 @@ describe('PhotosScreen visual entry', () => {
 
     fireEvent.press(screen.getByText('photos_back_home'));
     expect(screen.getByText('PickPic')).toBeTruthy();
-    expect(screen.getByText('photos_home_album')).toBeTruthy();
+    expect(screen.getByText('scope_title')).toBeTruthy();
     expect(screen.queryByText('photos_home_start')).toBeNull();
     expect(mockMediaState.photoProcessedIds).toEqual(['one', 'two', 'three']);
     expect(screen.queryByText('card:one')).toBeNull();

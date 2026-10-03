@@ -1,0 +1,116 @@
+import React from 'react';
+import { act, fireEventAsync, renderAsync, screen, waitFor } from '@testing-library/react-native';
+import * as MediaLibrary from 'expo-media-library';
+jest.mock('expo-media-library', () => ({ getPermissionsAsync: jest.fn(), getAssetsAsync: jest.fn(), getAlbumsAsync: jest.fn(),
+    deleteAssetsAsync: jest.fn(), SortBy: { creationTime: 'creationTime' } }));
+jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn(async () => null), setItem: jest.fn(async () => {}), removeItem: jest.fn(async () => {}) }));
+jest.mock('../database', () => ({ AssetRepository: {} }));
+const mockSettings = { groupSize: 10, selectedAlbumIds: [] as string[], displayOrder: 'oldest', setSelectedAlbums: jest.fn() };
+jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: Object.assign(() => mockSettings, { getState: () => mockSettings }) }));
+jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 24, bottom: 24, left: 0, right: 0 }) }));
+jest.mock('../hooks/useThemeColor', () => ({ useThemeColor: () => ({ colors: require('../constants/theme').COLORS }) }));
+jest.mock('../hooks/useI18n', () => ({ useI18n: () => ({ t: (key: string, params: Record<string, string | number> = {}) => {
+    let value = require('../i18n/zh').default[key] ?? key;
+    for (const [name, replacement] of Object.entries(params)) value = value.replace(`{${name}}`, String(replacement));
+    return value;
+} }) }));
+jest.mock('../components/PendingDeletionReview', () => ({ PendingDeletionButton: () => null }));
+// AlbumSelector has separate draft/permission tests. Only its selection boundary
+// is substituted; this page and the media/session APIs remain real.
+jest.mock('../components/AlbumSelector', () => ({ AlbumSelector: ({ visible, onConfirm }: any) => {
+    const { Pressable, Text } = require('react-native');
+    return visible ? <Pressable accessibilityRole="button" onPress={() => onConfirm(['camera'])}><Text>选择 Camera</Text></Pressable> : null;
+} }));
+import { OrganizingScopeModal } from '../components/OrganizingScopeModal';
+import { useMediaStore } from '../stores/useMediaStore';
+import { createMediaMonth } from '../services/mediaMonth';
+const month = createMediaMonth(2026, 10);
+const asset = (id: string, creationTime: number, mediaType = 'photo') => ({ id, creationTime, mediaType, uri: `file:///synthetic-${id}.jpg`,
+    filename: `${id}.jpg`, width: 20, height: 20 }) as any;
+let fixtures: any[];
+beforeEach(() => {
+    fixtures = [asset('start', month.startInclusive), asset('middle', month.startInclusive + 10000), asset('next', month.endExclusive), asset('unknown', 0)];
+    mockSettings.selectedAlbumIds = []; mockSettings.setSelectedAlbums.mockClear();
+    useMediaStore.setState({ hasHydrated: true, photos: [], videos: [], photoProcessedIds: [], videoProcessedIds: [],
+        deleteQueue: [], videoTrashBin: [], collectionQueue: [], pendingDeletionInfo: {}, recentDecisions: [],
+        organizingSessions: { photo: null, video: null }, isLoading: false, isConfirmingDeletion: false, isConfirmingVideoTrash: false,
+        photoSessionRecoveryStatus: null, videoSessionRecoveryStatus: null, photoLoadFailed: false, videoLoadFailed: false,
+        permissionRefreshVersion: 0, mediaLibraryRefreshVersion: 0, totalPhotos: 40, totalVideos: 30 });
+    jest.mocked(MediaLibrary.getPermissionsAsync).mockResolvedValue({ granted: true, accessPrivileges: 'all' } as any);
+    jest.mocked(MediaLibrary.getAlbumsAsync).mockResolvedValue([{ id: 'camera' }] as any);
+    jest.mocked(MediaLibrary.getAssetsAsync).mockImplementation(async options => {
+        const assets = fixtures.filter(item => item.mediaType === options?.mediaType
+            && (options?.createdAfter === undefined || item.creationTime > Number(options.createdAfter))
+            && (options?.createdBefore === undefined || item.creationTime < Number(options.createdBefore)));
+        if ((options?.sortBy as any)?.[0]?.[1] === false) assets.reverse();
+        return { assets, totalCount: assets.length, hasNextPage: false } as any;
+    });
+});
+const startButton = () => screen.getByRole('button', { name: '按此范围开始整理' });
+async function open(kind: 'photo' | 'video' = 'photo') {
+    const onStarted = jest.fn(), onClose = jest.fn();
+    const view = await renderAsync(<OrganizingScopeModal visible kind={kind} onStarted={onStarted} onClose={onClose} />);
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    return { view, onStarted, onClose };
+}
+it.each(['photo', 'video'] as const)('starts an actual %s session with the selected album, month and order, preserving previous decisions', async kind => {
+    fixtures = fixtures.map(item => ({ ...item, mediaType: kind }));
+    const store = useMediaStore.getState();
+    if (kind === 'photo') store.markAsSkipped(fixtures[0]); else store.markVideoAsProcessed(fixtures[0]);
+    const { onStarted } = await open(kind);
+    await fireEventAsync.press(screen.getByRole('button', { name: '相册范围' }));
+    await fireEventAsync.press(screen.getByRole('button', { name: '选择 Camera' }));
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    await fireEventAsync.press(screen.getByRole('radio', { name: '2026 年 10 月' }));
+    await fireEventAsync.press(screen.getByRole('radio', { name: '最新优先' }));
+    await fireEventAsync.press(startButton());
+    expect(onStarted).toHaveBeenCalledTimes(1);
+    const state = useMediaStore.getState();
+    expect(state.organizingSessions[kind]).toMatchObject({ scope: { albumIds: ['camera'], order: 'newest', date: month }, assetIds: ['middle'] });
+    expect(kind === 'photo' ? state.photoProcessedIds : state.videoProcessedIds).toEqual(['start']);
+    expect(kind === 'photo' ? state.videoProcessedIds : state.photoProcessedIds).toEqual([]);
+    expect(mockSettings.selectedAlbumIds).toEqual([]); expect(mockSettings.displayOrder).toBe('oldest');
+    expect(mockSettings.setSelectedAlbums).not.toHaveBeenCalled();
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    expect(state.totalPhotos).toBe(40); expect(state.totalVideos).toBe(30);
+});
+it('cancels a draft without replacing the saved session, order or decisions', async () => {
+    const saved = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'oldest' }, ['start', 'middle']);
+    const { onClose, onStarted } = await open();
+    await fireEventAsync.press(screen.getByRole('radio', { name: '拍摄日期未知' }));
+    await fireEventAsync.press(screen.getByRole('radio', { name: '随机' }));
+    await fireEventAsync.press(screen.getByRole('button', { name: '返回整理' }));
+    expect(onClose).toHaveBeenCalledTimes(1); expect(onStarted).not.toHaveBeenCalled();
+    expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+    expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
+});
+it('does not start using stale counts after the accessible-library generation changes', async () => {
+    const { onStarted } = await open();
+    let release!: (value: any) => void;
+    jest.mocked(MediaLibrary.getAssetsAsync).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    await act(async () => { useMediaStore.setState({ permissionRefreshVersion: 1 }); });
+    expect(startButton()).toBeDisabled();
+    await fireEventAsync.press(startButton());
+    expect(onStarted).not.toHaveBeenCalled(); expect(useMediaStore.getState().organizingSessions.photo).toBeNull();
+    await act(async () => release({ assets: [], totalCount: 0, hasNextPage: false }));
+    await waitFor(() => expect(startButton()).toBeEnabled());
+});
+it('keeps the original session when permission is lost after a successful range read', async () => {
+    const saved = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'oldest' }, ['start']);
+    const { onStarted } = await open();
+    jest.mocked(MediaLibrary.getPermissionsAsync).mockResolvedValue({ granted: false, accessPrivileges: 'none' } as any);
+    await fireEventAsync.press(startButton());
+    expect(onStarted).not.toHaveBeenCalled(); expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+    expect(screen.getByText('无法开始此范围，请重新读取或检查相册权限。原会话仍保留。')).toBeTruthy();
+    await waitFor(() => expect(startButton()).toBeDisabled());
+});
+it('allows an empty unknown-date scope without guessing dates or processing other media', async () => {
+    fixtures = fixtures.filter(item => item.creationTime !== 0);
+    const { onStarted } = await open();
+    await fireEventAsync.press(screen.getByRole('radio', { name: '拍摄日期未知' }));
+    await fireEventAsync.press(startButton());
+    expect(onStarted).toHaveBeenCalledTimes(1);
+    expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ scope: { date: 'unknown' }, phase: 'complete', assetIds: [] });
+    expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
+});

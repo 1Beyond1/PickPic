@@ -7,6 +7,39 @@ export interface MediaMonth {
     startInclusive: number;
     endExclusive: number;
 }
+export type MediaDateFilter = MediaMonth | 'unknown';
+
+export function isMediaMonth(value: unknown): value is MediaMonth {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.keys(value).sort().join(',') !== 'endExclusive,month,startInclusive,year') return false;
+    const range = value as MediaMonth;
+    if (!Number.isInteger(range.year) || range.year < 1 || range.year > 9999 || !Number.isInteger(range.month) || range.month < 1 || range.month > 12
+        || !Number.isSafeInteger(range.startInclusive) || !Number.isSafeInteger(range.endExclusive)) return false;
+    // Validate against the labelled calendar month without reinterpreting it
+    // in the current timezone. A saved selection may come from another zone.
+    const start = new Date(0), end = new Date(0);
+    start.setUTCFullYear(range.year, range.month - 1, 1); start.setUTCHours(0, 0, 0, 0);
+    end.setUTCFullYear(range.year, range.month, 1); end.setUTCHours(0, 0, 0, 0);
+    const day = 86400000;
+    return Math.abs(range.startInclusive - start.getTime()) <= day && Math.abs(range.endExclusive - end.getTime()) <= day
+        && range.endExclusive - range.startInclusive >= 27 * day && range.endExclusive - range.startInclusive <= 32 * day;
+}
+export const isMediaDateFilter = (value: unknown): value is MediaDateFilter => value === 'unknown' || isMediaMonth(value);
+export function sameMediaDateFilter(left?: MediaDateFilter, right?: MediaDateFilter) {
+    if (left === right) return true;
+    if (!left || !right || left === 'unknown' || right === 'unknown') return false;
+    return left.year === right.year && left.month === right.month && left.startInclusive === right.startInclusive && left.endExclusive === right.endExclusive;
+}
+export function mediaHasKnownDate(time: number) {
+    const year = new Date(time).getFullYear();
+    return Number.isFinite(time) && time !== 0 && year >= 1 && year <= 9999;
+}
+export function mediaMatchesDate(time: number, filter?: MediaDateFilter) {
+    return filter === undefined || (filter === 'unknown' ? !mediaHasKnownDate(time) : mediaMatchesMonth(time, filter));
+}
+export function mediaDateQuery(filter?: MediaDateFilter) {
+    return filter && filter !== 'unknown' ? mediaMonthQuery(filter) : {};
+}
 
 export function createMediaMonth(year: number, month: number): MediaMonth {
     if (!Number.isInteger(year) || year < 1 || year > 9999 || !Number.isInteger(month) || month < 1 || month > 12) {

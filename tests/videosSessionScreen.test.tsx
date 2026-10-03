@@ -27,6 +27,7 @@ jest.mock('../hooks/useI18n', () => ({ useI18n: () => ({ language: 'zh', t: (key
 
 import VideosScreen from '../app/(tabs)/videos';
 import { useMediaStore } from '../stores/useMediaStore';
+import { createMediaMonth } from '../services/mediaMonth';
 
 const video = (id: string) => ({ id, uri: `file:///synthetic-${id}.mp4`, filename: `${id}.mp4`, mediaType: 'video', creationTime: 1, width: 800, height: 600 }) as any;
 let mockLibrary = [video('one'), video('two'), video('three')];
@@ -71,6 +72,26 @@ function visible() {
     const index = useMediaStore.getState().videoCurrentIndex;
     act(() => list.props.onViewableItemsChanged({ viewableItems: [{ key: list.props.data[index].id }] }));
 }
+
+it('opens a monthly scope from video home without marking a viewed video as processed', async () => {
+    const date = createMediaMonth(2026, 10);
+    mockLibrary = [{ ...video('one'), creationTime: date.startInclusive }, { ...video('two'), creationTime: date.endExclusive }];
+    await mount();
+    await fireEventAsync.press(screen.getByRole('button', { name: '返回首页' }));
+    await fireEventAsync.press(screen.getByRole('button', { name: '整理范围' }));
+    await fireEventAsync.press(await screen.findByRole('radio', { name: '2026 年 10 月' }));
+    await fireEventAsync.press(screen.getByRole('button', { name: '按此范围开始整理' }));
+    await waitFor(() => expect(screen.queryByTestId('organizing-scope')).toBeNull());
+    expect(useMediaStore.getState().videos.map(item => item.id)).toEqual(['one']);
+    expect(useMediaStore.getState().organizingSessions.video?.scope.date).toEqual(date);
+    expect(useMediaStore.getState().videoProcessedIds).toEqual([]);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    const saved = useMediaStore.getState().organizingSessions.video;
+    await fireEventAsync.press(screen.getByRole('button', { name: '返回首页' }));
+    await fireEventAsync.press(screen.getByRole('button', { name: '开始新一轮' }));
+    expect(await screen.findByRole('radio', { name: '2026 年 10 月', checked: true })).toBeTruthy();
+    expect(useMediaStore.getState().organizingSessions.video).toBe(saved);
+});
 
 it('keeps forward-swiped video, permits sliding back, and restores exact order/cursor after a screen restart', async () => {
     const view = await mount(); swipe(1);

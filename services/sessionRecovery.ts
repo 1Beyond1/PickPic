@@ -1,6 +1,7 @@
 import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
 import type { OrganizingSession } from './organizingSession';
+import { mediaDateQuery, mediaMatchesDate } from './mediaMonth';
 
 export interface SessionRecoveryResult {
     status: 'ready' | 'review' | 'complete' | 'permission' | 'unavailable' | 'failed' | 'stale' | 'busy';
@@ -33,7 +34,7 @@ export async function recoverOrganizingSession(session: OrganizingSession, proce
         if (!wanted.length) return result('review');
         if (session.scope.albumIds.length) {
             if (Platform.OS === 'ios' && permission.accessPrivileges !== 'all') return result('unavailable');
-            const albums = await MediaLibrary.getAlbumsAsync();
+            const albums = await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true });
             const currentAlbums = new Set(albums.map(album => album.id));
             if (session.scope.albumIds.some(id => !currentAlbums.has(id))) return result('unavailable');
         }
@@ -44,10 +45,11 @@ export async function recoverOrganizingSession(session: OrganizingSession, proce
             let after: string | undefined;
             do {
                 const page = await MediaLibrary.getAssetsAsync({ mediaType: session.kind, first: 200, resolveWithFullInfo: false,
+                    ...mediaDateQuery(session.scope.date),
                     ...(album ? { album } : {}), ...(after ? { after } : {}) });
                 if (!isCurrent()) return result('stale');
                 for (const asset of page.assets) {
-                    if (wantedIds.has(asset.id) && asset.mediaType === session.kind && asset.uri) found.set(asset.id, asset);
+                    if (wantedIds.has(asset.id) && asset.mediaType === session.kind && asset.uri && mediaMatchesDate(asset.creationTime, session.scope.date)) found.set(asset.id, asset);
                 }
                 if (found.size === wantedIds.size || !page.hasNextPage) break;
                 if (!page.endCursor || cursors.has(page.endCursor)) throw new Error('Incomplete media enumeration');
@@ -58,7 +60,7 @@ export async function recoverOrganizingSession(session: OrganizingSession, proce
         // An album may disappear during paging. Never publish an iOS provider
         // fallback that silently widened a captured album scope.
         if (session.scope.albumIds.length) {
-            const albums = new Set((await MediaLibrary.getAlbumsAsync()).map(album => album.id));
+            const albums = new Set((await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true })).map(album => album.id));
             if (session.scope.albumIds.some(id => !albums.has(id))) return result('unavailable');
         }
         const latestPermission = await MediaLibrary.getPermissionsAsync(false, [session.kind]);

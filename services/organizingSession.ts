@@ -1,7 +1,9 @@
 /** Persisted navigation contains identifiers, not reusable authorized URIs.
  * Reopening a session still requires a fresh native visibility check. */
+import { isMediaDateFilter, sameMediaDateFilter } from './mediaMonth';
+import type { MediaDateFilter } from './mediaMonth';
 export type SessionMediaType = 'photo' | 'video';
-export interface SessionScope { albumIds: string[]; order: 'newest' | 'oldest' | 'random'; }
+export interface SessionScope { albumIds: string[]; order: 'newest' | 'oldest' | 'random'; date?: MediaDateFilter; }
 export interface OrganizingSession {
     version: 1;
     sessionId: string;
@@ -28,7 +30,8 @@ export function isOrganizingSession(value: unknown): value is OrganizingSession 
     const scope = session.scope;
     return session.version === 1 && typeof session.sessionId === 'string' && session.sessionId.length > 0 && session.sessionId.length <= 128
         && ['photo', 'video'].includes(session.kind) && !!scope && typeof scope === 'object'
-        && exactKeys(scope, ['albumIds', 'order']) && validIds(scope.albumIds) && ['newest', 'oldest', 'random'].includes(scope.order)
+        && exactKeys(scope, 'date' in scope ? ['albumIds', 'order', 'date'] : ['albumIds', 'order'])
+        && (!('date' in scope) || isMediaDateFilter(scope.date)) && validIds(scope.albumIds) && ['newest', 'oldest', 'random'].includes(scope.order)
         && validIds(session.assetIds) && validIds(session.deferredIds)
         && Number.isSafeInteger(session.position) && session.position >= 0 && session.position <= session.assetIds.length
         && ['organizing', 'review', 'complete'].includes(session.phase)
@@ -39,13 +42,15 @@ export function isOrganizingSession(value: unknown): value is OrganizingSession 
 }
 
 export function sameSessionScope(left: SessionScope, right: SessionScope): boolean {
-    return left.order === right.order && JSON.stringify(unique(left.albumIds).sort()) === JSON.stringify(unique(right.albumIds).sort());
+    return left.order === right.order && sameMediaDateFilter(left.date, right.date)
+        && JSON.stringify(unique(left.albumIds).sort()) === JSON.stringify(unique(right.albumIds).sort());
 }
 
 export function createOrganizingSession(kind: SessionMediaType, scope: SessionScope, assetIds: readonly string[], sessionId: string, now = Date.now()): OrganizingSession {
     const ids = unique(assetIds);
     const session: OrganizingSession = { version: 1, sessionId, kind,
-        scope: { albumIds: unique(scope.albumIds), order: scope.order }, assetIds: ids, position: 0, deferredIds: [],
+        scope: { albumIds: unique(scope.albumIds), order: scope.order,
+            ...(scope.date !== undefined ? { date: typeof scope.date === 'object' ? { ...scope.date } : scope.date } : {}) }, assetIds: ids, position: 0, deferredIds: [],
         phase: ids.length ? 'organizing' : 'complete', startedAt: now, updatedAt: now };
     if (!isOrganizingSession(session)) throw new Error('Invalid organizing session');
     return session;

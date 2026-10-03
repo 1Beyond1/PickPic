@@ -1,8 +1,15 @@
 import { advanceOrganizingSession, continueOrganizingSession, createOrganizingSession, getSessionResumeIds,
     isOrganizingSession, moveOrganizingSession, removeDeletedSessionMedia, revisitDeferredMedia, sameSessionScope } from '../services/organizingSession';
+import { createMediaMonth } from '../services/mediaMonth';
 
 const scope = { albumIds: ['family'], order: 'random' } as const;
 const start = () => createOrganizingSession('photo', { ...scope, albumIds: [...scope.albumIds] }, ['a', 'b', 'c'], 'synthetic-session', 10);
+
+it('treats an omitted optional date and an explicitly undefined date as the same unrestricted scope', () => {
+    const session = createOrganizingSession('photo', { albumIds: [], order: 'oldest', date: undefined }, ['a'], 'synthetic', 10);
+    expect(session.scope).toEqual({ albumIds: [], order: 'oldest' });
+    expect(isOrganizingSession(session)).toBe(true);
+});
 
 it('captures a stable independent scope and exact randomized order', () => {
     const mutableScope = { albumIds: ['family', 'family'], order: 'random' } as const;
@@ -59,6 +66,18 @@ it('compares the album set and sort order without silently widening scope', () =
     expect(sameSessionScope({ order: 'random', albumIds: ['b', 'a'] }, { order: 'random', albumIds: ['a', 'b'] })).toBe(true);
     expect(sameSessionScope(scope as any, { order: 'newest', albumIds: ['family'] })).toBe(false);
     expect(sameSessionScope(scope as any, { order: 'random', albumIds: [] })).toBe(false);
+});
+it('captures the exact month interval independently and compares it without silently dropping it', () => {
+    const date = createMediaMonth(2026, 10), selected = { albumIds: ['family'], order: 'oldest' as const, date };
+    const saved = createOrganizingSession('photo', selected, ['a'], 'month-session', 10);
+    expect(isOrganizingSession(JSON.parse(JSON.stringify(saved)))).toBe(true);
+    expect(sameSessionScope(saved.scope, { albumIds: ['family'], order: 'oldest' })).toBe(false);
+    expect(sameSessionScope(saved.scope, { ...selected, date: { ...date } })).toBe(true);
+    date.endExclusive++;
+    expect(saved.scope.date).not.toEqual(date);
+    expect(sameSessionScope(saved.scope, selected)).toBe(false);
+    expect(isOrganizingSession({ ...saved, scope: { ...saved.scope, date: { ...date, startInclusive: date.startInclusive + 15 * 86400000 } } })).toBe(false);
+    expect(isOrganizingSession({ ...saved, scope: { ...saved.scope, date: null } })).toBe(false);
 });
 
 it('treats sliding back to a kept video as cursor movement, not undoing its processed decision', () => {

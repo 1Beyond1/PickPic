@@ -6,7 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
-import { AlbumSelector } from '../../components/AlbumSelector';
+import { OrganizingScopeModal } from '../../components/OrganizingScopeModal';
 import { PhotoCard } from '../../components/PhotoCard';
 import { PendingDeletionButton, PendingDeletionReview } from '../../components/PendingDeletionReview';
 import { RecentDecisionsButton, RecentUndoButton } from '../../components/RecentDecisionControls';
@@ -41,7 +41,6 @@ export default function PhotosScreen() {
         groupSize,
         displayOrder,
         selectedAlbumIds,
-        setSelectedAlbums,
         hasHydrated: settingsHydrated,
     } = useSettingsStore();
 
@@ -50,7 +49,7 @@ export default function PhotosScreen() {
     const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
     const [managingPhotoAccess, setManagingPhotoAccess] = useState(false);
     const [showHome, setShowHome] = useState(true);
-    const [showAlbumSelector, setShowAlbumSelector] = useState(false);
+    const [showScopeSelector, setShowScopeSelector] = useState(false);
     const [reviewDismissed, setReviewDismissed] = useState(false);
     const [keptAllReviewPhotos, setKeptAllReviewPhotos] = useState(false);
     const [deckSize, setDeckSize] = useState({ width: 0, height: 0 });
@@ -123,10 +122,13 @@ export default function PhotosScreen() {
     const sessionPermissionRequired = photoSessionRecoveryStatus === 'permission';
     const emptyTitle = sessionReadFailed ? 'photos_load_failed' : sessionPermissionRequired ? 'session_permission'
         : sessionUnavailable ? 'session_unavailable' : session?.phase === 'review' ? 'photos_finished' : session?.phase === 'complete'
-            ? session.deferredIds.length > 0 ? 'session_rest_complete' : session.scope.albumIds.length > 0 ? 'session_scope_complete' : permissionScope === 'limited' ? 'session_accessible_complete' : 'session_library_complete'
+            ? session.deferredIds.length > 0 ? 'session_rest_complete' : session.scope.albumIds.length > 0 || session.scope.date !== undefined ? 'session_scope_complete' : permissionScope === 'limited' ? 'session_accessible_complete' : 'session_library_complete'
             : permissionScope === 'limited' ? 'photos_limited_access_desc' : 'photos_empty';
 
     const openSession = async (action: 'start' | 'resume' | 'new' | 'next' | 'deferred') => {
+        // A month is a per-session selection, not a global setting. Do not
+        // silently drop it when reopening a round using legacy defaults.
+        if (action === 'new' && session?.scope.date !== undefined) { setShowScopeSelector(true); return; }
         if (sessionActionRef.current) return;
         sessionActionRef.current = true;
         try {
@@ -156,7 +158,7 @@ export default function PhotosScreen() {
         : session ? 'session_next_batch' : visiblePhotos.length > 0 ? 'photos_home_start' : 'photos_reload';
     const scopeCaption = session ? t(session.scope.albumIds.length ? 'session_album_scope' : 'session_all_scope', {
         count: session.scope.albumIds.length, order: t(session.scope.order === 'newest' ? 'session_order_newest' : session.scope.order === 'oldest' ? 'session_order_oldest' : 'session_order_random'),
-    }) : t('photos_home_scope');
+    }) + (session.scope.date !== undefined ? ` · ${session.scope.date === 'unknown' ? t('scope_unknown_date') : t('scope_month_value', { year: session.scope.date.year, month: session.scope.date.month })}` : '') : t('photos_home_scope');
 
 
     useEffect(() => {
@@ -274,7 +276,7 @@ export default function PhotosScreen() {
         if (useMediaStore.getState().organizingSessions.photo) void resumeOrganizingSession('photo');
     };
 
-    if (isLoading) {
+    if (isLoading && !showScopeSelector) {
         return (
             <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
                 <ActivityIndicator size="large" color={colors.primary} />
@@ -449,31 +451,26 @@ export default function PhotosScreen() {
                     )}
 
                     <Pressable
-                        onPress={() => setShowAlbumSelector(true)}
+                        onPress={() => setShowScopeSelector(true)}
                         accessibilityRole="button"
+                        accessibilityLabel={t('scope_title')}
                         style={({ pressed }) => [styles.homeAlbumRow, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
                     >
                         <View style={styles.homeAlbumIcon}>
                             <Feather name="folder" size={20} color={colors.textSecondary} />
                         </View>
                         <View style={styles.homeAlbumCopy}>
-                            <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('photos_home_album')}</Text>
-                            <Text style={[styles.homeAlbumHint, { color: colors.textSecondary }]}>{t('photos_home_album_hint')}</Text>
+                            <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('scope_title')}</Text>
+                            <Text style={[styles.homeAlbumHint, { color: colors.textSecondary }]}>{t('scope_entry_hint')}</Text>
                         </View>
                         <Feather name="chevron-right" size={18} color={colors.textSecondary} />
                     </Pressable>
                     {session && <Text style={[styles.homeAlbumHint, { color: colors.textSecondary }]}>{t('session_filter_hint')}</Text>}
                     <View style={styles.recentRow}><RecentDecisionsButton kind="photo" /><RecentUndoButton kind="photo" onChanged={afterUndo} /></View>
                 </ScrollView>
-                <AlbumSelector
-                    visible={showAlbumSelector}
-                    onClose={() => setShowAlbumSelector(false)}
-                    initialSelection={selectedAlbumIds}
-                    onConfirm={(ids) => {
-                        setSelectedAlbums(ids);
-                        setShowAlbumSelector(false);
-                    }}
-                />
+                <OrganizingScopeModal visible={showScopeSelector} kind="photo" onClose={() => setShowScopeSelector(false)} onStarted={() => {
+                    setShowScopeSelector(false); setReviewDismissed(false); setKeptAllReviewPhotos(false); setShowHome(false);
+                }} />
             </View>
         );
     }
