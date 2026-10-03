@@ -1,6 +1,9 @@
 import React from 'react';
 import { act, fireEventAsync, renderAsync, screen, waitFor } from '@testing-library/react-native';
 import * as MediaLibrary from 'expo-media-library';
+import { requireOptionalNativeModule } from 'expo-modules-core';
+import { Platform } from 'react-native';
+jest.mock('expo-modules-core', () => ({ requireOptionalNativeModule: jest.fn() }));
 jest.mock('expo-media-library', () => ({ getPermissionsAsync: jest.fn(), getAssetsAsync: jest.fn(), getAlbumsAsync: jest.fn(),
     deleteAssetsAsync: jest.fn(), SortBy: { creationTime: 'creationTime' } }));
 jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn(async () => null), setItem: jest.fn(async () => {}), removeItem: jest.fn(async () => {}) }));
@@ -30,6 +33,7 @@ const asset = (id: string, creationTime: number, mediaType = 'photo') => ({ id, 
     filename: `${id}.jpg`, width: 20, height: 20 }) as any;
 let fixtures: any[];
 beforeEach(() => {
+    jest.mocked(requireOptionalNativeModule).mockReturnValue(null);
     fixtures = [asset('start', month.startInclusive), asset('middle', month.startInclusive + 10000), asset('next', month.endExclusive), asset('unknown', 0)];
     mockSettings.selectedAlbumIds = []; mockSettings.setSelectedAlbums.mockClear();
     useMediaStore.setState({ hasHydrated: true, photos: [], videos: [], photoProcessedIds: [], videoProcessedIds: [],
@@ -48,6 +52,33 @@ beforeEach(() => {
     });
 });
 const startButton = () => screen.getByRole('button', { name: '按此范围开始整理' });
+it.each(['photo', 'video'] as const)('starts %s largest-first from the range page, with a distinct unknown-size explanation and no global preference change', async kind => {
+    const original = Platform.OS;
+    try {
+        Platform.OS = 'android';
+        fixtures = [asset('1', 0, kind), asset('2', 0, kind), asset('3', 0, kind)];
+        jest.mocked(requireOptionalNativeModule).mockReturnValue({ readSizes: jest.fn(async (_: string, ids: string[]) =>
+            ids.map(id => ({ id, bytes: id === '1' ? 50 : id === '2' ? 200 : null }))) });
+        const { onStarted } = await open(kind);
+        await fireEventAsync.press(screen.getByRole('radio', { name: '大文件优先' }));
+        expect(screen.getByText(require('../i18n/zh').default.scope_size_hint)).toBeTruthy();
+        await fireEventAsync.press(startButton());
+        expect(onStarted).toHaveBeenCalledTimes(1);
+        expect(useMediaStore.getState().organizingSessions[kind]).toMatchObject({ scope: { order: 'largest' }, assetIds: ['2', '1'] });
+        expect(mockSettings.displayOrder).toBe('oldest');
+        expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    } finally { Platform.OS = original; }
+});
+it('disables unsupported largest-first without replacing or disguising the saved session', async () => {
+    const saved = useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'largest' }, ['1']);
+    await renderAsync(<OrganizingScopeModal visible kind="photo" onStarted={jest.fn()} onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText(require('../i18n/zh').default.scope_size_unavailable)).toBeTruthy());
+    expect(screen.getByRole('radio', { name: '大文件优先' })).toBeDisabled();
+    expect(startButton()).toBeDisabled();
+    await fireEventAsync.press(screen.getByRole('radio', { name: '最旧优先' }));
+    await waitFor(() => expect(startButton()).toBeEnabled());
+    expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+});
 async function open(kind: 'photo' | 'video' = 'photo') {
     const onStarted = jest.fn(), onClose = jest.fn();
     const view = await renderAsync(<OrganizingScopeModal visible kind={kind} onStarted={onStarted} onClose={onClose} />);

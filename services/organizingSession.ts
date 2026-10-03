@@ -3,7 +3,8 @@
 import { isMediaDateFilter, sameMediaDateFilter } from './mediaMonth';
 import type { MediaDateFilter } from './mediaMonth';
 export type SessionMediaType = 'photo' | 'video';
-export interface SessionScope { albumIds: string[]; order: 'newest' | 'oldest' | 'random'; date?: MediaDateFilter; }
+export type OrganizingOrder = 'newest' | 'oldest' | 'random' | 'largest';
+export interface SessionScope { albumIds: string[]; order: OrganizingOrder; date?: MediaDateFilter; }
 export interface OrganizingSession {
     version: 1;
     sessionId: string;
@@ -31,7 +32,7 @@ export function isOrganizingSession(value: unknown): value is OrganizingSession 
     return session.version === 1 && typeof session.sessionId === 'string' && session.sessionId.length > 0 && session.sessionId.length <= 128
         && ['photo', 'video'].includes(session.kind) && !!scope && typeof scope === 'object'
         && exactKeys(scope, 'date' in scope ? ['albumIds', 'order', 'date'] : ['albumIds', 'order'])
-        && (!('date' in scope) || isMediaDateFilter(scope.date)) && validIds(scope.albumIds) && ['newest', 'oldest', 'random'].includes(scope.order)
+        && (!('date' in scope) || isMediaDateFilter(scope.date)) && validIds(scope.albumIds) && ['newest', 'oldest', 'random', 'largest'].includes(scope.order)
         && validIds(session.assetIds) && validIds(session.deferredIds)
         && Number.isSafeInteger(session.position) && session.position >= 0 && session.position <= session.assetIds.length
         && ['organizing', 'review', 'complete'].includes(session.phase)

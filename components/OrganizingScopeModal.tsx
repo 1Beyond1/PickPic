@@ -10,10 +10,11 @@ import type { MediaDateFilter } from '../services/mediaMonth';
 import { readOrganizingMonths } from '../services/organizingMonths';
 import type { OrganizingMonthsResult } from '../services/organizingMonths';
 import { sameSessionScope } from '../services/organizingSession';
+import type { OrganizingOrder } from '../services/organizingSession';
+import { supportsIndexedMediaSizes } from '../services/mediaSizes';
 import { useMediaStore } from '../stores/useMediaStore';
 import type { MediaType } from '../stores/useMediaStore';
 import { useSettingsStore } from '../stores/useSettingsStore';
-import type { DisplayOrder } from '../stores/useSettingsStore';
 import { AlbumSelector } from './AlbumSelector';
 import { PendingDeletionButton } from './PendingDeletionReview';
 import { SegmentedControl } from './SegmentedControl';
@@ -26,7 +27,8 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
     const settings = useSettingsStore(), state = useMediaStore();
     const previousScope = state.organizingSessions[kind]?.scope;
     const [albumIds, setAlbumIds] = useState(() => [...(previousScope?.albumIds ?? settings.selectedAlbumIds)]);
-    const [order, setOrder] = useState<DisplayOrder>(previousScope?.order ?? settings.displayOrder);
+    const [order, setOrder] = useState<OrganizingOrder>(previousScope?.order ?? settings.displayOrder);
+    const sizeSupported = supportsIndexedMediaSizes();
     const [date, setDate] = useState<MediaDateFilter | undefined>(previousScope?.date);
     const [showAlbums, setShowAlbums] = useState(false), [working, setWorking] = useState(false), [attempt, setAttempt] = useState(0);
     const [feedback, setFeedback] = useState<string | null>(null);
@@ -52,7 +54,7 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
         return () => { active = false; };
     }, [readIdentity, kind, albumIds, processed, pending, collection, state.permissionRefreshVersion, state.mediaLibraryRefreshVersion, attempt]);
     const start = async () => {
-        if (guard.current || busy || read?.status !== 'ready') return;
+        if (guard.current || busy || read?.status !== 'ready' || (order === 'largest' && !sizeSupported)) return;
         guard.current = true; setWorking(true); setFeedback(null);
         const before = useMediaStore.getState().organizingSessions[kind];
         const scope = { albumIds, order, ...(date !== undefined ? { date } : {}) };
@@ -62,7 +64,7 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
             else await store.loadVideos(50, order, albumIds, 'new', date);
             const latest = useMediaStore.getState().organizingSessions[kind];
             if (latest && latest !== before && sameSessionScope(latest.scope, scope)) onStarted();
-            else if (mounted.current) { setFeedback(t('scope_start_failed')); setAttempt(value => value + 1); }
+            else if (mounted.current) { setFeedback(t(order === 'largest' ? 'scope_size_failed' : 'scope_start_failed')); setAttempt(value => value + 1); }
         } catch {
             if (mounted.current) { setFeedback(t('scope_start_failed')); setAttempt(value => value + 1); }
         } finally { guard.current = false; if (mounted.current) setWorking(false); }
@@ -89,7 +91,7 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
             <ScrollView contentContainerStyle={styles.content}>
                 <Text style={[styles.secondary, { color: colors.textSecondary }]}>{t('scope_new_round_hint')}</Text>
                 <Text accessibilityRole="header" style={[styles.section, { color: colors.text }]}>{t(kind === 'photo' ? 'tab_photos' : 'tab_videos')}</Text>
-                <Pressable accessibilityRole="button" accessibilityLabel={t('scope_albums')} disabled={busy} onPress={() => setShowAlbums(true)} style={styles.row}>
+                <Pressable accessibilityRole="button" accessibilityLabel={t('scope_albums')} disabled={busy} onPress={() => setShowAlbums(true)} style={[styles.row, { borderColor: colors.divider }]}>
                     <View style={styles.copy}><Text style={[styles.label, { color: colors.text }]}>{t('scope_albums')}</Text>
                         <Text style={[styles.caption, { color: colors.textSecondary }]}>{t(albumIds.length ? 'scope_album_count' : 'scope_all_albums', { count: albumIds.length })}</Text></View>
                     <Feather name="chevron-right" size={18} color={colors.textSecondary} /></Pressable>
@@ -97,6 +99,14 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
                 <SegmentedControl label={t('settings_display_order')} value={order} onChange={value => { if (!busy) setOrder(value); }} options={[
                     { value: 'oldest', label: t('display_order_oldest') }, { value: 'newest', label: t('display_order_newest') }, { value: 'random', label: t('display_order_random') },
                 ]} />
+                <Pressable accessibilityRole="radio" accessibilityLabel={t('session_order_largest')}
+                    accessibilityState={{ checked: order === 'largest', disabled: busy || !sizeSupported }} disabled={busy || !sizeSupported}
+                    onPress={() => { setOrder('largest'); setFeedback(null); }}
+                    style={[styles.row, { borderColor: colors.divider, backgroundColor: order === 'largest' ? colors.surfaceHover : 'transparent' }]}>
+                    <View style={styles.copy}><Text style={[styles.label, { color: colors.text }]}>{t('session_order_largest')}</Text>
+                        <Text style={[styles.caption, { color: colors.textSecondary }]}>{t(sizeSupported ? 'scope_size_hint' : 'scope_size_unavailable')}</Text></View>
+                    <Feather name={order === 'largest' ? 'check-circle' : 'circle'} size={20} color={sizeSupported ? colors.text : colors.textTertiary} />
+                </Pressable>
                 <Text accessibilityRole="header" style={[styles.section, { color: colors.text }]}>{t('scope_months')}</Text>
                 <Text style={[styles.caption, { color: colors.textSecondary }]}>{t('scope_selected_date', { value: dateLabel(date) })}</Text>
                 {row(undefined)}
@@ -112,9 +122,9 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
                     {read.status === 'permission' && <Pressable accessibilityRole="button" onPress={() => void Linking.openSettings()} style={styles.row}><Text style={{ color: colors.text }}>{t('permission_open_settings')}</Text></Pressable>}
                 </View>}
                 {feedback && <Text accessibilityRole="alert" style={[styles.secondary, { color: colors.textSecondary }]}>{feedback}</Text>}
-                <Pressable accessibilityRole="button" accessibilityLabel={t('scope_start')} disabled={busy || read?.status !== 'ready'}
-                    accessibilityState={{ disabled: busy || read?.status !== 'ready', busy: working }} onPress={() => void start()}
-                    style={[styles.start, { backgroundColor: colors.actionBackground, opacity: busy || read?.status !== 'ready' ? 0.4 : 1 }]}>
+                <Pressable accessibilityRole="button" accessibilityLabel={t('scope_start')} disabled={busy || read?.status !== 'ready' || (order === 'largest' && !sizeSupported)}
+                    accessibilityState={{ disabled: busy || read?.status !== 'ready' || (order === 'largest' && !sizeSupported), busy: working }} onPress={() => void start()}
+                    style={[styles.start, { backgroundColor: colors.actionBackground, opacity: busy || read?.status !== 'ready' || (order === 'largest' && !sizeSupported) ? 0.4 : 1 }]}>
                     <Text style={[styles.label, { color: colors.actionForeground }]}>{t(working ? 'scope_starting' : 'scope_start')}</Text></Pressable>
             </ScrollView>
             <AlbumSelector visible={showAlbums} initialSelection={albumIds} onClose={() => setShowAlbums(false)} onConfirm={ids => { setAlbumIds(ids); setShowAlbums(false); }} />

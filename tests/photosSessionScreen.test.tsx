@@ -39,6 +39,17 @@ import { createMediaMonth } from '../services/mediaMonth';
 const photo = (id: string) => ({ id, uri: `file:///synthetic-${id}.jpg`, filename: `${id}.jpg`, mediaType: 'photo', creationTime: 1, width: 800, height: 600 }) as any;
 let mockLibrary = [photo('one'), photo('two'), photo('three')];
 const originalOS = Platform.OS;
+it('largest-first completion names only known-size content and offers unknown sizes via other orders', async () => {
+    useMediaStore.getState().startOrganizingSession('photo', { albumIds: [], order: 'largest' }, []);
+    await renderAsync(<PhotosScreen />);
+    expect(screen.getByText('已知大小的内容已整理完')).toBeTruthy();
+    expect(screen.getByText('大小未知的内容未纳入，可切换其他顺序查看。')).toBeTruthy();
+    expect(screen.queryByText('可访问图库已整理完')).toBeNull();
+    const saved = useMediaStore.getState().organizingSessions.photo;
+    await fireEventAsync.press(screen.getByRole('button', { name: '开始新一轮' }));
+    expect(await screen.findByRole('radio', { name: '大文件优先', checked: true })).toBeTruthy();
+    expect(useMediaStore.getState().organizingSessions.photo).toBe(saved);
+});
 beforeEach(async () => {
     Platform.OS = 'android';
     mockLibrary = [photo('one'), photo('two'), photo('three')];

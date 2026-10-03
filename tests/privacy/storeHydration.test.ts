@@ -71,11 +71,11 @@ it('authenticates the bounded recent journal through real Zustand persistence an
     expect(reopened.media.getState().photoProcessedIds).toEqual(['kept']);
 });
 
-it('encrypts session scope, exact order, position and deferred media, then restores them without changing old decisions', async () => {
+it.each(['random', 'largest'] as const)('encrypts %s session scope, exact order, position and deferred media, then restores them without changing old decisions', async order => {
     const stores = await openStores();
     await stores.media.persist.rehydrate();
     const date = require('../../services/mediaMonth').createMediaMonth(2026, 10);
-    const session = stores.media.getState().startOrganizingSession('photo', { albumIds: ['session-private-album'], order: 'random', date }, ['session-a', 'session-b']);
+    const session = stores.media.getState().startOrganizingSession('photo', { albumIds: ['session-private-album'], order, date }, ['session-a', 'session-b']);
     expect(session).not.toBeNull();
     expect(stores.media.getState().deferSessionMedia('photo', 'session-a')).toBe(true);
     await require('../../services/mediaProgressStorage').flushMediaProgress();
@@ -88,7 +88,7 @@ it('encrypts session scope, exact order, position and deferred media, then resto
     const reopened = await openStores();
     await reopened.media.persist.rehydrate();
     expect(reopened.media.getState().organizingSessions.photo).toMatchObject({
-        sessionId: session.sessionId, scope: { albumIds: ['session-private-album'], order: 'random', date },
+        sessionId: session.sessionId, scope: { albumIds: ['session-private-album'], order, date },
         assetIds: ['session-a', 'session-b'], position: 1, deferredIds: ['session-a'], phase: 'organizing',
     });
     expect(reopened.media.getState().photoProcessedIds).toEqual(['kept']);

@@ -5,6 +5,14 @@ import { createMediaMonth } from '../services/mediaMonth';
 const scope = { albumIds: ['family'], order: 'random' } as const;
 const start = () => createOrganizingSession('photo', { ...scope, albumIds: [...scope.albumIds] }, ['a', 'b', 'c'], 'synthetic-session', 10);
 
+it('captures largest-first as a session order without requiring a date or modifying legacy random sessions', () => {
+    const session = createOrganizingSession('video', { albumIds: [], order: 'largest' }, ['big', 'small'], 'synthetic-size', 10);
+    expect(isOrganizingSession(JSON.parse(JSON.stringify(session)))).toBe(true);
+    expect(session.scope).toEqual({ albumIds: [], order: 'largest' });
+    expect(sameSessionScope(session.scope, { albumIds: [], order: 'random' })).toBe(false);
+    expect(isOrganizingSession(start())).toBe(true);
+});
+
 it('treats an omitted optional date and an explicitly undefined date as the same unrestricted scope', () => {
     const session = createOrganizingSession('photo', { albumIds: [], order: 'oldest', date: undefined }, ['a'], 'synthetic', 10);
     expect(session.scope).toEqual({ albumIds: [], order: 'oldest' });

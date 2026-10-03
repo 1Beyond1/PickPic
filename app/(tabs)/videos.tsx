@@ -287,7 +287,7 @@ export default function VideosScreen() {
     }, [feedHeight, markVideoAsProcessed, moveVideoSession]);
 
     const openSession = async (mode?: 'new' | 'continue') => {
-        if (mode === 'new' && session?.scope.date !== undefined) { setShowScopeSelector(true); return; }
+        if (mode === 'new' && session && (session.scope.date !== undefined || session.scope.order === 'largest')) { setShowScopeSelector(true); return; }
         if (mode) await loadVideos(50, displayOrder, selectedAlbumIds, mode);
         else await loadVideos(50, displayOrder, selectedAlbumIds);
         if (useMediaStore.getState().videos.length) setShowHome(false);
@@ -430,9 +430,10 @@ export default function VideosScreen() {
         || (!!session && !batchFinished && videoSessionUnavailableCount > 0
             && !videos.some(asset => !videoProcessedIds.includes(asset.id)));
     const readFailed = videoLoadFailed || videoSessionRecoveryStatus === 'failed';
-    const emptyTitle = readFailed ? 'video_load_failed' : unavailable ? 'session_unavailable'
+    const permissionRequired = videoSessionRecoveryStatus === 'permission';
+    const emptyTitle = readFailed ? 'video_load_failed' : permissionRequired ? 'video_session_permission' : unavailable ? 'session_unavailable'
         : session?.phase === 'complete' ? session.deferredIds.length ? 'video_rest_complete'
-            : session.scope.albumIds.length || session.scope.date !== undefined ? 'session_scope_complete' : hasLimitedVideoAccess ? 'video_accessible_complete' : 'video_library_complete'
+            : session.scope.order === 'largest' ? 'session_size_complete' : session.scope.albumIds.length || session.scope.date !== undefined ? 'session_scope_complete' : hasLimitedVideoAccess ? 'video_accessible_complete' : 'video_library_complete'
         : batchFinished ? 'video_batch_complete' : showHome && videos.length ? 'video_organize'
         : hasLimitedVideoAccess ? 'video_permission_desc' : 'video_empty';
     const scope = session?.scope;
@@ -570,18 +571,19 @@ export default function VideosScreen() {
                 />
             ) : showHome || videos.length === 0 ? (
                 <ScrollView testID="videos-home" contentContainerStyle={styles.homeContent}>
-                    <Text accessibilityRole={readFailed || unavailable ? 'alert' : 'header'} style={[styles.emptyText, { color: colors.text, textAlign: 'center' }]}>
+                    <Text accessibilityRole={readFailed || permissionRequired || unavailable ? 'alert' : 'header'} style={[styles.emptyText, { color: colors.text, textAlign: 'center' }]}>
                         {t(emptyTitle)}
                     </Text>
                     {scopeText && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{scopeText}</Text>}
+                    {scope?.order === 'largest' && session?.phase === 'complete' && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('scope_size_unknown_hint')}</Text>}
                     {scope && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('session_filter_hint')}</Text>}
-                    {(readFailed || unavailable) && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('session_preserved_hint')}</Text>}
+                    {(readFailed || permissionRequired || unavailable) && <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('session_preserved_hint')}</Text>}
                     {!scope && selectedAlbumIds.length > 0 && !readFailed && (
                         <Text style={[styles.scopeHint, { color: colors.textSecondary }]}>{t('video_filtered_empty_hint')}</Text>
                     )}
-                    {hasLimitedVideoAccess && (
+                    {(hasLimitedVideoAccess || permissionRequired) && (
                         <Pressable
-                            onPress={handleManageVideoAccess}
+                            onPress={permissionRequired ? handleRequestVideoPermission : handleManageVideoAccess}
                             disabled={requestingVideoPermission}
                             style={[styles.actionButton, { backgroundColor: colors.actionBackground, opacity: requestingVideoPermission ? 0.6 : 1 }]}
                         >

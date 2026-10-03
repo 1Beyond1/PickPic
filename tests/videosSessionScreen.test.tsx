@@ -73,6 +73,25 @@ function visible() {
     act(() => list.props.onViewableItemsChanged({ viewableItems: [{ key: list.props.data[index].id }] }));
 }
 
+it('largest-first empty scope is not described as an organized whole library', async () => {
+    useMediaStore.getState().startOrganizingSession('video', { albumIds: [], order: 'largest' }, []);
+    await renderAsync(<VideosScreen />);
+    expect(await screen.findByText('已知大小的内容已整理完')).toBeTruthy();
+    expect(screen.getByText('大小未知的内容未纳入，可切换其他顺序查看。')).toBeTruthy();
+    expect(screen.queryByText('可访问视频已整理完')).toBeNull();
+    const saved = useMediaStore.getState().organizingSessions.video;
+    await fireEventAsync.press(screen.getByRole('button', { name: '开始新一轮' }));
+    expect(await screen.findByRole('radio', { name: '大文件优先', checked: true })).toBeTruthy();
+    expect(useMediaStore.getState().organizingSessions.video).toBe(saved);
+});
+it('permission lost during a session read is distinct from completion and still offers access management', async () => {
+    await mount();
+    await fireEventAsync.press(screen.getByRole('button', { name: '返回首页' }));
+    await act(async () => useMediaStore.setState({ videos: [], videoSessionRecoveryStatus: 'permission', videoLoadFailed: false }));
+    expect(screen.getByText('需要视频访问权限')).toBeTruthy();
+    expect(screen.getByText(require('../i18n/zh').default.video_permission_btn)).toBeTruthy();
+});
+
 it('opens a monthly scope from video home without marking a viewed video as processed', async () => {
     const date = createMediaMonth(2026, 10);
     mockLibrary = [{ ...video('one'), creationTime: date.startInclusive }, { ...video('two'), creationTime: date.endExclusive }];

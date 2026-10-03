@@ -13,7 +13,8 @@ import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readabl
 import { getPendingDeletionEntries, retainPendingDeletionInfo, PendingDeletionIncompleteError } from '../services/pendingDeletion';
 import type { PendingDeletionInfo, PendingDeletionResult, PendingDeletionSource } from '../services/pendingDeletion';
 import { advanceOrganizingSession, continueOrganizingSession, createOrganizingSession, moveOrganizingSession, removeDeletedSessionMedia, revisitDeferredMedia } from '../services/organizingSession';
-import type { OrganizingSession, SessionScope } from '../services/organizingSession';
+import type { OrganizingSession, OrganizingOrder, SessionScope } from '../services/organizingSession';
+import { loadLargestMedia, MediaSizeReadError } from '../services/largestMedia';
 import { recoverOrganizingSession } from '../services/sessionRecovery';
 import type { SessionRecoveryResult } from '../services/sessionRecovery';
 import { appendRecentDecision, sameDecisionSnapshot } from '../services/recentDecisions';
@@ -178,8 +179,8 @@ interface MediaState {
     createAlbum: (name: string, asset: PhotoAsset) => Promise<void>;
     addAssetToAlbum: (albumId: string, asset: PhotoAsset) => Promise<void>;
 
-    loadPhotos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[], sessionMode?: 'new' | 'continue', date?: MediaDateFilter) => Promise<void>;
-    loadVideos: (count: number, displayOrder?: DisplayOrder, albumIds?: string[], sessionMode?: 'new' | 'continue', date?: MediaDateFilter) => Promise<void>;
+    loadPhotos: (count: number, displayOrder?: OrganizingOrder, albumIds?: string[], sessionMode?: 'new' | 'continue', date?: MediaDateFilter) => Promise<void>;
+    loadVideos: (count: number, displayOrder?: OrganizingOrder, albumIds?: string[], sessionMode?: 'new' | 'continue', date?: MediaDateFilter) => Promise<void>;
 
     markForDeletion: (asset: PhotoAsset) => void;
     enqueuePendingDeletion: (assets: readonly PhotoAsset[], source: PendingDeletionSource) => number;
@@ -492,11 +493,13 @@ async function loadAssetsForReview(
     mediaType: MediaType,
     sortBy: MediaLibrary.SortByValue[],
     count: number,
-    displayOrder: DisplayOrder,
+    displayOrder: OrganizingOrder,
     processedIds: readonly string[],
     albumIds: readonly string[],
     date?: MediaDateFilter,
+    isCurrent: () => boolean = () => true,
 ): Promise<{ assets: MediaLibrary.Asset[]; totalCount: number | null }> {
+    if (displayOrder === 'largest') return loadLargestMedia(mediaType, count, albumIds, new Set(processedIds), date, isCurrent);
     if (count <= 0) {
         return { assets: [], totalCount: 0 };
     }
@@ -996,6 +999,7 @@ export const useMediaStore = create<MediaState>()(
                 sessionMode === 'continue' ? [...photoProcessedIds, ...initialSession!.deferredIds] : photoProcessedIds,
                 albumIds,
                 date,
+                isCurrent,
             );
             if (sessionPermission) {
                 const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
@@ -1030,10 +1034,12 @@ export const useMediaStore = create<MediaState>()(
                         : {}),
                 };
             });
-        } catch {
+        } catch (error) {
             console.error('Failed to load photos.');
             // Only the current request owns feedback, just as it owns the list.
-            set((state) => isCurrent() ? { photoLoadFailed: true } : state);
+            const permissionFailed = error instanceof MediaSizeReadError && error.reason === 'permission';
+            set((state) => isCurrent() ? { photoLoadFailed: !permissionFailed,
+                ...(permissionFailed ? { photoSessionRecoveryStatus: 'permission' as const } : {}) } : state);
         } finally {
             activeMediaLoads--;
             if (activeMediaLoads === 0) set({ isLoading: false });
@@ -1103,6 +1109,7 @@ export const useMediaStore = create<MediaState>()(
                 sessionMode === 'continue' ? [...videoProcessedIds, ...initialSession!.deferredIds] : videoProcessedIds,
                 albumIds,
                 date,
+                isCurrent,
             );
             const latestPermission = await MediaLibrary.getPermissionsAsync(false, ['video']);
             if (!isCurrent()) return;
@@ -1131,9 +1138,11 @@ export const useMediaStore = create<MediaState>()(
                         : {}),
                 };
             });
-        } catch {
+        } catch (error) {
             console.error('Failed to load videos.');
-            set((state) => isCurrent() ? { videoLoadFailed: true, videoSessionRecoveryStatus: 'failed' as const } : state);
+            const permissionFailed = error instanceof MediaSizeReadError && error.reason === 'permission';
+            set((state) => isCurrent() ? { videoLoadFailed: !permissionFailed,
+                videoSessionRecoveryStatus: permissionFailed ? 'permission' as const : 'failed' as const } : state);
         } finally {
             activeMediaLoads--;
             if (activeMediaLoads === 0) set({ isLoading: false });
