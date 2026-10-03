@@ -172,17 +172,41 @@ describe('PhotosScreen visual entry', () => {
     expect(screen.queryByText('photos_manage_access')).toBeNull();
   });
 
-  it('keeps the system top inset outside the scrollable home without changing the batch or filter', async () => {
-    mockInsets = { top: 32, bottom: 24, left: 0, right: 0 };
+  it('keeps system insets and the Dock outside the scrollable home without changing the batch or filter', async () => {
+    mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
     const view = await renderAsync(<PhotosScreen />);
-    expect(screen.getByTestId('photos-home')).toHaveStyle({ paddingTop: 32 });
+    expect(screen.getByTestId('photos-home')).toHaveStyle({ paddingTop: 32, paddingBottom: 89, paddingLeft: 4, paddingRight: 8 });
     const scrollContent = StyleSheet.flatten(view.UNSAFE_getByType(ScrollView).props.contentContainerStyle);
     expect(scrollContent.paddingTop).toBe(16);
-    expect(scrollContent.paddingBottom).toBe(24 + 65 + 24);
+    expect(scrollContent.paddingBottom).toBe(24);
     expect(screen.getByText('3')).toBeTruthy();
     expect(mockSettingsState.setSelectedAlbums).not.toHaveBeenCalled();
     expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
     expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 3])('places the primary organizing action before optional previews for a %s-photo batch', async count => {
+    mockMediaState.photos = Array.from({ length: count }, (_, index) => mockPhoto(`priority-${index}`));
+    const view = await renderAsync(<PhotosScreen />);
+    // Host traversal validates reading/layout order, not native pixel geometry.
+    // Small-screen position and hit targets still require the emulator check.
+    const nodes: any[] = [];
+    const visit = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(visit); return; }
+      nodes.push(node); node.children?.forEach(visit);
+    };
+    visit(view.toJSON());
+    const actionIndex = nodes.findIndex(node => node.props?.accessibilityRole === 'button'
+      && JSON.stringify(node.children).includes('photos_home_start'));
+    const previewIndex = nodes.findIndex(node => node.type === 'Image' && node.props.source?.uri === 'file:///priority-0.jpg');
+    expect(actionIndex).toBeGreaterThanOrEqual(0);
+    expect(previewIndex).toBeGreaterThan(actionIndex);
+    expect(mockMediaState.startOrganizingSession).not.toHaveBeenCalled();
+    await fireEventAsync.press(screen.getByRole('button', { name: 'photos_home_start' }));
+    expect(mockMediaState.startOrganizingSession).toHaveBeenCalledWith('photo', { albumIds: [], order: 'random' }, mockMediaState.photos.map(photo => photo.id));
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
   });
 
   it('reserves the Dock and safe areas before measuring space for media', async () => {

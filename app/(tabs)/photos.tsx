@@ -357,9 +357,13 @@ export default function PhotosScreen() {
     if (showHome) {
         const previewPhotos = visiblePhotos.slice(0, 3);
         return (
-            <View testID="photos-home" style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+            <View testID="photos-home" style={[styles.container, {
+                backgroundColor: colors.background, paddingTop: insets.top,
+                paddingBottom: UI_METRICS.dockHeight + insets.bottom,
+                paddingLeft: insets.left, paddingRight: insets.right,
+            }]}>
                 <ScrollView
-                    contentContainerStyle={[styles.homeContent, { paddingTop: 16, paddingBottom: insets.bottom + UI_METRICS.dockHeight + 24 }]}
+                    contentContainerStyle={[styles.homeContent, { paddingTop: 16, paddingBottom: 24 }]}
                     showsVerticalScrollIndicator={false}
                 >
                     <View style={styles.homeBrandRow}>
@@ -380,6 +384,19 @@ export default function PhotosScreen() {
                             </View>
                         </View>
                     </View>
+
+                    <Pressable
+                        onPress={() => void openSession(homeAction)}
+                        accessibilityRole="button"
+                        style={({ pressed }) => [styles.homeStart, {
+                            backgroundColor: colors.actionBackground,
+                            opacity: pressed ? 0.8 : 1,
+                            transform: [{ scale: pressed ? 0.985 : 1 }],
+                        }]}
+                    >
+                        <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t(homeActionTitle)}</Text>
+                        <Feather name={visiblePhotos.length > 0 ? 'arrow-right' : 'refresh-cw'} size={19} color={colors.actionForeground} />
+                    </Pressable>
 
                     <View style={styles.homePreviewSection}>
                         {previewPhotos.length > 0 ? <View accessibilityLabel={t('photos_home_preview')} style={[styles.homeMosaic, { height: previewHeight }]}>
@@ -415,18 +432,6 @@ export default function PhotosScreen() {
                         {t('session_partial_hint', { count: photoSessionUnavailableCount })}
                     </Text>}
 
-                    <Pressable
-                        onPress={() => void openSession(homeAction)}
-                        accessibilityRole="button"
-                        style={({ pressed }) => [styles.homeStart, {
-                            backgroundColor: colors.actionBackground,
-                            opacity: pressed ? 0.8 : 1,
-                            transform: [{ scale: pressed ? 0.985 : 1 }],
-                        }]}
-                    >
-                        <Text style={[styles.homeStartLabel, { color: colors.actionForeground }]}>{t(homeActionTitle)}</Text>
-                        <Feather name={visiblePhotos.length > 0 ? 'arrow-right' : 'refresh-cw'} size={19} color={colors.actionForeground} />
-                    </Pressable>
                     {session && <View style={styles.sessionActions}>
                         <Pressable accessibilityRole="button" onPress={() => void openSession('new')} style={styles.sessionTextButton}>
                             <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('session_new_round')}</Text>
@@ -660,10 +665,11 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     homeEmpty: {
-        minHeight: 224,
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: SPACING.m,
+        paddingVertical: SPACING.l,
+        gap: SPACING.s,
     },
     homeMosaicLarge: {
         flex: 1.35,
