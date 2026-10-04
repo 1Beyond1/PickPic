@@ -223,8 +223,8 @@ export default function PhotosScreen() {
                 markAsSkipped(photo);
                 showToast(t('photos_collected', { album: albumName }));
                 return true;
-            } catch (error) {
-                console.error('Failed to collect photo', error);
+            } catch {
+                console.error('[Photos] Failed to collect photo.');
                 showToast(t('photos_collection_failed'));
                 return false;
             }
@@ -243,8 +243,8 @@ export default function PhotosScreen() {
                 setPendingCollectionPhoto(null);
                 setNewAlbumName('');
                 setShowNewAlbumModal(false);
-            } catch (error) {
-                console.error('Failed to create photo album', error);
+            } catch {
+                console.error('[Photos] Failed to create photo album.');
                 showToast(t('photos_create_album_failed'));
             }
         }

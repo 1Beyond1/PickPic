@@ -9,6 +9,8 @@
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as jpeg from 'jpeg-js';
+import { Platform } from 'react-native';
+import { LocalPrivacyError, usePrivacyStore } from '../../stores/usePrivacyStore';
 import { GrayImageRef, IImageOps } from './IImageOps';
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
@@ -88,7 +90,12 @@ export class ImageOpsJS implements IImageOps {
             return { width: 256, height: 256, data: grayscale };
         } finally {
             if (resizedUri && resizedUri !== assetUri) {
-                await FileSystem.deleteAsync(resizedUri, { idempotent: true }).catch(() => undefined);
+                await FileSystem.deleteAsync(resizedUri, { idempotent: true }).catch(() => {
+                    if (Platform.OS !== 'web') {
+                        usePrivacyStore.getState().block('cache', 'read');
+                        throw new LocalPrivacyError();
+                    }
+                });
             }
         }
     }

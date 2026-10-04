@@ -23,7 +23,7 @@ import { APP_VERSION, useSettingsStore } from '../stores/useSettingsStore';
 
 // Keep splash screen visible while loading
 void SplashScreen.preventAutoHideAsync().catch(error => {
-  console.error('[RootLayout] Failed to keep splash screen visible:', error);
+  console.error('[RootLayout] Failed to keep splash screen visible.');
 });
 
 export default function RootLayout() {
@@ -165,8 +165,8 @@ export default function RootLayout() {
         } else if (mounted) {
           mediaPermissionGrantedRef.current = permission.granted;
         }
-      } catch (error) {
-        console.error('[RootLayout] Failed to refresh media permission:', error);
+      } catch {
+        console.error('[RootLayout] Failed to refresh media permission.');
       }
     };
 
@@ -264,7 +264,7 @@ export default function RootLayout() {
             refreshedStore.pruneUnavailableQueuedAssets(refreshedScope, 'photo');
           })
           .catch(error => {
-            console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);
+            console.error('[RootLayout] Failed to refresh permission after media-library scope change.');
           });
       }
     });
@@ -292,8 +292,8 @@ export default function RootLayout() {
 
         try {
           await SplashScreen.hideAsync();
-        } catch (error) {
-          console.error('[RootLayout] Failed to hide splash screen:', error);
+        } catch {
+          console.error('[RootLayout] Failed to hide splash screen.');
         }
       }
     }

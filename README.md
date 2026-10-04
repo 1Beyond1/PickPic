@@ -109,6 +109,8 @@ npx expo start --dev-client
 
 项目包含 ML Kit 原生模块，不能仅用 Expo Go 运行完整应用。新增或修改原生依赖后需要重新构建开发客户端；普通 JS / TS 改动可通过 Metro 更新。参见 [Expo 开发构建说明](https://docs.expo.dev/workflow/customizing/)。
 
+当前开发分支安装时会应用版本与源码指纹校验的 SDK 日志隐私补丁。若关闭 npm 安装脚本，构建前须显式运行 `node scripts/apply-privacy-patches.js`，再用 `--check` 验证；不匹配时先审查依赖，不能跳过校验。维护方法和隐私边界见 [加密与 SDK 补丁说明](ENCRYPTED_BACKUP.md)。这不是已发布 0.4.0 的新增能力声明。
+
 ### 检查与构建
 
 ```bash

@@ -216,6 +216,20 @@ describe('VideoFeedItem with expo-video', () => {
     await waitFor(() => expect(mockEnterFullscreen).toHaveBeenCalledTimes(1));
   });
 
+  it('does not log a private file path when native sharing rejects', async () => {
+    const sharing = require('expo-sharing');
+    const privateMarker = 'PRIVATE_VIDEO_PATH_FROM_NATIVE_PROVIDER';
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    sharing.isAvailableAsync.mockResolvedValueOnce(true);
+    sharing.shareAsync.mockRejectedValueOnce(new Error(privateMarker));
+    const screen = renderVideo();
+    fireEvent.press(screen.getByRole('button', { name: 'video_share' }));
+    await waitFor(() => expect(log).toHaveBeenCalled());
+    expect(sharing.shareAsync).toHaveBeenCalledWith(video.uri);
+    const logged = log.mock.calls.flat().map(value => value instanceof Error ? value.message : String(value)).join('\n');
+    expect(logged).not.toContain(privateMarker);
+  });
+
   it.each([
     { background: '#F7F8F7', text: '#1B211D', textSecondary: '#626B64', danger: '#A23E35', selectionBackground: '#E2E8E2' },
     { background: '#111212', text: '#F1F2EF', textSecondary: '#B1B8B0', danger: '#EAB0A4', selectionBackground: '#282D29' },

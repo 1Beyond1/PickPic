@@ -158,7 +158,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                 // asset is unavailable, expo-video will report the native error
                 // instead of allowing the async lookup to become unhandled.
                 if (mounted) {
-                    console.warn('[VideoFeedItem] Failed to resolve local video URI:', error);
+                    console.warn('[VideoFeedItem] Failed to resolve local video URI.');
                     setPlaybackSource({ assetId: video.id, uri: video.uri });
                 }
             });
@@ -191,7 +191,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
 
         if (videoRef.current) {
             void videoRef.current?.exitFullscreen().catch((error) => {
-                console.warn('[VideoFeedItem] Failed to exit fullscreen video:', error);
+                console.warn('[VideoFeedItem] Failed to exit fullscreen video.');
             });
         }
     }, [isFullscreen, isScreenFocused]);
@@ -203,10 +203,10 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
             } else {
                 player.pause();
             }
-        } catch (error) {
+        } catch {
             // The player can reject while a feed item is being recycled or
             // unloaded. Keep that transient failure from escaping the effect.
-            console.warn('[VideoFeedItem] Failed to sync playback state:', error);
+            console.warn('[VideoFeedItem] Failed to sync playback state.');
         }
     }, [baseShouldPlay, player, playbackUri]);
 
@@ -215,8 +215,8 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
             if (await Sharing.isAvailableAsync()) {
                 await Sharing.shareAsync(playbackUri || await resolvePlaybackUri());
             }
-        } catch (error) {
-            console.error('[VideoFeedItem] Failed to share video:', error);
+        } catch {
+            console.error('[VideoFeedItem] Failed to share video.');
         }
     };
 
@@ -233,9 +233,9 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
             // platform fullscreen surface. The callbacks update state only
             // after the platform confirms the transition.
             await videoRef.current?.enterFullscreen();
-        } catch (error) {
+        } catch {
             setIsFullscreen(false);
-            console.error('[VideoFeedItem] Failed to open fullscreen video:', error);
+            console.error('[VideoFeedItem] Failed to open fullscreen video.');
         }
     };
 

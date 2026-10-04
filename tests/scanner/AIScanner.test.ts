@@ -23,6 +23,7 @@ jest.mock('../../services/ml/MLKitService', () => ({
 }));
 
 import { waitFor } from '@testing-library/react-native';
+import { usePrivacyStore } from '../../stores/usePrivacyStore';
 import { InteractionManager, Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -68,6 +69,7 @@ describe('AIScanner engine safety', () => {
   };
 
   beforeEach(() => {
+    usePrivacyStore.setState({ failures: {} });
     Object.defineProperty(Platform, 'OS', { configurable: true, value: scannerTestPlatform });
     database = new TestDatabase();
     (getDatabase as jest.Mock).mockResolvedValue(database);
@@ -424,6 +426,24 @@ describe('AIScanner engine safety', () => {
     await startClassification();
     expect((await AssetRepository.getById('one'))?.labels_json).toBeNull();
     expect((await AssetRepository.getById('one'))?.status).toBe(AssetStatus.DONE);
+  });
+
+  it('stops before another image when ML crop cleanup fails, preserving base results and allowing retry after cleanup', async () => {
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true });
+    fs.deleteAsync.mockRejectedValueOnce(new Error('PRIVATE_CROP_PATH_DELETE_FAILURE'));
+    const onComplete = jest.fn();
+    await start({ onComplete });
+    expect(usePrivacyStore.getState().failures.cache).toBe('read');
+    expect(ml.labelImage).toHaveBeenCalledTimes(1);
+    expect(ops.resizeToGray256).toHaveBeenCalledTimes(1);
+    expect((await AssetRepository.getById('one'))?.status).toBe(AssetStatus.DONE);
+    expect((await AssetRepository.getById('two'))?.status).toBe(AssetStatus.PENDING);
+    expect(onComplete).not.toHaveBeenCalled();
+    await resumeOnce({ mode: 'count', count: 1 });
+    expect(ml.labelImage).toHaveBeenCalledTimes(1);
+    usePrivacyStore.getState().clear('cache');
+    await resumeOnce({ mode: 'count', count: 1 });
+    expect((await AssetRepository.getById('two'))?.status).toBe(AssetStatus.DONE);
   });
 
   it('cleans up a temporary ML crop and stops AI after four failures while preserving committed base results', async () => {

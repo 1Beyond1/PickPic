@@ -81,6 +81,18 @@ it('does not publish an old request failure over a newer successful snapshot', a
   expect(result.current.objectGroups.flatMap(group => group.assets.map(asset => asset.asset_id))).toEqual(['new']);
 });
 
+it('reports failed reads without logging provider errors containing private record data', async () => {
+  const privateMarker = 'PRIVATE_RECORD_LABEL_AND_MEDIA_PATH';
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  (AssetRepository.getAllDoneAssets as jest.Mock).mockRejectedValueOnce(new Error(privateMarker));
+  const { result } = renderHook(() => useAICategories());
+  await act(async () => { await result.current.refresh(); });
+  expect(result.current).toMatchObject({ hasError: true, isLoading: false });
+  expect(log).toHaveBeenCalled();
+  const logged = log.mock.calls.flat().map(value => value instanceof Error ? value.message : String(value)).join('\n');
+  expect(logged).not.toContain(privateMarker);
+});
+
 it('keeps pending work visible without misrepresenting it as completed classification', async () => {
   (AssetRepository.getAllDoneAssets as jest.Mock).mockResolvedValue([]);
   (AssetRepository.getStatusCounts as jest.Mock).mockResolvedValueOnce({ pending: 3, done: 0, error: 0 });

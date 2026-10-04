@@ -22,6 +22,7 @@ import {
 } from '../../database';
 import { getImageOps, GrayImageRef } from '../imageOps';
 import { hasFullPhotoLibraryAccess } from '../../stores/useMediaStore';
+import { LocalPrivacyError, usePrivacyStore } from '../../stores/usePrivacyStore';
 import { hasDocumentContext } from '../ml/LabelClassifier';
 import { selectBestShot } from './BestShotSelector';
 import { findSimilarPhotos } from './SimilarityMatcher';
@@ -529,7 +530,13 @@ async function analyzeAIPhoto(assetInfo: MediaLibrary.AssetInfo, uri: string) {
             // Always clean up the temporary crop, including
             // when classification times out or throws.
             if (isCropped) {
-                await FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => { });
+                await FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => {
+                    if (Platform.OS !== 'web') {
+                        usePrivacyStore.getState().block('cache', 'read');
+                        stop();
+                        throw new LocalPrivacyError();
+                    }
+                });
             }
         }
     })();
@@ -751,6 +758,10 @@ async function processBatch(
             markForWiderDuplicateScan
         );
 
+        // The image-processing layer cannot depend on the scanner. Observe
+        // its cleanup failure here even when no root UI is mounted to stop us.
+        if (usePrivacyStore.getState().failures.cache) shouldStop = true;
+
         // Yield after each asset
         await yieldToMainThread();
 
@@ -862,6 +873,7 @@ async function finalizeScannerRun(
  * Start the scanner
  */
 export async function start(cbs?: ScannerCallbacks): Promise<void> {
+    if (usePrivacyStore.getState().failures.cache) return;
     if (isRunning || isFinalizing) {
         console.log('[AIScanner] Already running.');
         return;
@@ -980,6 +992,7 @@ export async function resumeOnce(
     options?: ScanBatchOptions,
     cbs?: ScannerCallbacks
 ): Promise<void> {
+    if (usePrivacyStore.getState().failures.cache) return;
     if (isRunning || isFinalizing) {
         console.log('[AIScanner] Already running.');
         return;
@@ -1175,6 +1188,7 @@ export async function getClassificationStatus() {
 
 /** Explicit AI backfill/retry, never an automatic side effect of enabling AI. */
 export async function startClassification(errorsOnly = false): Promise<void> {
+    if (usePrivacyStore.getState().failures.cache) return;
     if (isRunning || isFinalizing) return;
     const { useSettingsStore } = await import('../../stores/useSettingsStore');
     if (!useSettingsStore.getState().enableAIClassification) return;

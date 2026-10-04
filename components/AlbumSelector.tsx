@@ -74,8 +74,8 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     const handleOpenSettings = async () => {
         try {
             await Linking.openSettings();
-        } catch (error) {
-            console.error('[AlbumSelector] Failed to open system settings:', error);
+        } catch {
+            console.error('[AlbumSelector] Failed to open system settings.');
         }
     };
 

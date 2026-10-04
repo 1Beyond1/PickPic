@@ -10,6 +10,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "postinstall": "node scripts/apply-privacy-patches.js",
     "typecheck": "tsc --noEmit --pretty false",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
@@ -73,6 +74,11 @@
     "jest-expo": "^54.0.16",
     "react-test-renderer": "^19.1.0",
     "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "tar": "7.5.22",
+    "shell-quote": "1.12.0",
+    "nanoid": "3.3.19"
   },
   "private": true
 }

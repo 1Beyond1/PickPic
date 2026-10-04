@@ -91,8 +91,8 @@ export default function SettingsScreen() {
     const handleOpenGitHub = async (project = false) => {
         try {
             await Linking.openURL(project ? 'https://github.com/1Beyond1/PickPic' : 'https://github.com/1Beyond1');
-        } catch (error) {
-            console.error('[Settings] Failed to open GitHub:', error);
+        } catch {
+            console.error('[Settings] Failed to open GitHub.');
         }
     };
 
@@ -136,7 +136,7 @@ export default function SettingsScreen() {
             })
             .catch(error => {
                 if (!active) return;
-                console.error('[Settings] Failed to refresh visible progress:', error);
+                console.error('[Settings] Failed to refresh visible progress.');
                 // Do not expose a stale count after a permission/read error.
                 setVisibleProcessedCounts({ photos: 0, videos: 0 });
             });
@@ -197,8 +197,8 @@ export default function SettingsScreen() {
         setIsResettingScanner(true);
         try {
             await resetScan();
-        } catch (error) {
-            console.error('[Settings] Failed to reset scanner', error);
+        } catch {
+            console.error('[Settings] Failed to reset scanner.');
             Alert.alert(
                 language === 'zh' ? '重置失败' : 'Reset failed',
                 language === 'zh'
@@ -212,7 +212,7 @@ export default function SettingsScreen() {
 
     const handleScanBatch = async (options: { mode: 'album' | 'count'; albumIds?: string[]; count?: number }) => {
         if (isResettingScanner || isFinalizing) return;
-        console.log('[Settings] Scan batch with options:', options);
+        console.log('[Settings] Starting a scan batch.');
         await resumeOnce(options);
     };
 

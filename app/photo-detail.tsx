@@ -68,7 +68,7 @@ export default function PhotoDetailScreen() {
             })
             .catch(error => {
                 if (active) {
-                    console.warn('[PhotoDetail] Failed to verify asset after media-library refresh:', error);
+                    console.warn('[PhotoDetail] Failed to verify asset after media-library refresh.');
                 }
             });
 
@@ -101,7 +101,7 @@ export default function PhotoDetailScreen() {
             })
             .catch((error) => {
                 if (mounted && requestId === shareRequestIdRef.current) {
-                    console.warn('[PhotoDetail] Failed to resolve local photo URI:', error);
+                    console.warn('[PhotoDetail] Failed to resolve local photo URI.');
                     setShareUri(uri);
                 }
             });
@@ -116,8 +116,8 @@ export default function PhotoDetailScreen() {
             if (await Sharing.isAvailableAsync()) {
                 await Sharing.shareAsync(shareUri || await resolveShareUri());
             }
-        } catch (error) {
-            console.error('[PhotoDetail] Failed to share photo:', error);
+        } catch {
+            console.error('[PhotoDetail] Failed to share photo.');
         }
     };
 

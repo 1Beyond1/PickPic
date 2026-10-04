@@ -84,7 +84,7 @@ export function useAIScanner(): UseAIScannerResult {
                     setProgress(status);
                 }
             } catch (error) {
-                console.error('[useAIScanner] Init error:', error);
+                console.error('[useAIScanner] Failed to initialize scanner status.');
             }
         };
         init();

@@ -346,8 +346,8 @@ export default function VideosScreen() {
         if (selectedVideoForCollection && ids.length > 0) {
             try {
                 await Promise.all(ids.map(id => addAssetToAlbum(id, selectedVideoForCollection)));
-            } catch (error) {
-                console.error('Failed to collect video', error);
+            } catch {
+                console.error('[Videos] Failed to collect video.');
                 Alert.alert(
                     language === 'zh' ? '收藏失败' : 'Collection failed',
                     language === 'zh' ? '请重试，原视频未被删除。' : 'Please try again. The original video was not deleted.'
@@ -372,8 +372,8 @@ export default function VideosScreen() {
         if (videoPermission?.canAskAgain === false) {
             try {
                 await Linking.openSettings();
-            } catch (error) {
-                console.error('[Videos] Failed to open system settings:', error);
+            } catch {
+                console.error('[Videos] Failed to open system settings.');
             }
             return;
         }
@@ -395,8 +395,8 @@ export default function VideosScreen() {
             if (permission.granted && isFocusedRef.current) {
                 await loadVideos(50, displayOrder, selectedAlbumIds);
             }
-        } catch (error) {
-            console.error('[Videos] Failed to request video permission:', error);
+        } catch {
+            console.error('[Videos] Failed to request video permission.');
         } finally {
             setRequestingVideoPermission(false);
         }
@@ -427,8 +427,8 @@ export default function VideosScreen() {
             if (permission?.granted && isFocusedRef.current) {
                 await loadVideos(50, displayOrder, selectedAlbumIds);
             }
-        } catch (error) {
-            console.error('[Videos] Failed to manage video access:', error);
+        } catch {
+            console.error('[Videos] Failed to manage video access.');
         } finally {
             setRequestingVideoPermission(false);
         }

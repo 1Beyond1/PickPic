@@ -43,7 +43,7 @@ export async function hasFullPhotoLibraryAccess(): Promise<boolean> {
         const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
         return permission.granted && permission.accessPrivileges === 'all';
     } catch (error) {
-        console.warn('[MediaStore] Failed to verify album access:', error);
+        console.warn('[MediaStore] Failed to verify album access.');
         return false;
     }
 }
@@ -65,7 +65,7 @@ export async function getCurrentlyVisibleAssetIds(
     try {
         permission = await MediaLibrary.getPermissionsAsync(false, [mediaType]);
     } catch (error) {
-        console.warn(`[MediaStore] Failed to verify ${mediaType} asset visibility:`, error);
+        console.warn(`[MediaStore] Failed to verify ${mediaType} asset visibility.`);
         return new Set();
     }
 
@@ -901,7 +901,7 @@ export const useMediaStore = create<MediaState>()(
             }
         } catch (e) {
             if (requestId === albumLoadRequestId) set({ albums: [] });
-            console.error("Failed to load albums", e);
+            console.error('[MediaStore] Failed to load albums.');
         }
     },
 
@@ -916,7 +916,7 @@ export const useMediaStore = create<MediaState>()(
             await MediaLibrary.createAlbumAsync(name, asset, true);
             await get().loadAlbums();
         } catch (e) {
-            console.error("Failed to create album", e);
+            console.error('[MediaStore] Failed to create album.');
             throw e;
         }
     },
@@ -932,7 +932,7 @@ export const useMediaStore = create<MediaState>()(
                 throw new Error('Media library did not confirm adding the asset to the album');
             }
         } catch (e) {
-            console.error("Failed to add asset to album", e);
+            console.error('[MediaStore] Failed to add asset to album.');
             throw e;
         }
     },
@@ -1576,7 +1576,7 @@ export const useMediaStore = create<MediaState>()(
             });
             console.log(`[MediaStore] Refreshed counts: ${totalPhotos} photos, ${totalVideos} videos`);
         } catch (e) {
-            console.error("Failed to refresh total counts", e);
+            console.error('[MediaStore] Failed to refresh total counts.');
         }
         },
 

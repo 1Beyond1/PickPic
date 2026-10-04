@@ -67,3 +67,7 @@ MobileCLIP **代码 MIT 与权重许可不同**。当前官方 S0 与 V2 S0 权�
 后续评测由开发者完成，使用有许可的照片，固定类别、素材来源、切分和版本，同时记录未分类、错误分类、多标签以及截图/翻拍混淆；不要求用户训练或标注大图库。性能在同一 ARM64 手机测冷启动、图片读取预处理、推理、写库、峰值内存与连续扫描耗电，分别报告。开发者先做兼容与准确性对比，用户只需体验候选结果；本轮遵照指令不下载或接入新模型。
 
 截图/录屏优先按系统类型或相册来源判断；OCR、文字/自然语言搜索、完全相同文件识别、压缩和编辑仅列为后续独立方案。普通通用分类模型不能替代这些功能的专项实现。
+
+### 后续 OCR 资源补充（2026-10-05，仅调研）
+
+ML Kit Text Recognition v2 提供中文 bundled 模型，模型可随应用构建，不使用首次 Play 服务模型下载路径；这仍不代表 SDK 无度量通信。PaddleOCR 当前官方 Android 示例提供 SDK / Demo 分离与 AAR 集成方式，列有 PP-OCRv6 tiny / small 及 PP-OCRv5 mobile，采用 ONNX Runtime，并涉及 OpenCV 等部署依赖。它们可以作为后续“截图文字本机搜索”的现成候选，而非当前分类模型的替代；需另验权重条款、RN 桥接、实际中文识别、完整 APK 增量、内存与索引隐私，不能将模型参数或 SDK 示例直接当作 PickPic 性能证据。识别文本不写日志、不自动上传，持久索引应纳入独立加密与清除设计；本轮没有下载、接入或创建 OCR 索引。[ML Kit 官方 Android 文档](https://developers.google.com/ml-kit/vision/text-recognition/v2/android)、[PaddleOCR 官方 Android 示例](https://github.com/PaddlePaddle/PaddleOCR/blob/main/docs/version3.x/inference_deployment/cross_platform/android_deployment.en.md)。

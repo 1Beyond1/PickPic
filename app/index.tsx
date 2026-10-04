@@ -46,7 +46,7 @@ export default function Index() {
         const subscription = AppState.addEventListener('change', (nextState) => {
             if (nextState === 'active') {
                 void getPermission().catch(error => {
-                    console.error('Failed to refresh media permission', error);
+                    console.error('[Welcome] Failed to refresh media permission.');
                 });
             }
         });
@@ -59,8 +59,8 @@ export default function Index() {
         if (permissionResponse?.canAskAgain === false) {
             try {
                 await Linking.openSettings();
-            } catch (error) {
-                console.error('Failed to open system settings', error);
+            } catch {
+                console.error('[Welcome] Failed to open system settings.');
                 setActionError('permission_settings_failed');
             }
             return;
@@ -72,8 +72,8 @@ export default function Index() {
             if (granted) {
                 router.replace('/(tabs)/photos');
             }
-        } catch (error) {
-            console.error('Failed to request media permission', error);
+        } catch {
+            console.error('[Welcome] Failed to request media permission.');
             setActionError('permission_request_failed');
         } finally {
             setRequesting(false);

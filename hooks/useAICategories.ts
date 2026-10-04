@@ -161,7 +161,7 @@ export function useAICategories(enabled = true): AICategoriesState {
             }
 
         } catch (error) {
-            console.error('Failed to load AI categories:', error);
+            console.error('[AICategories] Failed to load saved categories.');
             if (requestId === loadRequestIdRef.current) setHasError(true);
         } finally {
             if (requestId === loadRequestIdRef.current) {
