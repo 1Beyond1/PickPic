@@ -14,8 +14,10 @@ import {
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useReducedMotion } from 'react-native-reanimated';
 import { COLORS } from '../constants/theme';
 import { PhotoAsset } from '../stores/useMediaStore';
+import { VideoTimeline } from './VideoTimeline';
 
 interface AndroidFullscreenVideoProps {
     uri: string;
@@ -36,6 +38,7 @@ const AndroidFullscreenVideo: React.FC<AndroidFullscreenVideoProps> = ({
     onRequestClose,
 }) => {
     const insets = useSafeAreaInsets();
+    const reducedMotion = useReducedMotion();
     const player = useVideoPlayer(uri, (videoPlayer) => {
         videoPlayer.loop = true;
         videoPlayer.muted = isMuted;
@@ -49,7 +52,7 @@ const AndroidFullscreenVideo: React.FC<AndroidFullscreenVideoProps> = ({
     return (
         <Modal
             visible
-            animationType="fade"
+            animationType={reducedMotion ? 'none' : 'fade'}
             presentationStyle="fullScreen"
             statusBarTranslucent
             navigationBarTranslucent
@@ -89,6 +92,7 @@ interface VideoFeedItemProps {
     t: any;
     colors: any;
     itemHeight: number;
+    onScrubbingChange?: (scrubbing: boolean) => void;
 }
 
 export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
@@ -102,7 +106,8 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     onFavorite,
     t,
     colors,
-    itemHeight
+    itemHeight,
+    onScrubbingChange,
 }) => {
     const { fontScale } = useWindowDimensions();
     const videoRef = useRef<VideoView>(null);
@@ -112,6 +117,11 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     ));
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [isPaused, setIsPaused] = useState(false);
+    const [isScrubbing, setIsScrubbing] = useState(false);
+    const handleScrubbing = useCallback((scrubbing: boolean) => {
+        setIsScrubbing(scrubbing);
+        onScrubbingChange?.(scrubbing);
+    }, [onScrubbingChange]);
     useEffect(() => {
         setIsPaused(false);
     }, [video.id]);
@@ -162,7 +172,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     // Android uses a second player inside the custom fullscreen modal, so the
     // feed player must pause there. iOS and Web fullscreen reuse this player;
     // keep it playing while the native/browser fullscreen surface is visible.
-    const baseShouldPlay = shouldPlay && isActive && !isPaused && !(Platform.OS === 'android' && isFullscreen);
+    const baseShouldPlay = shouldPlay && isActive && !isPaused && !isScrubbing && !(Platform.OS === 'android' && isFullscreen);
 
     useEffect(() => {
         player.muted = isMuted;
@@ -244,7 +254,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     // Four labeled buttons must fit above metadata, even with large text.
     // The existing compact rail is preferable to clipping the first action.
     const railHeight = 4 * (32 + 12 + 4 + Math.ceil(11 * 1.4 * fontScale)) + 3 * 10;
-    const compact = itemHeight < Math.max(360, railHeight + 68 + 8);
+    const compact = itemHeight < Math.max(360, railHeight + 136 + 8);
     const actions = [
         { icon: isMuted ? 'volume-mute-outline' : 'volume-high-outline', label: t(isMuted ? 'video_muted' : 'video_sound'), onPress: toggleMute },
         { icon: 'star-outline', label: t('video_favorite'), onPress: onFavorite },
@@ -326,6 +336,12 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                 ))}
             </View>
 
+            <View style={styles.timeline}>
+                <VideoTimeline player={player} sourceKey={`${video.id}:${playbackUri ?? ''}`}
+                    active={isActive && isScreenFocused && !!playbackUri && !isFullscreen}
+                    colors={colors} t={t} onScrubbingChange={handleScrubbing} />
+            </View>
+
             {Platform.OS === 'android' && isFullscreen && playbackUri && (
                 <AndroidFullscreenVideo
                     uri={playbackUri}
@@ -348,13 +364,14 @@ const styles = StyleSheet.create({
         marginLeft: 16,
         marginRight: 76,
         marginTop: 8,
-        marginBottom: 48,
+        marginBottom: 116,
         borderRadius: 12,
         overflow: 'hidden',
     },
     compactVideoWrapper: {
         marginRight: 16,
-        marginBottom: 104,
+        // 118 bottom + 64 touch target + 8 separation from the picture.
+        marginBottom: 190,
     },
     video: {
         width: '100%',
@@ -388,7 +405,7 @@ const styles = StyleSheet.create({
     metadata: {
         position: 'absolute',
         left: 20,
-        bottom: 14,
+        bottom: 82,
         right: 124,
         flexDirection: 'row',
         alignItems: 'center',
@@ -401,7 +418,7 @@ const styles = StyleSheet.create({
     },
     fullscreenHint: {
         position: 'absolute',
-        bottom: 2,
+        bottom: 70,
         right: 76,
         width: 44,
         height: 44,
@@ -413,12 +430,12 @@ const styles = StyleSheet.create({
     actions: {
         position: 'absolute',
         right: 8,
-        bottom: 68,
+        bottom: 136,
         gap: 10,
     },
     compactActions: {
         flexDirection: 'row',
-        bottom: 50,
+        bottom: 118,
         gap: 8,
     },
     actionButton: {
@@ -441,5 +458,6 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: '400',
         textAlign: 'center',
-    }
+    },
+    timeline: { position: 'absolute', bottom: 8, left: 0, right: 0 },
 });

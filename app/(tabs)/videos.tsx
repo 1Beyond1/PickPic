@@ -40,6 +40,8 @@ export default function VideosScreen() {
     } = useSettingsStore();
 
     const [activeId, setActiveId] = useState<string | null>(null);
+    const [isScrubbing, setIsScrubbing] = useState(false);
+    useEffect(() => { setIsScrubbing(false); }, [activeId, isFocused]);
     const [isMuted, setIsMuted] = useState(true);
     const [showTrash, setShowTrash] = useState(false);
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
@@ -60,6 +62,12 @@ export default function VideosScreen() {
     isFocusedRef.current = isFocused;
     const lastActiveIdRef = useRef<string | null>(null);
     const dragStartIdRef = useRef<string | null>(null);
+    const handleScrubbingChange = useCallback((scrubbing: boolean) => {
+        setIsScrubbing(scrubbing);
+        // If a native list drag began before the progress responder won, its
+        // eventual momentum event is not authority to organize a video.
+        if (scrubbing) dragStartIdRef.current = null;
+    }, []);
     const visibleIdRef = useRef<string | null>(null);
     const confirmedVisibleIdRef = useRef<string | null>(null);
     const feedRef = useRef<FlatList>(null);
@@ -548,9 +556,11 @@ export default function VideosScreen() {
                             t={t}
                             colors={colors}
                             itemHeight={feedHeight}
+                            onScrubbingChange={item.id === activeId ? handleScrubbingChange : undefined}
                         />
                     )}
                     pagingEnabled
+                    scrollEnabled={!isScrubbing}
                     showsVerticalScrollIndicator={false}
                     onViewableItemsChanged={onViewableItemsChanged}
                     onMomentumScrollEnd={onMomentumScrollEnd}

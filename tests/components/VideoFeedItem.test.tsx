@@ -5,6 +5,10 @@ const mockPlayer = {
   muted: false,
   play: jest.fn(),
   pause: jest.fn(),
+  currentTime: 0,
+  duration: 0,
+  timeUpdateEventInterval: 0,
+  addListener: jest.fn(() => ({ remove: jest.fn() })),
 };
 const mockEnterFullscreen = jest.fn().mockResolvedValue(undefined);
 const mockExitFullscreen = jest.fn().mockResolvedValue(undefined);
@@ -40,7 +44,7 @@ jest.mock('expo-sharing', () => ({
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
-jest.mock('../../constants/theme', () => ({ COLORS: { white: '#fff', danger: '#f00' } }));
+jest.mock('../../constants/theme', () => ({ ...jest.requireActual('../../constants/theme'), COLORS: { white: '#fff', danger: '#f00' } }));
 jest.mock('../../hooks/useThemeColor', () => ({
   useThemeColor: () => ({ colors: { text: '#fff', danger: '#f00', textSecondary: '#aaa' } }),
 }));
@@ -109,6 +113,12 @@ describe('VideoFeedItem with expo-video', () => {
       expect(view.queryByText('video_favorite')).toBeNull();
       expect(StyleSheet.flatten(view.getByRole('button', { name: 'video_pause' }).props.style).marginBottom).toBeGreaterThanOrEqual(100);
       expect(StyleSheet.flatten(favorite.props.style).minHeight).toBeGreaterThanOrEqual(44);
+      let rail = favorite.parent;
+      while (rail && StyleSheet.flatten(rail.props.style)?.flexDirection !== 'row') rail = rail.parent;
+      expect(rail).not.toBeNull();
+      const railStyle = StyleSheet.flatten(rail!.props.style);
+      const imageStyle = StyleSheet.flatten(view.getByRole('button', { name: 'video_pause' }).props.style);
+      expect(imageStyle.marginBottom).toBeGreaterThanOrEqual(railStyle.bottom + StyleSheet.flatten(favorite.props.style).minHeight + 8);
       expect(view.getByRole('button', { name: 'video_queue_delete' })).toBeEnabled();
     } finally { dimensions.mockRestore(); }
   });

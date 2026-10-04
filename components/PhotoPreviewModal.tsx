@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useReducedMotion } from 'react-native-reanimated';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
@@ -18,9 +19,10 @@ export function PhotoPreviewModal({ photo, onClose }: PhotoPreviewModalProps) {
     const { colors } = useThemeColor();
     const { t } = useI18n();
     const insets = useSafeAreaInsets();
+    const reducedMotion = useReducedMotion();
 
     return (
-        <Modal visible={!!photo} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+        <Modal visible={!!photo} transparent animationType={reducedMotion ? 'none' : 'fade'} statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
             <View accessibilityViewIsModal testID="photo-preview" style={[styles.container, {
                 backgroundColor: colors.background,
                 paddingTop: insets.top + 8,

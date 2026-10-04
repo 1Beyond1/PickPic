@@ -18,6 +18,8 @@ jest.mock('../../hooks/useI18n', () => ({ useI18n: () => ({ language: 'zh', t: (
     return text;
 } }) }));
 let mockDark = false;
+let mockReducedMotion = false;
+jest.mock('react-native-reanimated', () => ({ useReducedMotion: () => mockReducedMotion }));
 jest.mock('../../hooks/useThemeColor', () => ({ useThemeColor: () => ({
     colors: require('../../constants/theme')[mockDark ? 'COLORS_DARK' : 'COLORS'], isDark: mockDark,
 }) }));
@@ -45,6 +47,7 @@ beforeEach(async () => {
         });
     });
     mockDark = false;
+    mockReducedMotion = false;
     mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
     permissions.mockResolvedValue({ granted: true, accessPrivileges: 'all' });
     readInfo.mockImplementation(async (id: string) => id === 'video' ? video : photo(id));
@@ -58,6 +61,19 @@ async function open(assets = [photo('first'), photo('second'), video], onContinu
     await waitFor(() => expect(screen.getByRole('button', { name: `确认删除当前 ${assets.length} 项` })).toBeEnabled());
     return { view, onContinue };
 }
+
+it.each([false, true])('preserves pending decisions and cancellation with reduced motion=%s', async reduced => {
+    mockReducedMotion = reduced;
+    useMediaStore.getState().enqueuePendingDeletion([photo('first')], 'photos');
+    const onClose = jest.fn();
+    const view = await renderAsync(<PendingDeletionModal visible onClose={onClose} />);
+    const review = view.UNSAFE_getAllByType(Modal).find(modal => modal.props.visible && !modal.props.transparent)!;
+    expect(review.props.animationType).toBe(reduced ? 'none' : 'fade');
+    act(() => review.props.onRequestClose());
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useMediaStore.getState().deleteQueue.map(asset => asset.id)).toEqual(['first']);
+    expect(nativeDelete).not.toHaveBeenCalled();
+});
 
 it('shows photo/video/source and keeps media types selectable without deleting on open', async () => {
     await open();

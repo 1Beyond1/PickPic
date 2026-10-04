@@ -80,6 +80,18 @@ async function start() {
     return view;
 }
 
+it('offers explicit accessible decisions without requiring the card swipe gesture', async () => {
+    await start();
+    await fireEventAsync.press(screen.getByRole('button', { name: '加入待删除' }));
+    expect(useMediaStore.getState().deleteQueue.map(asset => asset.id)).toEqual(['one']);
+    await fireEventAsync.press(screen.getByRole('button', { name: '保留这张照片' }));
+    expect(useMediaStore.getState().photoProcessedIds).toEqual(['one', 'two']);
+    expect(useMediaStore.getState().deleteQueue.map(asset => asset.id)).toEqual(['one']);
+    expect(useMediaStore.getState().organizingSessions.photo?.position).toBe(2);
+    expect(useMediaStore.getState().videoProcessedIds).toEqual([]);
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+});
+
 it('keeps the range page mounted while a new month loads, then opens only that month without resetting decisions', async () => {
     const date = createMediaMonth(2026, 10);
     mockLibrary = [{ ...photo('one'), creationTime: date.startInclusive }, { ...photo('two'), creationTime: date.endExclusive }];

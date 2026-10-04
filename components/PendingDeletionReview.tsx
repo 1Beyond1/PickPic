@@ -5,6 +5,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useReducedMotion } from 'react-native-reanimated';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
@@ -183,8 +184,9 @@ export function PendingDeletionModal({ visible, onClose, initialFilter = 'all' }
     const { t } = useI18n();
     const { colors } = useThemeColor();
     const insets = useSafeAreaInsets();
+    const reducedMotion = useReducedMotion();
     const busy = state.isConfirmingDeletion || state.isConfirmingVideoTrash;
-    return <Modal visible={visible} animationType="fade" onRequestClose={() => { if (!busy) onClose(); }} statusBarTranslucent navigationBarTranslucent>
+    return <Modal visible={visible} animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={() => { if (!busy) onClose(); }} statusBarTranslucent navigationBarTranslucent>
         {visible && <View accessibilityViewIsModal style={[styles.layout, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
             <View style={styles.modalHeader}><Pressable accessibilityRole="button" accessibilityLabel={t('close')} disabled={busy} onPress={onClose} style={styles.pageButton}><Ionicons name="close-outline" size={24} color={colors.text} /></Pressable></View>
             <PendingDeletionReview initialFilter={initialFilter} onContinue={onClose} />

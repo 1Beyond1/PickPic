@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import React, { useEffect, useState } from 'react';
-import { Image as RNImage, StyleSheet, useWindowDimensions } from 'react-native';
+import { Image as RNImage, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Extrapolation,
@@ -8,11 +8,13 @@ import Animated, {
     runOnJS,
     useAnimatedStyle,
     useSharedValue,
+    useReducedMotion,
     withSpring,
     withTiming,
 } from 'react-native-reanimated';
 import { BORDER_RADIUS } from '../constants/theme';
 import { useThemeColor } from '../hooks/useThemeColor';
+import { useI18n } from '../hooks/useI18n';
 import { PhotoAsset } from '../stores/useMediaStore';
 
 const SWIPE_THRESHOLD = 120;
@@ -51,6 +53,8 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     maxHeight,
 }) => {
     const { colors } = useThemeColor();
+    const { t } = useI18n();
+    const reducedMotion = useReducedMotion();
     const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = useWindowDimensions();
     const [aspectRatio, setAspectRatio] = useState(1);
     const cardWidth = Math.min(maxWidth, maxHeight * aspectRatio);
@@ -96,9 +100,9 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     };
 
     const resetCardPosition = () => {
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
-        scale.value = withSpring(1);
+        translateX.value = reducedMotion ? 0 : withSpring(0);
+        translateY.value = reducedMotion ? 0 : withSpring(0);
+        scale.value = reducedMotion ? 1 : withSpring(1);
         onHoverZone?.(null);
     };
 
@@ -119,10 +123,11 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     };
 
     const pan = Gesture.Pan()
+        .enabled(index === 0)
         .onUpdate((event) => {
             translateX.value = event.translationX;
             translateY.value = event.translationY;
-            scale.value = withTiming(0.96);
+            scale.value = reducedMotion ? 1 : withTiming(0.96);
 
             if (event.absoluteY > ZONE_ACTIVATION_Y && onHoverZone) {
                 const zoneId = checkZone(event.absoluteX);
@@ -131,38 +136,38 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                 runOnJS(onHoverZone)(null);
             }
         })
-        .onEnd((event) => {
+        .onEnd((event, success) => {
+            if (!success) return;
             if (translateY.value < -SWIPE_THRESHOLD) {
-                translateX.value = withTiming(0);
-                translateY.value = withTiming(-SCREEN_HEIGHT, {}, () => {
-                    runOnJS(onSwipeUp)();
+                translateX.value = withTiming(0, { duration: reducedMotion ? 0 : 300 });
+                translateY.value = withTiming(-SCREEN_HEIGHT, { duration: reducedMotion ? 0 : 300 }, finished => {
+                    if (finished) runOnJS(onSwipeUp)();
                 });
             } else if (translateY.value > SWIPE_THRESHOLD) {
                 const isInZoneArea = event.absoluteY > ZONE_ACTIVATION_Y;
                 const matchedZoneId = isInZoneArea ? checkZone(event.absoluteX) : null;
 
                 if (matchedZoneId) {
-                    translateX.value = withTiming(0);
-                    translateY.value = withTiming(SCREEN_HEIGHT, {}, () => {
-                        runOnJS(completeSwipeDown)(matchedZoneId);
+                    translateX.value = withTiming(0, { duration: reducedMotion ? 0 : 300 });
+                    translateY.value = withTiming(SCREEN_HEIGHT, { duration: reducedMotion ? 0 : 300 }, finished => {
+                        if (finished) runOnJS(completeSwipeDown)(matchedZoneId);
                     });
                 } else {
-                    translateX.value = withTiming(0);
-                    translateY.value = withTiming(SCREEN_HEIGHT, {}, () => {
-                        runOnJS(completeSwipeDown)();
+                    translateX.value = withTiming(0, { duration: reducedMotion ? 0 : 300 });
+                    translateY.value = withTiming(SCREEN_HEIGHT, { duration: reducedMotion ? 0 : 300 }, finished => {
+                        if (finished) runOnJS(completeSwipeDown)();
                     });
                     if (onHoverZone) runOnJS(onHoverZone)(null);
                 }
             } else {
-                translateX.value = withSpring(0);
-                translateY.value = withSpring(0);
-                scale.value = withSpring(1);
-                if (onHoverZone) runOnJS(onHoverZone)(null);
+                runOnJS(resetCardPosition)();
             }
+        }).onFinalize((_event, success) => {
+            if (!success) runOnJS(resetCardPosition)();
         });
 
-    const tap = Gesture.Tap().onEnd(() => {
-        runOnJS(onTap)();
+    const tap = Gesture.Tap().enabled(index === 0).onEnd((_event, success) => {
+        if (success) runOnJS(onTap)();
     });
 
     const composed = Gesture.Race(pan, tap);
@@ -179,7 +184,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
             transform: [
                 { translateX: translateX.value },
                 { translateY: translateY.value },
-                { rotate: `${rotate}deg` },
+                { rotate: `${reducedMotion ? 0 : rotate}deg` },
                 { scale: scale.value },
             ],
             zIndex: total - index,
@@ -189,29 +194,43 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     return (
         <GestureDetector gesture={composed}>
             <Animated.View style={[
-                styles.cardContainer,
+                styles.frame,
                 animatedStyle,
                 {
-                    width: cardWidth,
-                    height: cardHeight,
-                    backgroundColor: colors.surface,
+                    width: maxWidth,
+                    height: maxHeight,
+                    backgroundColor: colors.background,
                 }
-            ]}>
-                <Image
-                    cachePolicy="memory"
-                    source={{ uri: photo.uri }}
-                    style={styles.image}
-                    contentFit="contain"
-                    transition={150}
-                />
+            ]} pointerEvents={index === 0 ? 'auto' : 'none'} accessibilityElementsHidden={index !== 0}
+                importantForAccessibility={index === 0 ? 'auto' : 'no-hide-descendants'} accessible={index === 0}
+                accessibilityRole="button" accessibilityLabel={t('photo_detail_title')}
+                onAccessibilityTap={index === 0 ? onTap : undefined}
+                accessibilityActions={index === 0 ? [{ name: 'activate' }] : undefined}
+                onAccessibilityAction={event => { if (index === 0 && event.nativeEvent.actionName === 'activate') onTap(); }}>
+                <View testID="photo-card-image-frame" style={[styles.cardContainer, {
+                    width: cardWidth, height: cardHeight, backgroundColor: colors.surface,
+                }]}>
+                    <Image
+                        key={`${photo.id}:${photo.uri}`}
+                        cachePolicy="memory"
+                        source={{ uri: photo.uri }}
+                        style={styles.image}
+                        contentFit="contain"
+                        transition={reducedMotion ? 0 : 150}
+                    />
+                </View>
             </Animated.View>
         </GestureDetector>
     );
 };
 
 const styles = StyleSheet.create({
-    cardContainer: {
+    frame: {
         position: 'absolute',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cardContainer: {
         borderRadius: BORDER_RADIUS.m,
         overflow: 'hidden',
     },

@@ -533,7 +533,7 @@ export default function PhotosScreen() {
                 })}
             </View>
 
-            {/* Footer hints - collections disabled for v0.1.1 */}
+            {/* Gesture shortcuts also remain explicit screen-reader actions. */}
             <View style={styles.deckFooter}>
                 {photoSessionUnavailableCount > 0 && <Text style={[styles.queueHint, { color: colors.textSecondary }]}>{t('session_partial_hint', { count: photoSessionUnavailableCount })}</Text>}
                 <View style={styles.recentRow}><Pressable accessibilityRole="button" onPress={() => {
@@ -542,14 +542,18 @@ export default function PhotosScreen() {
                     <Text style={[styles.homeAlbumTitle, { color: colors.text }]}>{t('session_defer')}</Text>
                 </Pressable><RecentUndoButton kind="photo" onChanged={afterUndo} /><RecentDecisionsButton kind="photo" iconOnly /></View>
                 <View style={styles.footerHints}>
-                    <View style={styles.hintItem}>
+                    <Pressable accessibilityRole="button" accessibilityLabel={t('pending_add')}
+                        disabled={!visiblePhotos[0]} onPress={() => { if (visiblePhotos[0]) handleSwipeUp(visiblePhotos[0]); }}
+                        style={({ pressed }) => [styles.hintItem, pressed && { opacity: 0.6 }]}>
                         <Ionicons name="arrow-up-outline" size={20} color={colors.danger} />
                         <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('hint_swipe_up')}</Text>
-                    </View>
-                    <View style={styles.hintItem}>
+                    </Pressable>
+                    <Pressable accessibilityRole="button" accessibilityLabel={t('similar_keep_photo')}
+                        disabled={!visiblePhotos[0]} onPress={() => { if (visiblePhotos[0]) void handleSwipeDown(visiblePhotos[0]); }}
+                        style={({ pressed }) => [styles.hintItem, pressed && { opacity: 0.6 }]}>
                         <Ionicons name="arrow-down-outline" size={20} color={colors.textSecondary} />
                         <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('hint_swipe_down')}</Text>
-                    </View>
+                    </Pressable>
                 </View>
                 <Text style={[styles.queueHint, { color: colors.textSecondary }]}>{t('photos_queue_review_hint')}</Text>
             </View>
@@ -775,6 +779,8 @@ const styles = StyleSheet.create({
     },
     hintItem: {
         alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: UI_METRICS.touchTarget,
         flex: 1,
         minWidth: 0,
     },

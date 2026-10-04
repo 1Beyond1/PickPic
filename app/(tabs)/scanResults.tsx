@@ -9,6 +9,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useReducedMotion } from 'react-native-reanimated';
 
 import { SimilarGroupCard } from '../../components/SimilarGroupCard';
 import { SimilarGroupDetailOverlay } from '../../components/SimilarGroupDetailOverlay';
@@ -78,6 +79,7 @@ async function getVisiblePhotoIdsForResults(): Promise<ReadonlySet<string> | und
 
 export default function ScanResultsScreen() {
     const router = useRouter();
+    const reducedMotion = useReducedMotion();
     const insets = useSafeAreaInsets();
     const { colors } = useThemeColor();
     const { t } = useI18n();
@@ -604,7 +606,7 @@ export default function ScanResultsScreen() {
             {/* Category Detail Modal */}
             <Modal
                 visible={!!selectedCategory}
-                animationType="slide"
+                animationType={reducedMotion ? 'none' : 'slide'}
                 presentationStyle="pageSheet"
                 statusBarTranslucent
                 navigationBarTranslucent
@@ -666,7 +668,7 @@ export default function ScanResultsScreen() {
             <Modal
                 visible={!!selectedPhoto}
                 transparent={true}
-                animationType="fade"
+                animationType={reducedMotion ? 'none' : 'fade'}
                 statusBarTranslucent
                 navigationBarTranslucent
                 onRequestClose={() => setSelectedPhoto(null)}

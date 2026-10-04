@@ -383,6 +383,26 @@ describe('VideosScreen processing behavior', () => {
     await screen.unmountAsync();
   });
 
+  it('locks paging during progress scrubbing and does not treat residual momentum as organizing', async () => {
+    const screen = await renderScreen();
+    let list = screen.UNSAFE_getByType(ReactNative.FlatList);
+    act(() => list.props.onViewableItemsChanged({ viewableItems: [{ key: videoOne.id }] }));
+    const itemType = require('../components/VideoFeedItem').VideoFeedItem;
+    const first = screen.UNSAFE_getAllByType(itemType).find(item => item.props.video.id === videoOne.id)!;
+    act(() => {
+      list.props.onScrollBeginDrag();
+      first.props.onScrubbingChange(true);
+    });
+    list = screen.UNSAFE_getByType(ReactNative.FlatList);
+    expect(list.props.scrollEnabled).toBe(false);
+    act(() => list.props.onMomentumScrollEnd({ nativeEvent: { contentOffset: { y: list.props.snapToInterval } } }));
+    expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
+    act(() => first.props.onScrubbingChange(false));
+    expect(screen.UNSAFE_getByType(ReactNative.FlatList).props.scrollEnabled).toBe(true);
+    expect(mockMediaState.markVideoForTrash).not.toHaveBeenCalled();
+    await screen.unmountAsync();
+  });
+
   it('pauses feed playback while trash is open without reviewing or deleting anything', async () => {
     const screen = await renderScreen();
     const list = screen.UNSAFE_getByType(ReactNative.FlatList);
