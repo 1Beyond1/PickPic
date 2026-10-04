@@ -16,6 +16,8 @@ import { PendingDeletionButton } from '../../components/PendingDeletionReview';
 import { getPendingDeletionEntries } from '../../services/pendingDeletion';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { AssetRepository, DupGroupRepository } from '../../database';
+import { SimilarReviewRepository, isSimilarReviewCurrent } from '../../database/repositories/SimilarReviewRepository';
+import type { SimilarReview } from '../../database/repositories/SimilarReviewRepository';
 import { CategoryGroup, useAICategories } from '../../hooks/useAICategories';
 import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
@@ -35,6 +37,8 @@ interface SimilarGroup {
     memberAssetIds: string[];
     bestAssetId: string | null;
     representativeUri?: string;
+    review: SimilarReview | null;
+    allAccessible: boolean;
 }
 
 const RESULTS_MEDIA_PAGE_SIZE = 100;
@@ -81,6 +85,9 @@ export default function ScanResultsScreen() {
     const { enableAIClassification } = useSettingsStore();
     const permissionScope = useMediaStore(state => state.permissionScope);
     const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion);
+    const photoProcessedIds = useMediaStore(state => state.photoProcessedIds);
+    const deleteQueue = useMediaStore(state => state.deleteQueue);
+    const hasHydrated = useMediaStore(state => state.hasHydrated);
 
     const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'ai'>('blur');
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
@@ -98,7 +105,6 @@ export default function ScanResultsScreen() {
         group: SimilarGroup;
         origin: { x: number; y: number; width: number; height: number };
     } | null>(null);
-    const [processedGroupIds, setProcessedGroupIds] = useState<Set<string>>(new Set());
     const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
 
     // AI Categories Hook
@@ -158,7 +164,7 @@ export default function ScanResultsScreen() {
                 groups.map(async (group) => {
                     const members = await DupGroupRepository.getGroupMembers(group.group_id);
                     const availableMembers = (await Promise.all(
-                        members.map(async member => {
+                        members.filter(member => visiblePhotoIds === undefined || visiblePhotoIds.has(member.asset_id)).map(async member => {
                             try {
                                 const info = await getReadableMediaInfo(member.asset_id);
                                 const uri = info.localUri || info.uri;
@@ -180,7 +186,9 @@ export default function ScanResultsScreen() {
                         item => item.member.asset_id === group.best_asset_id
                     )
                         ? group.best_asset_id
-                        : availableMembers[0].member.asset_id;
+                        : null;
+                    const snapshot = await SimilarReviewRepository.getSnapshot(group.group_id);
+                    const review = snapshot ? await SimilarReviewRepository.getReview(snapshot) : null;
 
                     return {
                         groupId: group.group_id,
@@ -188,6 +196,9 @@ export default function ScanResultsScreen() {
                         memberAssetIds: availableMembers.map(item => item.member.asset_id),
                         bestAssetId,
                         representativeUri: representative.uri,
+                        review,
+                        allAccessible: !!snapshot && snapshot.assets.length === availableMembers.length
+                            && snapshot.assets.every(asset => availableMembers.some(item => item.member.asset_id === asset.asset_id)),
                     };
                 })
             );
@@ -197,8 +208,8 @@ export default function ScanResultsScreen() {
             setSimilarGroups(groupsWithCount.filter((group): group is NonNullable<typeof group> => (
                 group !== null && group.memberCount > 1
             )));
-        } catch (error) {
-            console.error('[ScanResults] Load error:', error);
+        } catch {
+            console.error('[ScanResults] Results could not be loaded.');
             if (requestId === loadRequestIdRef.current) {
                 // A failed refresh must not leave the previous result set
                 // actionable. Clear both surfaces so a transient native,
@@ -276,26 +287,13 @@ export default function ScanResultsScreen() {
         </View>
     );
 
-    // Handle marking a similar group as processed
-    const handleSimilarGroupComplete = () => {
-        if (selectedSimilarGroup) {
-            setProcessedGroupIds(prev => new Set(prev).add(selectedSimilarGroup.group.groupId));
-            // Move processed group to end
-            setSimilarGroups(prev => {
-                const processed = prev.find(g => g.groupId === selectedSimilarGroup.group.groupId);
-                const others = prev.filter(g => g.groupId !== selectedSimilarGroup.group.groupId);
-                return processed ? [...others, processed] : prev;
-            });
-            // Deleting members can remove the group or change its count in
-            // the database; reload so the card is not left stale in memory.
-            void loadResults();
-        }
-    };
+    const isGroupProcessed = (group: SimilarGroup) => hasHydrated && group.allAccessible
+        && isSimilarReviewCurrent(group.review, photoProcessedIds, deleteQueue.map(asset => asset.id));
 
     // Sort similar groups: unprocessed first, processed at end
     const sortedSimilarGroups = [...similarGroups].sort((a, b) => {
-        const aProcessed = processedGroupIds.has(a.groupId) ? 1 : 0;
-        const bProcessed = processedGroupIds.has(b.groupId) ? 1 : 0;
+        const aProcessed = isGroupProcessed(a) ? 1 : 0;
+        const bProcessed = isGroupProcessed(b) ? 1 : 0;
         return aProcessed - bProcessed;
     });
 
@@ -304,7 +302,7 @@ export default function ScanResultsScreen() {
             groupId={item.groupId}
             memberCount={item.memberCount}
             memberAssetIds={item.memberAssetIds}
-            isProcessed={processedGroupIds.has(item.groupId)}
+            isProcessed={isGroupProcessed(item)}
             onPress={(layout) => {
                 if (layout) {
                     setSelectedSimilarGroup({ group: item, origin: layout });
@@ -599,7 +597,7 @@ export default function ScanResultsScreen() {
                     // cannot keep showing its pre-deletion member count.
                     void loadResults();
                 }}
-                onComplete={handleSimilarGroupComplete}
+                onComplete={() => setSelectedSimilarGroup(null)}
             />
 
 

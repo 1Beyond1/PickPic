@@ -9,6 +9,7 @@ import {
     Image,
     Modal,
     Pressable,
+    ScrollView,
     StyleSheet,
     Text,
     View
@@ -17,6 +18,7 @@ import Animated, {
     runOnJS,
     useAnimatedStyle,
     useSharedValue,
+    useReducedMotion,
     withTiming
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -26,12 +28,23 @@ import { useThemeColor } from '../hooks/useThemeColor';
 import { getCurrentlyVisibleAssetIds, useMediaStore } from '../stores/useMediaStore';
 import { getPendingDeletionEntries } from '../services/pendingDeletion';
 import { PendingDeletionButton } from './PendingDeletionReview';
+import { SimilarReviewRepository, isSimilarReviewCurrent } from '../database/repositories/SimilarReviewRepository';
+import type { SimilarGroupSnapshot } from '../database/repositories/SimilarReviewRepository';
+import { keepSimilarPhotos, completeSimilarGroup } from '../services/similarReview';
+import { flushMediaProgress } from '../services/mediaProgressStorage';
+import { readMediaSizes } from '../services/mediaSizes';
+import { SimilarComparison } from './SimilarComparison';
+import { calculateBestShotBreakdown } from '../database/bestShotScoring';
 
 const COLUMN_COUNT = 3;
 
 interface PhotoItem {
     assetId: string;
     uri: string;
+    width: number;
+    height: number;
+    takenAt: number | null;
+    bytes: number | null;
 }
 
 interface SimilarGroupDetailOverlayProps {
@@ -45,12 +58,19 @@ interface SimilarGroupDetailOverlayProps {
 
 export function SimilarGroupDetailOverlay({
     visible,
+    groupId,
     memberAssetIds,
     onClose,
+    onComplete,
 }: SimilarGroupDetailOverlayProps) {
     const insets = useSafeAreaInsets();
     const { colors } = useThemeColor();
     const { t } = useI18n();
+    const translationRef = useRef(t);
+    translationRef.current = t;
+    const reducedMotion = useReducedMotion();
+    const processedIds = useMediaStore(state => state.photoProcessedIds);
+    const pendingPhotos = useMediaStore(state => state.deleteQueue);
 
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
     const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
@@ -59,6 +79,10 @@ export function SimilarGroupDetailOverlay({
     const [previewPhoto, setPreviewPhoto] = useState<PhotoItem | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [queueFeedback, setQueueFeedback] = useState<string | null>(null);
+    const [snapshot, setSnapshot] = useState<SimilarGroupSnapshot | null>(null);
+    const [keptIds, setKeptIds] = useState<Set<string>>(new Set());
+    const [showComparison, setShowComparison] = useState(false);
+    const [showDetails, setShowDetails] = useState(false);
     const isDeletingRef = useRef(false);
     const loadRequestIdRef = useRef(0);
 
@@ -70,35 +94,61 @@ export function SimilarGroupDetailOverlay({
         setIsLoadingPhotos(true);
         setUnavailableCount(0);
         setPhotos([]);
+        setSnapshot(null);
+        setKeptIds(new Set());
+        let groupSnapshot: SimilarGroupSnapshot | null = null;
+        let confirmedKeeps: string[] = [];
+        try {
+            groupSnapshot = await SimilarReviewRepository.getSnapshot(groupId);
+            if (groupSnapshot) {
+                const review = await SimilarReviewRepository.getReview(groupSnapshot);
+                const store = useMediaStore.getState();
+                if (isSimilarReviewCurrent(review, store.photoProcessedIds, store.deleteQueue.map(asset => asset.id))) confirmedKeeps = review!.keptIds;
+            }
+        } catch {
+            // An unreadable saved review is not the same as no review. Keep
+            // previews available, but do not let new decisions overwrite it.
+            groupSnapshot = null;
+            if (requestId === loadRequestIdRef.current) setQueueFeedback(translationRef.current('similar_save_failed'));
+        }
         const items: PhotoItem[] = [];
         for (const assetId of memberAssetIds) {
+            if (requestId !== loadRequestIdRef.current) return;
             try {
-                const info = await getReadableMediaInfo(assetId);
-                if (info.localUri || info.uri) {
+                const info = await getReadableMediaInfo(assetId, 'photo', { shouldDownloadFromNetwork: false });
+                if (info?.id === assetId && info.mediaType === 'photo' && (info.localUri || info.uri)) {
                     items.push({
                         assetId,
                         uri: info.localUri || info.uri,
+                        width: Number.isFinite(info.width) && info.width > 0 ? info.width : 0,
+                        height: Number.isFinite(info.height) && info.height > 0 ? info.height : 0,
+                        takenAt: Number.isFinite(info.creationTime) && info.creationTime > 0 ? info.creationTime : null,
+                        bytes: null,
                     });
                 }
             } catch {
                 // Skip
             }
         }
+        const sizes = await readMediaSizes('photo', items.map(item => item.assetId), () => requestId === loadRequestIdRef.current);
+        if (sizes.status === 'ready') for (const photo of items) photo.bytes = sizes.sizes.get(photo.assetId) ?? null;
         if (requestId === loadRequestIdRef.current) {
             setPhotos(items);
             setUnavailableCount(memberAssetIds.length - items.length);
+            setSnapshot(groupSnapshot);
+            setKeptIds(new Set(confirmedKeeps));
             setIsLoadingPhotos(false);
         }
-    }, [memberAssetIds]);
+    }, [groupId, memberAssetIds]);
 
     const animateClose = useCallback(() => {
         // Exit animation
-        overlayOpacity.value = withTiming(0, { duration: 250 }, (finished) => {
+        overlayOpacity.value = withTiming(0, { duration: reducedMotion ? 0 : 250 }, (finished) => {
             if (finished) {
                 runOnJS(onClose)();
             }
         });
-    }, [onClose, overlayOpacity]);
+    }, [onClose, overlayOpacity, reducedMotion]);
 
     const handleClose = useCallback(() => {
         if (isDeletingRef.current) return;
@@ -111,8 +161,10 @@ export function SimilarGroupDetailOverlay({
             setSelectedIds(new Set());
             setPreviewPhoto(null);
             setQueueFeedback(null);
+            setShowComparison(false);
+            setShowDetails(false);
             // Start enter animation
-            overlayOpacity.value = withTiming(1, { duration: 180 });
+            overlayOpacity.value = withTiming(1, { duration: reducedMotion ? 0 : 180 });
         } else {
             loadRequestIdRef.current += 1;
             setPhotos([]); // Clear on close or an empty group to avoid stale content
@@ -120,9 +172,12 @@ export function SimilarGroupDetailOverlay({
             setUnavailableCount(0);
             setSelectedIds(new Set());
             setPreviewPhoto(null);
+            setSnapshot(null);
+            setKeptIds(new Set());
+            setShowComparison(false);
         }
         return () => { loadRequestIdRef.current += 1; };
-    }, [visible, memberAssetIds, loadPhotos, overlayOpacity]);
+    }, [visible, memberAssetIds, loadPhotos, overlayOpacity, reducedMotion]);
 
     // Handle Back Button
     useEffect(() => {
@@ -162,6 +217,10 @@ export function SimilarGroupDetailOverlay({
 
     const queuePhotos = async (assetIds: readonly string[]) => {
         if (!assetIds.length || isDeletingRef.current) return;
+        const confirmedKeeps = Array.from(keptIds).filter(id => processedIds.includes(id) && !pendingPhotos.some(asset => asset.id === id));
+        if (!confirmedKeeps.length || assetIds.some(id => confirmedKeeps.includes(id))) {
+            setQueueFeedback(t('similar_keep_first')); return;
+        }
         const generation = loadRequestIdRef.current;
         const permissionVersion = useMediaStore.getState().permissionRefreshVersion;
         isDeletingRef.current = true;
@@ -172,22 +231,61 @@ export function SimilarGroupDetailOverlay({
             if (visibleIds.size !== new Set(assetIds).size) throw new Error('Unavailable');
             const assets = await Promise.all(assetIds.map(id => getReadableMediaInfo(id, 'photo', { shouldDownloadFromNetwork: false })));
             if (assets.some((asset, index) => asset?.id !== assetIds[index] || asset.mediaType !== 'photo')) throw new Error('Unavailable');
-            const store = useMediaStore.getState();
+            let store = useMediaStore.getState();
             if (generation !== loadRequestIdRef.current || permissionVersion !== store.permissionRefreshVersion) throw new Error('Access changed');
+            const latest = await SimilarReviewRepository.getSnapshot(groupId);
+            if (!snapshot || latest?.key !== snapshot.key || generation !== loadRequestIdRef.current
+                || permissionVersion !== useMediaStore.getState().permissionRefreshVersion) throw new Error('Group changed');
+            if (!confirmedKeeps.some(id => useMediaStore.getState().photoProcessedIds.includes(id)
+                && !useMediaStore.getState().deleteQueue.some(asset => asset.id === id))) throw new Error('Keep changed');
+            store = useMediaStore.getState();
+            if (!store.hasHydrated || store.isConfirmingDeletion || store.isConfirmingVideoTrash) throw new Error('Busy');
             const before = new Set(getPendingDeletionEntries(store).map(entry => entry.asset.id));
             const added = store.enqueuePendingDeletion(assets, 'similar');
             if (!added && assetIds.some(id => !before.has(id))) throw new Error('Record mutation is blocked');
+            await flushMediaProgress();
+            if (generation !== loadRequestIdRef.current) return;
             setQueueFeedback(t(added ? 'pending_added' : 'pending_already_added'));
             setSelectedIds(new Set());
             setPreviewPhoto(null);
             // Queuing is not physical deletion, nor an explicit decision to keep
             // the remaining members. Group completion is handled separately.
-        } catch { setQueueFeedback(t('pending_add_failed')); }
+        } catch { if (generation === loadRequestIdRef.current) setQueueFeedback(t('pending_add_failed')); }
         finally { isDeletingRef.current = false; setIsDeleting(false); }
     };
     const handleDeleteSelected = () => queuePhotos(Array.from(selectedIds));
     const handleClosePreview = () => { if (!isDeletingRef.current) setPreviewPhoto(null); };
     const handleDeleteFromPreview = () => previewPhoto && queuePhotos([previewPhoto.assetId]);
+    const confirmedKeptIds = Array.from(keptIds).filter(id => processedIds.includes(id) && !pendingPhotos.some(asset => asset.id === id));
+    const allAccessible = !!snapshot && snapshot.assets.length === photos.length
+        && snapshot.assets.every(asset => photos.some(photo => photo.assetId === asset.asset_id));
+    const canComplete = allAccessible && confirmedKeptIds.length > 0 && photos.every(photo => confirmedKeptIds.includes(photo.assetId)
+        || (processedIds.includes(photo.assetId) && pendingPhotos.some(asset => asset.id === photo.assetId)));
+    const keepPhotos = async (ids: readonly string[]) => {
+        if (!snapshot || isDeletingRef.current) return;
+        const generation = loadRequestIdRef.current;
+        isDeletingRef.current = true; setIsDeleting(true); setQueueFeedback(null);
+        try {
+            const result = await keepSimilarPhotos(groupId, snapshot.key, ids, () => generation === loadRequestIdRef.current);
+            if (generation !== loadRequestIdRef.current) return;
+            if (result === 'saved') {
+                setKeptIds(previous => new Set([...previous, ...ids]));
+                setSelectedIds(new Set());
+                setQueueFeedback(t('similar_kept_saved'));
+            } else setQueueFeedback(t(result === 'stale' ? 'similar_group_changed' : 'similar_save_failed'));
+        } finally { isDeletingRef.current = false; setIsDeleting(false); }
+    };
+    const finish = async () => {
+        if (!snapshot || !canComplete || isDeletingRef.current) return;
+        const generation = loadRequestIdRef.current;
+        isDeletingRef.current = true; setIsDeleting(true); setQueueFeedback(null);
+        try {
+            const result = await completeSimilarGroup(groupId, snapshot.key, confirmedKeptIds, () => generation === loadRequestIdRef.current);
+            if (generation !== loadRequestIdRef.current) return;
+            if (result === 'saved') { onComplete(); onClose(); }
+            else setQueueFeedback(t(result === 'stale' ? 'similar_group_changed' : 'similar_save_failed'));
+        } finally { isDeletingRef.current = false; setIsDeleting(false); }
+    };
 
     const renderPhotoItem = ({ item, index }: { item: PhotoItem; index: number }) => {
         const isSelected = selectedIds.has(item.assetId);
@@ -212,6 +310,8 @@ export function SimilarGroupDetailOverlay({
                         <Ionicons name="checkmark" size={16} color={colors.actionForeground} />
                     </View>
                 )}
+                {confirmedKeptIds.includes(item.assetId) && <View style={[styles.keptBadge, { backgroundColor: colors.surface }]}><Text style={[styles.badgeText, { color: colors.success }]}>{t('similar_kept')}</Text></View>}
+                {snapshot?.recommendedAssetId === item.assetId && !confirmedKeptIds.includes(item.assetId) && <View style={[styles.keptBadge, { backgroundColor: colors.surface }]}><Text style={[styles.badgeText, { color: colors.text }]}>{t('similar_recommended')}</Text></View>}
             </Pressable>
         );
     };
@@ -237,18 +337,6 @@ export function SimilarGroupDetailOverlay({
                         {selectedIds.size > 0 ? t('similar_selected_count', { count: selectedIds.size }) : t('scan_photo_count', { count: isLoadingPhotos || (photos.length === 0 && unavailableCount > 0) ? memberAssetIds.length : photos.length })}
                     </Text>
                 </View>
-                {selectedIds.size > 0 && (
-                    <Pressable
-                        style={[styles.deleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
-                        onPress={handleDeleteSelected}
-                        disabled={isDeleting}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('pending_add')}
-                        accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
-                    >
-                        <Ionicons name="trash-outline" size={20} color={colors.dangerForeground} />
-                    </Pressable>
-                )}
                 <PendingDeletionButton />
                 <Pressable
                     style={[styles.closeButton, isDeleting && { opacity: 0.5 }]}
@@ -273,6 +361,34 @@ export function SimilarGroupDetailOverlay({
                     keyExtractor={(item) => item.assetId}
                     numColumns={COLUMN_COUNT}
                     contentContainerStyle={styles.grid}
+                    ListHeaderComponent={photos.length > 0 ? <View style={styles.groupActions}>
+                        <Text style={[styles.readMessage, { color: colors.textSecondary }]}>{t('similar_flow_hint')}</Text>
+                        {photos.length > 1 && <Pressable accessibilityRole="button" accessibilityLabel={t('similar_compare')}
+                            disabled={isDeleting} onPress={() => setShowComparison(true)} style={[styles.retryButton, { backgroundColor: colors.surfaceHover }]}>
+                            <Text style={[styles.retryText, { color: colors.text }]}>{t('similar_compare')}</Text>
+                        </Pressable>}
+                        {selectedIds.size > 0 && <>
+                            <Pressable accessibilityRole="button" accessibilityLabel={t('similar_keep_selected')} disabled={isDeleting || !snapshot}
+                                onPress={() => void keepPhotos(Array.from(selectedIds))} style={[styles.retryButton, { backgroundColor: colors.actionBackground }]}>
+                                <Text style={[styles.retryText, { color: colors.actionForeground }]}>{t('similar_keep_selected')}</Text>
+                            </Pressable>
+                            <Pressable accessibilityRole="button" accessibilityLabel={t('pending_add')}
+                                accessibilityState={{ disabled: isDeleting || !confirmedKeptIds.length || Array.from(selectedIds).some(id => confirmedKeptIds.includes(id)), busy: isDeleting }}
+                                disabled={isDeleting || !confirmedKeptIds.length || Array.from(selectedIds).some(id => confirmedKeptIds.includes(id))}
+                                onPress={handleDeleteSelected} style={[styles.retryButton, { backgroundColor: colors.dangerBackground }]}>
+                                <Text style={[styles.retryText, { color: colors.dangerForeground }]}>{t('pending_add')}</Text>
+                            </Pressable>
+                        </>}
+                        {!allAccessible && <Text accessibilityLiveRegion="polite" style={[styles.readMessage, { color: colors.textSecondary }]}>{t('similar_incomplete_access')}</Text>}
+                    </View> : null}
+                    ListFooterComponent={photos.length > 0 ? <View style={styles.groupActions}>
+                        <Pressable accessibilityRole="button" accessibilityLabel={t('similar_finish')} disabled={isDeleting || !canComplete}
+                            accessibilityState={{ disabled: isDeleting || !canComplete, busy: isDeleting }} onPress={() => void finish()}
+                            style={[styles.retryButton, { backgroundColor: colors.actionBackground, opacity: canComplete && !isDeleting ? 1 : 0.5 }]}>
+                            <Text style={[styles.retryText, { color: colors.actionForeground }]}>{t('similar_finish')}</Text>
+                        </Pressable>
+                        <Text style={[styles.readMessage, { color: colors.textSecondary }]}>{t('similar_finish_hint')}</Text>
+                    </View> : null}
                     ListEmptyComponent={isLoadingPhotos ? (
                         <ActivityIndicator color={colors.primary} style={styles.readState} />
                     ) : unavailableCount > 0 ? (
@@ -288,7 +404,7 @@ export function SimilarGroupDetailOverlay({
 
             {/* Preview Modal */}
             {previewPhoto && (
-                <Modal visible={true} transparent animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={handleClosePreview}>
+                <Modal visible={true} transparent animationType={reducedMotion ? 'none' : 'fade'} statusBarTranslucent navigationBarTranslucent onRequestClose={handleClosePreview}>
                     <View accessibilityViewIsModal testID="similar-preview" style={[styles.previewOverlay, {
                         backgroundColor: colors.background,
                         paddingTop: insets.top + 8,
@@ -311,23 +427,56 @@ export function SimilarGroupDetailOverlay({
                             <Pressable
                                 style={[styles.previewDeleteButton, { backgroundColor: colors.dangerBackground }, isDeleting && { opacity: 0.5 }]}
                                 onPress={handleDeleteFromPreview}
-                                disabled={isDeleting}
+                                disabled={isDeleting || !confirmedKeptIds.length || confirmedKeptIds.includes(previewPhoto.assetId)}
                                 accessibilityRole="button"
                                 accessibilityLabel={t('pending_add')}
-                                accessibilityState={{ disabled: isDeleting, busy: isDeleting }}
+                                accessibilityState={{ disabled: isDeleting || !confirmedKeptIds.length || confirmedKeptIds.includes(previewPhoto.assetId), busy: isDeleting }}
                             >
                                 <Ionicons name="trash-outline" size={20} color={colors.dangerForeground} />
                             </Pressable>
                         </View>
-                        <Text style={[styles.hint, { color: colors.textSecondary }]}>{t('pending_keep_hint')}</Text>
+                        <ScrollView contentContainerStyle={styles.previewContent}>
+                            <Pressable accessibilityRole="button" accessibilityLabel={t('similar_keep_photo')} disabled={isDeleting || !snapshot}
+                                onPress={() => void keepPhotos([previewPhoto.assetId])} style={[styles.retryButton, { backgroundColor: colors.actionBackground }]}>
+                                <Text style={[styles.retryText, { color: colors.actionForeground }]}>{t('similar_keep_photo')}</Text>
+                            </Pressable>
+                            {queueFeedback && <Text accessibilityLiveRegion="polite" style={[styles.readMessage, { color: colors.textSecondary }]}>{queueFeedback}</Text>}
+                            <Text style={[styles.hint, { color: colors.textSecondary }]}>{t('pending_keep_hint')}</Text>
+                            <Pressable accessibilityRole="button" accessibilityLabel={t('similar_details')} accessibilityState={{ expanded: showDetails }}
+                                onPress={() => setShowDetails(value => !value)} style={styles.retryButton}>
+                                <Text style={[styles.retryText, { color: colors.text }]}>{t('similar_details')}</Text>
+                            </Pressable>
+                            {showDetails && <SimilarDetails photo={previewPhoto} snapshot={snapshot} />}
                         <View style={styles.previewMedia}>
                             <SimilarPhotoPreview key={`${previewPhoto.assetId}:${previewPhoto.uri}`} photo={previewPhoto} />
                         </View>
+                        </ScrollView>
                     </View>
                 </Modal>
             )}
+            {showComparison && photos.length > 1 && <SimilarComparison photos={photos} recommendedId={snapshot?.recommendedAssetId ?? null} onClose={() => setShowComparison(false)} />}
         </Animated.View>
     );
+}
+
+function SimilarDetails({ photo, snapshot }: { photo: PhotoItem; snapshot: SimilarGroupSnapshot | null }) {
+    const { colors } = useThemeColor();
+    const { t, language } = useI18n();
+    const asset = snapshot?.assets.find(item => item.asset_id === photo.assetId);
+    const breakdown = asset ? calculateBestShotBreakdown(asset) : null;
+    const unknown = t('similar_unknown');
+    const info = [
+        t('similar_date', { value: photo.takenAt === null ? unknown : new Date(photo.takenAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US') }),
+        t('similar_resolution', { value: photo.width > 0 && photo.height > 0 ? `${photo.width} × ${photo.height}` : unknown }),
+        t('similar_size', { value: photo.bytes === null ? unknown : `${(photo.bytes / 1024 / 1024).toFixed(2)} MB` }),
+    ];
+    if (asset && breakdown) {
+        info.push(t('similar_sharpness', { value: asset.blur_score === null ? unknown : `${asset.blur_score.toFixed(1)} / ${breakdown.sharpness.toFixed(1)}` }));
+        info.push(t('similar_lighting', { value: asset.mean_luma === null ? unknown : `${asset.mean_luma.toFixed(1)} / ${breakdown.lighting.toFixed(1)}` }));
+        info.push(t('similar_resolution_score', { value: asset.width && asset.height ? breakdown.resolution.toFixed(1) : unknown }));
+        info.push(t('similar_score_hint'));
+    }
+    return <View style={styles.details}>{info.map(text => <Text key={text} style={[styles.detailText, { color: colors.textSecondary }]}>{text}</Text>)}</View>;
 }
 
 /** Keep a failed decoder from looking like an empty, successfully loaded preview. */
@@ -366,6 +515,12 @@ function SimilarPhotoPreview({ photo }: { photo: PhotoItem }) {
 }
 
 const styles = StyleSheet.create({
+    groupActions: { paddingVertical: 12, gap: 12 },
+    keptBadge: { position: 'absolute', left: 4, bottom: 4, paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4, maxWidth: '94%' },
+    badgeText: { ...TYPOGRAPHY.caption },
+    details: { paddingHorizontal: 8, gap: 6 },
+    detailText: { ...TYPOGRAPHY.secondary },
+    previewContent: { flexGrow: 1, paddingHorizontal: UI_METRICS.pageInset, paddingBottom: 24, gap: 12 },
     readState: { alignItems: 'center', paddingHorizontal: UI_METRICS.pageInset, paddingVertical: 24, gap: 20 },
     readMessage: { ...TYPOGRAPHY.body, textAlign: 'center' },
     retryButton: { minHeight: UI_METRICS.buttonHeight, borderRadius: UI_METRICS.buttonRadius, paddingHorizontal: 24, paddingVertical: 14, justifyContent: 'center', alignItems: 'center' },
@@ -433,7 +588,7 @@ const styles = StyleSheet.create({
     },
     previewHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: UI_METRICS.pageInset, paddingBottom: 12 },
     previewTitle: { ...TYPOGRAPHY.sectionTitle, flex: 1, minWidth: 0 },
-    previewMedia: { flex: 1, minHeight: 0 },
+    previewMedia: { flex: 1, minHeight: 300 },
     previewClose: {
         minWidth: 44,
         minHeight: 44,

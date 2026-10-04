@@ -7,7 +7,15 @@ const mockMediaState = {
   permissionScope: 'full', mediaLibraryRefreshVersion: 0,
   removeDeletedAssets: jest.fn(),
   deleteQueue: [], videoTrashBin: [], pendingDeletionInfo: {}, enqueuePendingDeletion: jest.fn(() => 1),
+  photoProcessedIds: [] as string[], hasHydrated: true,
 };
+const mockGetSimilarSnapshot = jest.fn(async (..._args: any[]): Promise<any> => null);
+const mockGetSimilarReview = jest.fn(async (..._args: any[]): Promise<any> => null);
+jest.mock('../database/db', () => ({ getDatabase: jest.fn(), withTransaction: jest.fn() }));
+jest.mock('../database/repositories/SimilarReviewRepository', () => ({
+  SimilarReviewRepository: { getSnapshot: (...args: any[]) => mockGetSimilarSnapshot(...args), getReview: (...args: any[]) => mockGetSimilarReview(...args) },
+  isSimilarReviewCurrent: jest.requireActual('../database/repositories/SimilarReviewRepository').isSimilarReviewCurrent,
+}));
 const mockRefreshAI = jest.fn().mockResolvedValue(undefined);
 const mockRouter = { navigate: jest.fn() };
 const mockCategory = {

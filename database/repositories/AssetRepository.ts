@@ -13,6 +13,7 @@ import {
     repairFaceDataInDatabase,
 } from './FaceRepository';
 import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
+import { removeSimilarReviewsForAssets } from './SimilarReviewRepository';
 
 export interface AssetRecord {
     asset_id: string;
@@ -107,6 +108,7 @@ async function removeAssetsAndDerivedDataInDatabase(
         const batch = uniqueAssetIds.slice(i, i + 500);
         const placeholders = batch.map(() => '?').join(', ');
 
+        await removeSimilarReviewsForAssets(db, batch);
         await db.runAsync(
             `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
             batch

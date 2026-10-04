@@ -1,12 +1,24 @@
 /**
  * Database Schema Constants for AI Scanner Engine
- * Version: 4 (real pixel-based image analysis)
+ * Schema migrations are versioned independently from image analysis.
  */
 
 export const DB_NAME = 'pickpic_scanner.db';
 
 export const GLOBAL_ALGO_VERSION = 4;
 export const AI_ALGO_VERSION = 1;
+
+// Explicit similar-group decisions live inside the keyed scanner database,
+// not in a second plaintext preference store. Membership, not group ID,
+// identifies a review: the scanner can recreate group IDs on a rescan.
+export const SQL_CREATE_SIMILAR_REVIEWS = `
+  CREATE TABLE IF NOT EXISTS similar_reviews (
+    snapshot_key TEXT PRIMARY KEY,
+    kept_ids_json TEXT NOT NULL,
+    pending_ids_json TEXT NOT NULL,
+    reviewed_at INTEGER NOT NULL
+  );
+`;
 
 // AI completion is independent from the base analysis / duplicate groups.
 export const SQL_CREATE_AI_ANALYSIS = `

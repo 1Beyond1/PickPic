@@ -1,12 +1,26 @@
 import React from 'react';
-import { act, fireEvent, renderAsync, screen, waitFor, within } from '@testing-library/react-native';
+import { act, cleanup, fireEvent, renderAsync, screen, waitFor, within } from '@testing-library/react-native';
 import { FlatList, Modal, StyleSheet } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 
 let mockBottomInset = 24;
 const mockRemoveDeletedAssets = jest.fn();
 const mockEnqueuePending = jest.fn(() => 1);
-const mockMediaState = { deleteQueue: [], videoTrashBin: [], pendingDeletionInfo: {}, enqueuePendingDeletion: mockEnqueuePending, removeDeletedAssets: mockRemoveDeletedAssets };
+const mockMediaState = { deleteQueue: [] as any[], videoTrashBin: [], photoProcessedIds: [] as string[], hasHydrated: true,
+  pendingDeletionInfo: {}, enqueuePendingDeletion: mockEnqueuePending, removeDeletedAssets: mockRemoveDeletedAssets };
+const mockSnapshot = jest.fn();
+const mockReview = jest.fn();
+const mockKeep = jest.fn();
+const mockComplete = jest.fn();
+jest.mock('../../database/repositories/SimilarReviewRepository', () => ({
+  SimilarReviewRepository: { getSnapshot: (...args: any[]) => mockSnapshot(...args), getReview: (...args: any[]) => mockReview(...args) },
+  isSimilarReviewCurrent: jest.requireActual('../../database/repositories/SimilarReviewRepository').isSimilarReviewCurrent,
+}));
+jest.mock('../../services/similarReview', () => ({ keepSimilarPhotos: (...args: any[]) => mockKeep(...args), completeSimilarGroup: (...args: any[]) => mockComplete(...args) }));
+jest.mock('../../services/mediaSizes', () => ({ readMediaSizes: jest.fn(async () => ({ status: 'unavailable', sizes: new Map() })) }));
+jest.mock('../../services/mediaProgressStorage', () => ({ flushMediaProgress: jest.fn(async () => {}) }));
+jest.mock('../../components/SimilarComparison', () => ({ SimilarComparison: ({ onClose }: any) =>
+  require('react').createElement(require('react-native').Pressable, { testID: 'similar-comparison', accessibilityRole: 'button', accessibilityLabel: 'Close comparison', onPress: onClose }) }));
 jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn(), deleteAssetsAsync: jest.fn() }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 60, bottom: mockBottomInset, left: 0, right: 0 }),
@@ -17,6 +31,7 @@ jest.mock('../../hooks/useThemeColor', () => ({ useThemeColor: () => ({
   colors: require('../../constants/theme').COLORS_DARK, isDark: true,
 }) }));
 jest.mock('../../database', () => ({ AssetRepository: { removeAssetAndDerivedData: jest.fn() } }));
+jest.mock('../../database/db', () => ({ getDatabase: jest.fn(), withTransaction: jest.fn() }));
 jest.mock('../../stores/useMediaStore', () => ({
   useMediaStore: Object.assign((selector: any) => selector(mockMediaState), { getState: () => mockMediaState }),
   getCurrentlyVisibleAssetIds: jest.fn(async (ids: string[]) => new Set(ids)),
@@ -31,6 +46,7 @@ jest.mock('react-native-reanimated', () => ({
     callback?.(true); return value;
   },
   runOnJS: (callback: unknown) => callback,
+  useReducedMotion: () => false,
   Easing: { bezier: () => (value: number) => value },
 }));
 
@@ -42,10 +58,37 @@ const props = {
 };
 
 beforeEach(() => {
+  jest.useFakeTimers();
   mockBottomInset = 24;
   (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` }));
   (MediaLibrary.deleteAssetsAsync as jest.Mock).mockResolvedValue(false);
+  mockMediaState.deleteQueue = [];
+  mockMediaState.photoProcessedIds = [];
+  mockSnapshot.mockResolvedValue({ key: 'snapshot', recommendedAssetId: 'first', assets: ['first', 'second', 'third'].map(asset_id => ({ asset_id, width: 1200, height: 900, taken_at: 100, blur_score: 250, mean_luma: 140 })) });
+  mockReview.mockResolvedValue(null);
+  mockKeep.mockImplementation(async (_group: string, _key: string, ids: string[]) => {
+    mockMediaState.photoProcessedIds = [...new Set([...mockMediaState.photoProcessedIds, ...ids])];
+    mockMediaState.deleteQueue = mockMediaState.deleteQueue.filter(asset => !ids.includes(asset.id)); return 'saved';
+  });
+  mockComplete.mockResolvedValue('saved');
+  mockEnqueuePending.mockImplementation((assets?: any[]) => {
+    for (const asset of assets ?? []) {
+      mockMediaState.deleteQueue.push(asset); mockMediaState.photoProcessedIds.push(asset.id);
+    }
+    return 1;
+  });
 });
+afterEach(async () => {
+  await act(async () => { jest.runOnlyPendingTimers(); });
+  cleanup();
+  jest.useRealTimers();
+});
+
+async function keepPhoto(index = 1) {
+  fireEvent.press(screen.getAllByRole('button', { name: 'similar_photo' })[index]);
+  await act(async () => { fireEvent.press(within(screen.getByTestId('similar-preview')).getByRole('button', { name: 'similar_keep_photo' })); });
+  fireEvent.press(within(screen.getByTestId('similar-preview')).getByRole('button', { name: 'close' }));
+}
 
 it.each(['rejected', 'no-uri'])('explains %s group members and retries without completing or deleting the group', async failure => {
   if (failure === 'rejected') (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValue(new Error('Provider unavailable'));
@@ -53,7 +96,7 @@ it.each(['rejected', 'no-uri'])('explains %s group members and retries without c
   await renderAsync(<SimilarGroupDetailOverlay {...props} />);
   await screen.findByText('photos_load_failed');
   expect(mockEnqueuePending).not.toHaveBeenCalled();
-  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` }));
   fireEvent.press(screen.getByRole('button', { name: 'retry' }));
   await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
   expect(screen.queryByText('photos_load_failed')).toBeNull();
@@ -139,7 +182,7 @@ it('names the group close and selected-delete icon controls and provides reachab
   const firstPhoto = screen.UNSAFE_root.findAll((node: { props: any }) => typeof node.props.onLongPress === 'function')[0];
   fireEvent(firstPhoto!, 'longPress');
   const deleteButton = screen.getByRole('button', { name: 'pending_add' });
-  expect(StyleSheet.flatten(deleteButton.props.style)).toMatchObject({ minWidth: 44, minHeight: 44 });
+  expect(StyleSheet.flatten(deleteButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
   fireEvent.press(close);
   expect(props.onClose).toHaveBeenCalledTimes(1);
   expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
@@ -152,7 +195,7 @@ it('names preview actions and allows closing without deleting or losing the grou
   fireEvent.press(firstPhoto!);
   const close = within(screen.getByTestId('similar-preview')).getByRole('button', { name: 'close' });
   expect(StyleSheet.flatten(close.props.style)).toMatchObject({ minWidth: 44, minHeight: 44 });
-  expect(screen.getByRole('button', { name: 'pending_add' }).props.accessibilityState).toMatchObject({ disabled: false, busy: false });
+  expect(screen.getByRole('button', { name: 'pending_add' }).props.accessibilityState).toMatchObject({ disabled: true, busy: false });
   expect(within(screen.getByTestId('similar-preview')).getByText('pending_keep_hint')).toBeTruthy();
   fireEvent.press(close);
   expect(screen.queryByTestId('similar-preview')).toBeNull();
@@ -166,7 +209,7 @@ it('discards a delayed old group lookup after closing and opening a different gr
   const view = await renderAsync(<SimilarGroupDetailOverlay {...props} />);
   await view.rerenderAsync(<SimilarGroupDetailOverlay {...props} visible={false} />);
   await view.rerenderAsync(<SimilarGroupDetailOverlay {...props} groupId="new-group" memberAssetIds={['new-photo']} />);
-  await waitFor(() => expect(screen.UNSAFE_getByType(FlatList).props.data).toEqual([
+  await waitFor(() => expect(screen.UNSAFE_getByType(FlatList).props.data).toMatchObject([
     { assetId: 'new-photo', uri: 'file:///new-photo.jpg' },
   ]));
   await act(async () => { resolveOld({ uri: 'file:///old.jpg' }); });
@@ -176,6 +219,7 @@ it('discards a delayed old group lookup after closing and opening a different gr
 it('locks during a queue preflight without issuing system deletion, then adds the selected photo once', async () => {
   await renderAsync(<SimilarGroupDetailOverlay {...props} />);
   await waitFor(() => expect(screen.UNSAFE_getByType(FlatList).props.data).toHaveLength(2));
+  await keepPhoto();
   let resolve!: (info: unknown) => void;
   (MediaLibrary.getAssetInfoAsync as jest.Mock).mockReturnValueOnce(new Promise(done => { resolve = done; }));
   fireEvent(screen.getAllByRole('button', { name: 'similar_photo' })[0], 'longPress');
@@ -195,6 +239,7 @@ it('locks during a queue preflight without issuing system deletion, then adds th
 it('retains the complete selection if one selected item becomes unavailable before queueing', async () => {
   await renderAsync(<SimilarGroupDetailOverlay {...props} memberAssetIds={['first', 'second', 'third']} />);
   await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(3));
+  await keepPhoto(2);
   const [first, second] = screen.getAllByRole('button', { name: 'similar_photo' });
   fireEvent(first, 'longPress');
   fireEvent.press(second);
@@ -234,9 +279,10 @@ it('explains selection and exposes photo selection state without changing media 
   expect(props.onComplete).not.toHaveBeenCalled();
 });
 
-it('queues only the previewed photo and does not implicitly keep the remaining group member', async () => {
+it('queues only the previewed photo after an explicit keep, without implicitly keeping any further member', async () => {
   await renderAsync(<SimilarGroupDetailOverlay {...props} />);
   await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
+  await keepPhoto();
   fireEvent.press(screen.getAllByRole('button', { name: 'similar_photo' })[0]);
   await act(async () => { fireEvent.press(within(screen.getByTestId('similar-preview')).getByRole('button', { name: 'pending_add' })); });
   expect(mockEnqueuePending).toHaveBeenCalledWith([expect.objectContaining({ id: 'first' })], 'similar');
@@ -244,4 +290,61 @@ it('queues only the previewed photo and does not implicitly keep the remaining g
   expect(screen.UNSAFE_getByType(FlatList).props.data).toHaveLength(2);
   expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
   expect(props.onComplete).not.toHaveBeenCalled();
+});
+
+it('never treats recommendation, opening a comparison or selecting photos as a keep decision', async () => {
+  await renderAsync(<SimilarGroupDetailOverlay {...props} />);
+  await screen.findByText('similar_recommended');
+  fireEvent.press(screen.getByRole('button', { name: 'similar_compare' }));
+  expect(screen.getByTestId('similar-comparison')).toBeTruthy();
+  fireEvent.press(screen.getByRole('button', { name: 'Close comparison' }));
+  fireEvent(screen.getAllByRole('button', { name: 'similar_photo' })[0], 'longPress');
+  expect(screen.getByRole('button', { name: 'pending_add' })).toBeDisabled();
+  expect(mockKeep).not.toHaveBeenCalled();
+  expect(mockComplete).not.toHaveBeenCalled();
+});
+
+it('keeps media readable but blocks decisions when the saved group review cannot be read', async () => {
+  mockReview.mockRejectedValue(new Error('Unreadable saved review'));
+  await renderAsync(<SimilarGroupDetailOverlay {...props} />);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
+  expect(screen.getByText('similar_save_failed')).toBeTruthy();
+  fireEvent.press(screen.getAllByRole('button', { name: 'similar_photo' })[0]);
+  expect(within(screen.getByTestId('similar-preview')).getByRole('button', { name: 'similar_keep_photo' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'similar_finish' })).toBeDisabled();
+  expect(mockKeep).not.toHaveBeenCalled();
+  expect(mockComplete).not.toHaveBeenCalled();
+});
+
+it('requires complete accessible membership and actual decisions before explicit completion', async () => {
+  mockSnapshot.mockResolvedValue({ key: 'snapshot', recommendedAssetId: 'first', assets: ['first', 'second'].map(asset_id => ({ asset_id })) });
+  await renderAsync(<SimilarGroupDetailOverlay {...props} />);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
+  expect(screen.getByRole('button', { name: 'similar_finish' })).toBeDisabled();
+  await keepPhoto(0);
+  expect(screen.getByRole('button', { name: 'similar_finish' })).toBeDisabled();
+  fireEvent(screen.getAllByRole('button', { name: 'similar_photo' })[1], 'longPress');
+  await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'pending_add' })); });
+  expect(props.onComplete).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'similar_finish' })).toBeEnabled();
+  await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'similar_finish' })); });
+  expect(mockComplete).toHaveBeenCalledWith('group', 'snapshot', ['first'], expect.any(Function));
+  expect(props.onComplete).toHaveBeenCalledTimes(1);
+  expect(props.onClose).toHaveBeenCalledTimes(1);
+  expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+});
+
+it('does not complete or exit after save failure and retains the existing decision choices', async () => {
+  mockSnapshot.mockResolvedValue({ key: 'snapshot', recommendedAssetId: null, assets: ['first', 'second'].map(asset_id => ({ asset_id })) });
+  mockComplete.mockResolvedValue('failed');
+  await renderAsync(<SimilarGroupDetailOverlay {...props} />);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
+  fireEvent(screen.getAllByRole('button', { name: 'similar_photo' })[0], 'longPress');
+  fireEvent.press(screen.getAllByRole('button', { name: 'similar_photo' })[1]);
+  await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'similar_keep_selected' })); });
+  await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'similar_finish' })); });
+  expect(screen.getByText('similar_save_failed')).toBeTruthy();
+  expect(props.onClose).not.toHaveBeenCalled();
+  expect(props.onComplete).not.toHaveBeenCalled();
+  expect(screen.getAllByText('similar_kept')).toHaveLength(2);
 });

@@ -188,6 +188,7 @@ interface MediaState {
     confirmPendingDeletion: (assetIds?: readonly string[]) => Promise<PendingDeletionResult>;
     markForCollection: (asset: PhotoAsset) => void;
     markAsSkipped: (asset: PhotoAsset) => void;
+    keepPhotosFromSimilar: (assets: readonly PhotoAsset[]) => boolean;
     undoAction: (assetId: string) => void;
     changeRecentDecision: (eventId: string, action: 'undo' | 'keep' | 'pending') => Promise<RecentDecisionResult>;
     keepPhotoFromDeleteQueue: (assetId: string) => boolean;
@@ -1207,6 +1208,36 @@ export const useMediaStore = create<MediaState>()(
             return withRecentDecision(state, { photoProcessedIds: [...state.photoProcessedIds, asset.id],
                 organizingSessions: advancePhotoSession({ ...state, organizingSessions: sessions }, new Set([...state.photoProcessedIds, asset.id])) }, 'photo', asset.id);
         });
+    },
+
+    keepPhotosFromSimilar: (assets) => {
+        if (!assets.length || assets.some(asset => !asset?.id || asset.mediaType !== 'photo')) return false;
+        const ids = new Set(assets.map(asset => asset.id));
+        let accepted = false;
+        set(state => {
+            if (!state.hasHydrated || state.isConfirmingDeletion || state.isConfirmingVideoTrash
+                || isRecordTransferActive() || usePrivacyStore.getState().failures.records) return state;
+            accepted = true;
+            const processed = new Set([...state.photoProcessedIds, ...ids]);
+            const deleteQueue = state.deleteQueue.filter(asset => !ids.has(asset.id));
+            let sessions = state.organizingSessions;
+            for (const id of ids) sessions = clearDeferredDecision(sessions, 'photo', id);
+            let next: Partial<MediaState> = {
+                photoProcessedIds: [...processed], deleteQueue,
+                pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue }),
+                organizingSessions: advancePhotoSession({ ...state, organizingSessions: sessions }, processed),
+                hiddenPhotoQueuedAssetIds: state.permissionScope === 'full' ? null
+                    : retainHiddenQueuedAssetIds(state.hiddenPhotoQueuedAssetIds, [
+                        ...deleteQueue.map(asset => asset.id), ...state.collectionQueue.map(asset => asset.id),
+                    ]),
+                lastDeletionResult: null,
+            };
+            // Keep existing collection choices; this action cancels deletion,
+            // not collection. Each changed decision remains individually undoable.
+            for (const id of ids) next = withRecentDecision(state, next, 'photo', id);
+            return next;
+        });
+        return accepted;
     },
 
     keepPendingDeletion: (assetId) => {

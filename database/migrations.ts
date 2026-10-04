@@ -18,9 +18,10 @@ import {
     SQL_CREATE_META,
     SQL_CREATE_AI_ANALYSIS,
     AI_ALGO_VERSION,
+    SQL_CREATE_SIMILAR_REVIEWS,
 } from './schema';
 
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 
 /**
  * Run all migrations to bring database to current version
@@ -57,6 +58,14 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
                 FROM assets WHERE status = 1 AND labels_json IS NOT NULL
                 AND CASE WHEN json_valid(labels_json) THEN json_type(labels_json) = 'array' ELSE 0 END`, [AI_ALGO_VERSION]);
             await setSchemaVersion(db, 4);
+        });
+    }
+    if (schemaVersion < 5) {
+        await db.withTransactionAsync(async () => {
+            await db.execAsync(SQL_CREATE_SIMILAR_REVIEWS);
+            // Legacy in-memory flags did not record explicit decisions and
+            // cannot be migrated as confirmed reviews.
+            await setSchemaVersion(db, 5);
         });
     }
 }

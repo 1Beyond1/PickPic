@@ -10,6 +10,7 @@ import {
   SQL_CREATE_FACE_INSTANCES_INDEXES,
   SQL_CREATE_META,
   SQL_CREATE_AI_ANALYSIS,
+  SQL_CREATE_SIMILAR_REVIEWS,
 } from '../../database/schema';
 
 type SqlValue = string | number | null;
@@ -37,6 +38,7 @@ export class TestDatabase {
       SQL_CREATE_FACE_GROUPS,
       SQL_CREATE_FACE_INSTANCES,
       SQL_CREATE_AI_ANALYSIS,
+      SQL_CREATE_SIMILAR_REVIEWS,
       ...SQL_CREATE_ASSETS_INDEXES,
       ...SQL_CREATE_DUP_MEMBERS_INDEXES,
       ...SQL_CREATE_FACE_INSTANCES_INDEXES,

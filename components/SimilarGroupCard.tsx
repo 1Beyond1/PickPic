@@ -3,7 +3,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import * as MediaLibrary from 'expo-media-library';
+import { getReadableMediaInfo } from '../services/readableMedia';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
@@ -26,7 +26,9 @@ export function SimilarGroupCard({
 }: SimilarGroupCardProps) {
     const { colors } = useThemeColor();
     const { t } = useI18n();
-    const [thumbnails, setThumbnails] = useState<string[]>([]);
+    const thumbnailKey = JSON.stringify(memberAssetIds.slice(0, 4));
+    const [thumbnailSnapshot, setThumbnailSnapshot] = useState<{ key: string; uris: string[] } | null>(null);
+    const thumbnails = thumbnailSnapshot?.key === thumbnailKey ? thumbnailSnapshot.uris : [];
     const containerRef = React.useRef<View>(null);
     const loadRequestIdRef = React.useRef(0);
 
@@ -38,13 +40,14 @@ export function SimilarGroupCard({
 
     const loadThumbnails = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
+        setThumbnailSnapshot(null);
         const uris: string[] = [];
         // Keep the existing small thumbnail lookup snapshot.
         const idsToLoad = memberAssetIds.slice(0, 4);
         for (const assetId of idsToLoad) {
             try {
-                const info = await MediaLibrary.getAssetInfoAsync(assetId);
-                if (info.localUri || info.uri) {
+                const info = await getReadableMediaInfo(assetId, 'photo', { shouldDownloadFromNetwork: false });
+                if (info?.id === assetId && info.mediaType === 'photo' && (info.localUri || info.uri)) {
                     uris.push(info.localUri || info.uri);
                 }
             } catch {
@@ -52,9 +55,9 @@ export function SimilarGroupCard({
             }
         }
         if (requestId === loadRequestIdRef.current) {
-            setThumbnails(uris);
+            setThumbnailSnapshot({ key: thumbnailKey, uris });
         }
-    }, [memberAssetIds]);
+    }, [memberAssetIds, thumbnailKey]);
 
     useEffect(() => {
         loadThumbnails();
