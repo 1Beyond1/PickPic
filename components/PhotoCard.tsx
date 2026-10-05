@@ -216,7 +216,9 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                         source={{ uri: photo.uri }}
                         style={styles.image}
                         contentFit="contain"
-                        transition={reducedMotion ? 0 : 150}
+                        // Cached deck images can reload during sizing and undo. Avoid
+                        // overlapping native crossfades; gesture motion stays animated.
+                        transition={0}
                     />
                 </View>
             </Animated.View>

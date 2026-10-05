@@ -43,6 +43,8 @@ Android 配置禁止应用自动备份，并在云备份及设备迁移规则中
 
 `npm ci` / `npm install` 的 postinstall 执行 `scripts/apply-privacy-patches.js`。当前覆盖 ML Kit core / face-detection / image-labeling 5.0.0 和 expo-media-library 18.2.1 的 12 个完整源码或编译 JS 文件；支持重复执行。使用 `node scripts/apply-privacy-patches.js --check` 验证安装结果，不写入文件。禁用安装脚本的环境必须显式应用补丁并检查后再构建。
 
+Android 的 `package.json` 自动链接配置要求 `expo-media-library` 与 `expo-image` 从源码构建。否则 Expo 预编译库可能绕过本地媒体日志补丁，或带入详细图片加载日志。图片模块沿用其默认 `ALLOW_GLIDE_LOGS=false`，不要开启 `EXPO_ALLOW_GLIDE_LOGS`；验收应核对自动链接解析、实际 Gradle 模块和 APK 内编译配置，不能仅凭 node_modules 指纹或构建成功判断补丁生效。其余模块不因此全部改为源码构建。
+
 版本、替换锚点及 LF 规范化后的完整文件 SHA-256 均需匹配；所有输入先验证，再写入，未知版本或同版本源码变化会明确失败。升级依赖时应审查原始差异与业务行为、更新补丁和指纹、运行隐私回归并重建原生包；不能仅刷新指纹来消除失败，也不能静默跳过补丁。生成的 node_modules 不提交 Git，补丁脚本、版本锁和测试提交。
 
 此措施不是所有第三方库或操作系统日志的全局净化保证。系统诊断、原始图库和 ML Kit 度量通信仍有各自边界；不承诺设备永不联网或 Root 后无运行时信息。

@@ -174,6 +174,18 @@ describe('PhotoCard decisions and fitting', () => {
     expect(cardStyle().height).toBeGreaterThan(cardStyle().width);
   });
 
+  it('keeps cached deck images out of overlapping native crossfades while dimensions settle', () => {
+    const view = render(<PhotoCard {...props} />);
+    const original = screen.getByTestId('card-image').props.nativeIdentity;
+    act(() => mockSizes[0](1600, 900));
+    view.rerender(<PhotoCard {...props} maxWidth={240} maxHeight={300} />);
+    expect(screen.getByTestId('card-image').props.nativeIdentity).toBe(original);
+    expect(screen.getByTestId('card-image').props.transition).toBe(0);
+    expect(screen.getByTestId('card-image').props.cachePolicy).toBe('memory');
+    expect(callbacks.onSwipeUp).not.toHaveBeenCalled();
+    expect(callbacks.onSwipeDown).not.toHaveBeenCalled();
+  });
+
   it('keeps the same image host on promotion but separates different media sources', () => {
     const view = render(<PhotoCard {...props} index={1} />);
     const original = screen.getByTestId('card-image', { includeHiddenElements: true }).props.nativeIdentity;
