@@ -54,6 +54,10 @@ app-example
 credentials.json
 *.pickpic
 
+# One-off dependency size reports belong in build-artifacts/, not source control.
+/nm_sizes.txt
+/reanimated_files.txt
+
 # ML models are ignored by default to prevent accidental large additions.
 # Required runtime models already tracked in Git remain tracked.
 assets/ml/*.tflite

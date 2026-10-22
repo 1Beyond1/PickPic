@@ -4,7 +4,7 @@ PickPic 是一款本地照片与视频整理工具。逐张浏览，决定保留
 
 当前版本 **0.4.0**，处于测试阶段。主要在 Android 上开发和验证；iOS 尚未完成原生验证。
 
-开发分支正在完善分类补扫、记录加密、统一待删除、会话恢复、月份/大小筛选、跟随系统主题与相似照片比较，尚未包含在下方 0.4.0 下载中。本轮仍在实施和验证，不代表全部完成；阶段证据见 [开发检查点](ITERATION_CHECKPOINT.md)，备份边界见 [加密备份说明](ENCRYPTED_BACKUP.md)，大小排序见 [媒体大小说明](MEDIA_SIZE_INDEX.md)，截图/录屏入口见 [相册来源说明](MEDIA_SOURCE_SCOPE.md)，主题边界见 [外观说明](UI_APPEARANCE.md)，后续计划见 [版本计划](NEXT_VERSION_PLAN.md)。
+开发分支增加了分类补扫、记录加密、统一待删除、会话恢复、月份/大小筛选、跟随系统主题与相似照片比较，尚未包含在下方 0.4.0 下载中。实现状态与验证边界见 [开发检查点](docs/archive/ITERATION_CHECKPOINT.md)；长期说明和目录维护约定统一收录在 [开发文档](docs/README.md)。
 
 开发分支的相似组支持并排与 A/B 查看、联动放大和照片信息。先明确保留一张或多张，再将其余选中项加入待删除，最后完成本组；系统删除仍需统一复核。建议依据是分辨率、清晰度与亮度的启发式评分，不是审美判断或准确率，视觉相似也不表示文件完全相同。
 
@@ -109,7 +109,7 @@ npx expo start --dev-client
 
 项目包含 ML Kit 原生模块，不能仅用 Expo Go 运行完整应用。新增或修改原生依赖后需要重新构建开发客户端；普通 JS / TS 改动可通过 Metro 更新。参见 [Expo 开发构建说明](https://docs.expo.dev/workflow/customizing/)。
 
-当前开发分支安装时会应用版本与源码指纹校验的 SDK 日志隐私补丁。若关闭 npm 安装脚本，构建前须显式运行 `node scripts/apply-privacy-patches.js`，再用 `--check` 验证；不匹配时先审查依赖，不能跳过校验。维护方法和隐私边界见 [加密与 SDK 补丁说明](ENCRYPTED_BACKUP.md)。这不是已发布 0.4.0 的新增能力声明。
+当前开发分支安装时会应用版本与源码指纹校验的 SDK 日志隐私补丁。若关闭 npm 安装脚本，构建前须显式运行 `node scripts/apply-privacy-patches.js`，再用 `--check` 验证；不匹配时先审查依赖，不能跳过校验。维护方法和隐私边界见 [加密与 SDK 补丁说明](docs/ENCRYPTED_BACKUP.md)。这不是已发布 0.4.0 的新增能力声明。
 
 ### 检查与构建
 
