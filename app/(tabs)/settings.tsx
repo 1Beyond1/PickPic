@@ -19,6 +19,7 @@ import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { APP_VERSION, useSettingsStore } from '../../stores/useSettingsStore';
 import { useScannerStore } from '../../stores/useScannerStore';
+import { useShallow } from 'zustand/react/shallow';
 
 const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [], colors, isDark, fonts, formatOption = (option: any) => option }: any) => {
     return (
@@ -68,7 +69,20 @@ export default function SettingsScreen() {
         totalPhotos, totalVideos, refreshTotalCounts,
         hasHydrated: mediaHydrated, getVisibleProcessedCounts, mediaLibraryRefreshVersion,
         isConfirmingDeletion, isConfirmingVideoTrash,
-    } = useMediaStore();
+    } = useMediaStore(useShallow(state => ({
+        photoProcessedIds: state.photoProcessedIds,
+        videoProcessedIds: state.videoProcessedIds,
+        resetPhotoProgress: state.resetPhotoProgress,
+        resetVideoProgress: state.resetVideoProgress,
+        totalPhotos: state.totalPhotos,
+        totalVideos: state.totalVideos,
+        refreshTotalCounts: state.refreshTotalCounts,
+        hasHydrated: state.hasHydrated,
+        getVisibleProcessedCounts: state.getVisibleProcessedCounts,
+        mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion,
+        isConfirmingDeletion: state.isConfirmingDeletion,
+        isConfirmingVideoTrash: state.isConfirmingVideoTrash,
+    })));
 
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
     const [showScanBatchModal, setShowScanBatchModal] = useState(false);
@@ -200,10 +214,8 @@ export default function SettingsScreen() {
         } catch {
             console.error('[Settings] Failed to reset scanner.');
             Alert.alert(
-                language === 'zh' ? '重置失败' : 'Reset failed',
-                language === 'zh'
-                    ? '扫描器未能及时停止，进度尚未重置，请稍后重试。'
-                    : 'The scanner did not stop in time, so progress was not reset. Please try again.'
+                t('settings_reset_failed_title'),
+                t('settings_reset_scanner_failed_message')
             );
         } finally {
             setIsResettingScanner(false);
@@ -336,7 +348,7 @@ export default function SettingsScreen() {
                             <Ionicons name="sync" size={16} color={colors.primary} />
                             <Text style={[styles.statusText, { color: colors.primary }]}>
                                 {isFinalizing
-                                    ? (language === 'zh' ? '正在完成扫描…' : 'Finishing scan…')
+                                    ? t('ai_scanner_finishing')
                                     : scanTask === 'classification' ? t('classification_running') : t('ai_scanner_scanning_batch', { batch: progress.currentBatch })}
                             </Text>
                         </View>
@@ -478,10 +490,10 @@ export default function SettingsScreen() {
                             >
                                 <View style={{ flex: 1 }}>
                                     <Text style={[styles.label, { color: colors.text }]}>
-                                        {language === 'zh' ? '重置弹窗已读状态' : 'Reset Modal Read Status'}
+                                        {t('settings_reset_modal_read_status')}
                                     </Text>
                                     <Text style={[styles.hintText, { color: colors.textTertiary, fontSize: 12, marginTop: 2 }]}>
-                                        {language === 'zh' ? '让公告和引导弹窗再次显示' : 'Make announcement and guide show again'}
+                                        {t('settings_reset_modal_read_status_hint')}
                                     </Text>
                                 </View>
                                 <Ionicons name="refresh-circle" size={24} color={colors.primary} />
@@ -529,7 +541,7 @@ export default function SettingsScreen() {
 
             {showResetConfirm && (
                 <ConfirmationSheet
-                    title={language === 'zh' ? '重置 AI 扫描进度' : 'Reset AI Scanning Progress'}
+                    title={t('settings_reset_scan_title')}
                     message={t('settings_reset_scan_desc')}
                     confirmLabel={t('settings_confirm_reset')}
                     destructive
@@ -540,10 +552,8 @@ export default function SettingsScreen() {
 
             {showResetModalStatusConfirm && (
                 <ConfirmationSheet
-                    title={showResetSuccess
-                        ? (language === 'zh' ? '重置成功' : 'Reset Successful')
-                        : (language === 'zh' ? '重置弹窗状态' : 'Reset Modal Status')}
-                    message={showResetSuccess ? '' : (language === 'zh' ? '确定要重置公告和 AI 引导弹窗的状态吗？下次启动 App 时它们将重新显示。' : 'Reset status for announcement and AI guide? They will reappear on next launch.')}
+                    title={t(showResetSuccess ? 'settings_reset_modal_success' : 'settings_reset_modal_title')}
+                    message={showResetSuccess ? '' : t('settings_reset_modal_message')}
                     hideActions={showResetSuccess}
                     confirmLabel={t('confirm')}
                     onCancel={() => { setShowResetSuccess(false); setShowResetModalStatusConfirm(false); }}

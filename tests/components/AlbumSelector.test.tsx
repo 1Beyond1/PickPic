@@ -11,7 +11,10 @@ const mockAlbums = [
 ];
 let mockVisibleAlbums = mockAlbums;
 jest.mock('../../stores/useMediaStore', () => ({
-    useMediaStore: () => ({ albums: mockVisibleAlbums, loadAlbums: mockLoadAlbums }),
+    useMediaStore: (selector?: (state: { albums: typeof mockAlbums; loadAlbums: typeof mockLoadAlbums }) => unknown) => {
+        const state = { albums: mockVisibleAlbums, loadAlbums: mockLoadAlbums };
+        return selector ? selector(state) : state;
+    },
     hasFullPhotoLibraryAccess: () => mockFullAccess(),
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null, Feather: () => null }));

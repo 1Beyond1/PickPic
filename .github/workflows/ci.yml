@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Verify SDK privacy patches
+        run: node scripts/apply-privacy-patches.js --check
+
       - name: Typecheck
         run: npm run typecheck
 

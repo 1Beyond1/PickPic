@@ -4,7 +4,18 @@ import { AppState, Platform, Switch, TextInput } from 'react-native';
 jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 jest.mock('../../stores/useSettingsStore', () => ({ useSettingsStore: (selector: any) => selector({ language: 'zh' }) }));
-jest.mock('../../hooks/useI18n', () => ({ useI18n: () => ({ t: () => '取消' }) }));
+jest.mock('../../hooks/useI18n', () => ({
+    useI18n: () => ({
+        language: 'zh',
+        t: (key: string, params: Record<string, string | number> = {}) => {
+            let text: string = require('../../i18n/zh').default[key] ?? key;
+            for (const [name, value] of Object.entries(params)) {
+                text = text.replace(`{${name}}`, String(value));
+            }
+            return text;
+        },
+    }),
+}));
 jest.mock('../../hooks/useThemeColor', () => ({ useThemeColor: () => ({ colors: require('../../constants/theme').COLORS }) }));
 jest.mock('../../services/backup/records', () => ({ createEncryptedRecords: jest.fn(), openEncryptedRecords: jest.fn(), restoreEncryptedRecords: jest.fn() }));
 jest.mock('../../services/backup/files', () => ({ pickEncryptedFile: jest.fn(), saveEncryptedFile: jest.fn() }));

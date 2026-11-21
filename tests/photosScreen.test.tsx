@@ -90,7 +90,10 @@ jest.mock('../hooks/useThemeColor', () => ({
   }),
 }));
 jest.mock('../stores/useMediaStore', () => ({
-  useMediaStore: Object.assign(() => mockMediaState, { getState: () => mockMediaState }),
+  useMediaStore: Object.assign(
+    (selector?: (state: typeof mockMediaState) => unknown) => (selector ? selector(mockMediaState) : mockMediaState),
+    { getState: () => mockMediaState },
+  ),
 }));
 jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: () => mockSettingsState }));
 

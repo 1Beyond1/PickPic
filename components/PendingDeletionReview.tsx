@@ -13,6 +13,7 @@ import { getPendingDeletionEntries } from '../services/pendingDeletion';
 import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
 import type { PendingDeletionEntry } from '../services/pendingDeletion';
 import { useMediaStore } from '../stores/useMediaStore';
+import { useShallow } from 'zustand/react/shallow';
 import { PhotoPreviewModal } from './PhotoPreviewModal';
 import { SegmentedControl } from './SegmentedControl';
 
@@ -26,7 +27,20 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
     onContinue?: () => void;
     onKeep?: () => void;
 }) {
-    const state = useMediaStore(state => state);
+    const state = useMediaStore(useShallow(store => ({
+        deleteQueue: store.deleteQueue,
+        videoTrashBin: store.videoTrashBin,
+        pendingDeletionInfo: store.pendingDeletionInfo,
+        deletedCounts: store.deletedCounts,
+        lastDeletionResult: store.lastDeletionResult,
+        isConfirmingDeletion: store.isConfirmingDeletion,
+        isConfirmingVideoTrash: store.isConfirmingVideoTrash,
+        mediaLibraryRefreshVersion: store.mediaLibraryRefreshVersion,
+        permissionRefreshVersion: store.permissionRefreshVersion,
+        permissionScope: store.permissionScope,
+        hiddenPhotoQueuedAssetIds: store.hiddenPhotoQueuedAssetIds,
+        hiddenVideoQueuedAssetIds: store.hiddenVideoQueuedAssetIds,
+    })));
     const { t } = useI18n();
     const { colors } = useThemeColor();
     const [filter, setFilter] = useState<Filter>(initialFilter);
@@ -184,12 +198,11 @@ export function PendingVideoPreview({ entry, onClose }: { entry: PendingDeletion
 }
 
 export function PendingDeletionModal({ visible, onClose, initialFilter = 'all' }: { visible: boolean; onClose: () => void; initialFilter?: Filter }) {
-    const state = useMediaStore(state => state);
+    const busy = useMediaStore(state => state.isConfirmingDeletion || state.isConfirmingVideoTrash);
     const { t } = useI18n();
     const { colors } = useThemeColor();
     const insets = useSafeAreaInsets();
     const reducedMotion = useReducedMotion();
-    const busy = state.isConfirmingDeletion || state.isConfirmingVideoTrash;
     return <Modal visible={visible} animationType={reducedMotion ? 'none' : 'fade'} onRequestClose={() => { if (!busy) onClose(); }} statusBarTranslucent navigationBarTranslucent>
         {visible && <View accessibilityViewIsModal style={[styles.layout, { backgroundColor: colors.background, paddingTop: insets.top, paddingBottom: insets.bottom, paddingLeft: insets.left, paddingRight: insets.right }]}>
             <View style={styles.modalHeader}><Pressable accessibilityRole="button" accessibilityLabel={t('close')} disabled={busy} onPress={onClose} style={styles.pageButton}><Ionicons name="close-outline" size={24} color={colors.text} /></Pressable></View>
@@ -199,11 +212,10 @@ export function PendingDeletionModal({ visible, onClose, initialFilter = 'all' }
 }
 
 export function PendingDeletionButton({ onOpen }: { onOpen?: () => void }) {
-    const state = useMediaStore(state => state);
+    const count = useMediaStore(state => getPendingDeletionEntries(state).length);
     const { t } = useI18n();
     const { colors } = useThemeColor();
     const [visible, setVisible] = useState(false);
-    const count = getPendingDeletionEntries(state).length;
     return <>
         <Pressable accessibilityRole="button" accessibilityLabel={t('pending_open', { count })} onPress={() => { onOpen?.(); setVisible(true); }} style={({ pressed }) => [styles.entry, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}>
             <Ionicons name="trash-bin-outline" size={20} color={colors.text} /><Text style={[styles.caption, { color: count ? colors.danger : colors.textSecondary }]}>{count > 99 ? '99+' : count}</Text>

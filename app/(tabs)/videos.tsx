@@ -18,11 +18,12 @@ import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { useShallow } from 'zustand/react/shallow';
 
 export default function VideosScreen() {
     const insets = useSafeAreaInsets();
     const isFocused = useIsFocused();
-    const { t, language } = useI18n();
+    const { t } = useI18n();
     const { colors } = useThemeColor();
 
     const {
@@ -32,7 +33,26 @@ export default function VideosScreen() {
         videoCurrentIndex, organizingSessions, videoProcessedIds,
         videoSessionRecoveryStatus, videoSessionUnavailableCount,
         moveVideoSession, deferSessionMedia, revisitSessionDeferred,
-    } = useMediaStore();
+    } = useMediaStore(useShallow(state => ({
+        videos: state.videos,
+        loadVideos: state.loadVideos,
+        isLoading: state.isLoading,
+        videoLoadFailed: state.videoLoadFailed,
+        hasHydrated: state.hasHydrated,
+        markVideoForTrash: state.markVideoForTrash,
+        markVideoAsProcessed: state.markVideoAsProcessed,
+        addAssetToAlbum: state.addAssetToAlbum,
+        mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion,
+        videoCurrentIndex: state.videoCurrentIndex,
+        organizingSessions: state.organizingSessions,
+        videoProcessedIds: state.videoProcessedIds,
+        videoSessionRecoveryStatus: state.videoSessionRecoveryStatus,
+        videoSessionUnavailableCount: state.videoSessionUnavailableCount,
+        moveVideoSession: state.moveVideoSession,
+        deferSessionMedia: state.deferSessionMedia,
+        revisitSessionDeferred: state.revisitSessionDeferred,
+    })));
+    const pendingCount = useMediaStore(state => getPendingDeletionEntries(state).length);
     const {
         displayOrder,
         selectedAlbumIds,
@@ -75,7 +95,6 @@ export default function VideosScreen() {
     videosRef.current = videos;
     const displayedVideosRef = useRef(videos);
     const hasLimitedVideoAccess = videoPermission?.accessPrivileges === 'limited';
-    const pendingCount = getPendingDeletionEntries(useMediaStore.getState()).length;
 
     const refreshVideoPermission = useCallback(async (): Promise<MediaLibrary.PermissionResponse | null> => {
         const requestId = ++videoPermissionRequestIdRef.current;
@@ -349,8 +368,8 @@ export default function VideosScreen() {
             } catch {
                 console.error('[Videos] Failed to collect video.');
                 Alert.alert(
-                    language === 'zh' ? '收藏失败' : 'Collection failed',
-                    language === 'zh' ? '请重试，原视频未被删除。' : 'Please try again. The original video was not deleted.'
+                    t('video_collection_failed_title'),
+                    t('video_collection_failed_message')
                 );
             }
         }

@@ -50,7 +50,9 @@ const mockMediaState = {
   pruneUnavailableQueuedAssets: jest.fn(),
 };
 
-const mockUseMediaStore = jest.fn(() => mockMediaState);
+const mockUseMediaStore = jest.fn((selector?: (state: typeof mockMediaState) => unknown) => (
+  selector ? selector(mockMediaState) : mockMediaState
+));
 const mockSettingsState = {
   displayOrder: 'random' as const,
   selectedAlbumIds: [] as string[],

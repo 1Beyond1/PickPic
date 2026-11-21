@@ -34,7 +34,7 @@ interface PhotoCardProps {
     onTap: () => void;
     onHoverZone?: (zoneId: string | null) => void;
     enableCollections: boolean;
-    dropZones: DropZone[];
+    dropZones?: DropZone[];
     maxWidth: number;
     maxHeight: number;
 }
@@ -48,7 +48,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     onTap,
     onHoverZone,
     enableCollections,
-    dropZones,
+    dropZones = [],
     maxWidth,
     maxHeight,
 }) => {

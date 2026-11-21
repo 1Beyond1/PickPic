@@ -5,6 +5,7 @@ import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { hasFullPhotoLibraryAccess, useMediaStore } from '../stores/useMediaStore';
+import { useShallow } from 'zustand/react/shallow';
 import { BottomSheet } from './BottomSheet';
 
 const EMPTY_SELECTION: string[] = [];
@@ -28,7 +29,10 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     editableOnly = false,
     titleKey = 'album_selector_title',
 }) => {
-    const { albums, loadAlbums } = useMediaStore();
+    const { albums, loadAlbums } = useMediaStore(useShallow(state => ({
+        albums: state.albums,
+        loadAlbums: state.loadAlbums,
+    })));
     const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
     const [albumAccess, setAlbumAccess] = useState<'checking' | 'available' | 'unavailable'>('checking');
     const { t } = useI18n();

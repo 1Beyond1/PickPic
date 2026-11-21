@@ -1,15 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
-import { useSettingsStore } from '../stores/useSettingsStore';
 import type { BackupPayload, RestorePreview } from '../services/backup/payload';
 import { BottomSheet } from './BottomSheet';
 import { SettingsRow } from './SettingsRow';
 
 export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) {
     const { colors } = useThemeColor();
-    const language = useSettingsStore(state => state.language);
-    const zh = language === 'zh';
+    const { t } = useI18n();
     const [mode, setMode] = useState<'export' | 'import' | null>(null);
     const [password, setPassword] = useState('');
     const [repeat, setRepeat] = useState('');
@@ -60,10 +59,10 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
             if (!cancelled()) {
                 const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
                 setMessage(code === 'password'
-                    ? (zh ? '请使用 12–128 个字符的密码，建议使用较长且不重复的口令。' : 'Use 12–128 characters. A long, unique passphrase is recommended.')
+                    ? t('backup_error_password')
                     : code === 'invalid'
-                        ? (zh ? '密码不正确，或文件损坏、版本不兼容。没有恢复任何记录。' : 'Incorrect password, damaged file or incompatible version. No records were restored.')
-                        : (zh ? '操作未完成。请检查存储空间、相册权限并重试；恢复未提示成功时请保持应用开启。' : 'The operation did not complete. Check storage and gallery access, then retry. Keep the app open if restoration has not succeeded.'));
+                        ? t('backup_error_invalid')
+                        : t('backup_error_generic'));
             }
         } finally {
             running.current = false;
@@ -83,7 +82,7 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
     });
     const execute = () => run(async (cancelled, onProgress) => {
         if (mode === 'export') {
-            if (password !== repeat) { setMessage(zh ? '两次输入的密码不一致。' : 'The passwords do not match.'); return; }
+            if (password !== repeat) { setMessage(t('backup_error_password_mismatch')); return; }
             const { createEncryptedRecords } = await import('../services/backup/records');
             const output = await createEncryptedRecords(password, cancelled, onProgress);
             setKeyProgress(null);
@@ -96,9 +95,8 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
                 try { saved = await saveEncryptedFile(output.bytes); }
                 finally { externalUI.current = false; }
                 if (!cancelled()) setMessage(saved
-                    ? (zh ? `${Platform.OS === 'ios' ? '已打开分享面板，请确认已保存文件。' : '加密备份已保存。'}包含 ${output.saved} 条记录，跳过 ${output.skipped} 条不可访问记录。`
-                        : `${Platform.OS === 'ios' ? 'Share sheet opened; confirm that you saved the file.' : 'Encrypted backup saved.'} ${output.saved} records included; ${output.skipped} inaccessible records skipped.`)
-                    : (zh ? '已取消保存。' : 'Save cancelled.'));
+                    ? t(Platform.OS === 'ios' ? 'backup_save_ios' : 'backup_save_android', { saved: output.saved, skipped: output.skipped })
+                    : t('backup_save_cancelled'));
             } finally { output.bytes.fill(0); }
         } else if (bytes.current) {
             const { openEncryptedRecords } = await import('../services/backup/records');
@@ -114,8 +112,9 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
         const result = await restoreEncryptedRecords(payload.current, includePending, cancelled);
         if (cancelled()) return;
         payload.current = null; setPreview(null); setSelected(false);
-        setMessage(zh ? `已恢复 ${result.kept + result.collected + (includePending ? result.pendingDeletion : 0)} 条记录。现有决定已保留，原照片和视频未改动。`
-            : `Restored ${result.kept + result.collected + (includePending ? result.pendingDeletion : 0)} records. Existing decisions and original media were preserved.`);
+        setMessage(t('backup_restore_success', {
+            count: result.kept + result.collected + (includePending ? result.pendingDeletion : 0),
+        }));
     });
     const button = (label: string, action: () => void, inactive = false) => (
         <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy || inactive }} disabled={busy || inactive} onPress={action}
@@ -130,42 +129,42 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
             editable={!busy} maxLength={256} style={[styles.input, { color: colors.text, backgroundColor: colors.surfaceHover }]} />
     );
     return <>
-        <SettingsRow label={zh ? '加密备份整理记录' : 'Back up organizing records'} detail={zh ? '设置密码，保存到自己选择的位置' : 'Protect with a password and choose where to save'} disabled={disabled || Platform.OS === 'web'} onPress={() => { clear(); setMode('export'); }} />
-        <SettingsRow label={zh ? '从加密备份恢复' : 'Restore an encrypted backup'} disabled={disabled || Platform.OS === 'web'} onPress={() => { clear(); setMode('import'); }} />
-        <BottomSheet visible={mode !== null} title={mode === 'export' ? (zh ? '加密备份' : 'Encrypted backup') : (zh ? '恢复整理记录' : 'Restore records')} onClose={clear}>
+        <SettingsRow label={t('backup_export_label')} detail={t('backup_export_detail')} disabled={disabled || Platform.OS === 'web'} onPress={() => { clear(); setMode('export'); }} />
+        <SettingsRow label={t('backup_import_label')} disabled={disabled || Platform.OS === 'web'} onPress={() => { clear(); setMode('import'); }} />
+        <BottomSheet visible={mode !== null} title={t(mode === 'export' ? 'backup_export_title' : 'backup_import_title')} onClose={clear}>
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flexShrink: 1 }}>
                 <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-                    <Text style={[styles.copy, { color: colors.textSecondary }]}>{zh
-                        ? '仅包含整理决定，不含照片、视频或扫描缓存。适用于原设备、原相册；移动或编辑过的媒体可能跳过。'
-                        : 'Includes organizing decisions, not media or scan caches. Intended for the same device and library; moved or edited media may be skipped.'}</Text>
+                    <Text style={[styles.copy, { color: colors.textSecondary }]}>{t('backup_scope_desc')}</Text>
                     {mode === 'export' && <>
-                        <Text style={[styles.copy, { color: colors.textSecondary }]}>{zh ? '密码无法找回。请使用较长的独立口令，并与备份文件分开保管。' : 'The password cannot be recovered. Use a long, unique passphrase and store it separately from the backup.'}</Text>
-                        {input(password, setPassword, zh ? '备份密码（至少 12 个字符）' : 'Backup password (12+ characters)')}
-                        {input(repeat, setRepeat, zh ? '再次输入密码' : 'Repeat password')}
-                        {button(zh ? '加密并选择保存位置' : 'Encrypt and choose location', execute, !password || !repeat)}
+                        <Text style={[styles.copy, { color: colors.textSecondary }]}>{t('backup_password_warning')}</Text>
+                        {input(password, setPassword, t('backup_password_placeholder'))}
+                        {input(repeat, setRepeat, t('backup_password_repeat_placeholder'))}
+                        {button(t('backup_encrypt_save_btn'), execute, !password || !repeat)}
                     </>}
                     {mode === 'import' && !preview && <>
-                        {button(selected ? (zh ? '重新选择文件' : 'Choose another file') : (zh ? '选择备份文件' : 'Choose backup file'), choose)}
+                        {button(t(selected ? 'backup_choose_another_file' : 'backup_choose_file'), choose)}
                         {selected && <>
-                            {input(password, setPassword, zh ? '备份密码' : 'Backup password')}
-                            {button(zh ? '解密并预览' : 'Decrypt and preview', execute, !password)}
+                            {input(password, setPassword, t('backup_password_input_label'))}
+                            {button(t('backup_decrypt_preview_btn'), execute, !password)}
                         </>}
                     </>}
                     {preview && <>
-                        <Text style={[styles.copy, { color: colors.text }]}>{zh
-                            ? `可恢复保留 ${preview.kept} · 收藏 ${preview.collected}\n待删除 ${preview.pendingDeletion}\n已有决定 ${preview.existing} · 无法匹配 ${preview.skipped}`
-                            : `Keep ${preview.kept} · Collect ${preview.collected}\nPending deletion ${preview.pendingDeletion}\nAlready decided ${preview.existing} · Unmatched ${preview.skipped}`}</Text>
+                        <Text style={[styles.copy, { color: colors.text }]}>{t('backup_preview_summary', {
+                            kept: preview.kept,
+                            collected: preview.collected,
+                            pending: preview.pendingDeletion,
+                            existing: preview.existing,
+                            skipped: preview.skipped,
+                        })}</Text>
                         <View style={styles.toggle}>
-                            <Text style={[styles.copy, { flex: 1, color: colors.text }]}>{zh ? '同时恢复待删除列表' : 'Also restore pending deletions'}</Text>
-                            <Switch accessibilityLabel={zh ? '同时恢复待删除列表' : 'Also restore pending deletions'} value={includePending} onValueChange={setIncludePending} disabled={busy} />
+                            <Text style={[styles.copy, { flex: 1, color: colors.text }]}>{t('backup_include_pending')}</Text>
+                            <Switch accessibilityLabel={t('backup_include_pending')} value={includePending} onValueChange={setIncludePending} disabled={busy} />
                         </View>
-                        <Text style={[styles.copy, { color: colors.textSecondary }]}>{zh ? '不会执行删除。恢复后仍需在待删除列表中复核确认。未勾选的待删除项目会留待重新整理。' : 'Nothing is deleted. Restored pending deletions still require review. Excluded pending items remain available for organizing.'}</Text>
-                        {button(zh ? '确认恢复' : 'Confirm restore', restore)}
+                        <Text style={[styles.copy, { color: colors.textSecondary }]}>{t('backup_include_pending_hint')}</Text>
+                        {button(t('backup_confirm_restore_btn'), restore)}
                     </>}
-                    {busy && <ActivityIndicator accessibilityLabel={zh ? '处理中' : 'Working'} color={colors.text} />}
-                    {busy && keyProgress !== null && <Text accessibilityLiveRegion="polite" style={[styles.copy, { color: colors.textSecondary }]}>{zh
-                        ? `密码保护计算 ${keyProgress}% · 为保护密码，此步骤可能较慢，可随时取消。`
-                        : `Password protection ${keyProgress}% · This security step can take time. You can cancel at any time.`}</Text>}
+                    {busy && <ActivityIndicator accessibilityLabel={t('backup_working')} color={colors.text} />}
+                    {busy && keyProgress !== null && <Text accessibilityLiveRegion="polite" style={[styles.copy, { color: colors.textSecondary }]}>{t('backup_key_progress', { percent: keyProgress })}</Text>}
                     {!!message && <Text accessibilityLiveRegion="polite" style={[styles.copy, { color: colors.text }]}>{message}</Text>}
                 </ScrollView>
             </KeyboardAvoidingView>

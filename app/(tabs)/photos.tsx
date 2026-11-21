@@ -1,12 +1,10 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
-// import { BlurView } from 'expo-blur';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { GlassContainer } from '../../components/GlassContainer';
 import { OrganizingScopeModal } from '../../components/OrganizingScopeModal';
 import { PhotoCard } from '../../components/PhotoCard';
 import { PendingDeletionButton, PendingDeletionReview } from '../../components/PendingDeletionReview';
@@ -16,6 +14,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { useShallow } from 'zustand/react/shallow';
 
 
 export default function PhotosScreen() {
@@ -27,16 +26,37 @@ export default function PhotosScreen() {
     const { colors, isDark } = useThemeColor();
 
     const {
-        photos, albums, loadPhotos, isLoading, photoLoadFailed, hasHydrated,
+        photos, loadPhotos, isLoading, photoLoadFailed, hasHydrated,
         photoProcessedIds,
         markForDeletion, markAsSkipped,
-        deleteQueue, resetBatch,
-        createAlbum, addAssetToAlbum, loadAlbums,
+        deleteQueue, resetBatch, loadAlbums,
         permissionScope, mediaLibraryRefreshVersion,
         permissionRefreshVersion, organizingSessions, startOrganizingSession,
         resumeOrganizingSession, deferSessionMedia, revisitSessionDeferred,
         photoSessionRecoveryStatus, photoSessionUnavailableCount,
-    } = useMediaStore();
+    } = useMediaStore(useShallow(state => ({
+        photos: state.photos,
+        loadPhotos: state.loadPhotos,
+        isLoading: state.isLoading,
+        photoLoadFailed: state.photoLoadFailed,
+        hasHydrated: state.hasHydrated,
+        photoProcessedIds: state.photoProcessedIds,
+        markForDeletion: state.markForDeletion,
+        markAsSkipped: state.markAsSkipped,
+        deleteQueue: state.deleteQueue,
+        resetBatch: state.resetBatch,
+        loadAlbums: state.loadAlbums,
+        permissionScope: state.permissionScope,
+        mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion,
+        permissionRefreshVersion: state.permissionRefreshVersion,
+        organizingSessions: state.organizingSessions,
+        startOrganizingSession: state.startOrganizingSession,
+        resumeOrganizingSession: state.resumeOrganizingSession,
+        deferSessionMedia: state.deferSessionMedia,
+        revisitSessionDeferred: state.revisitSessionDeferred,
+        photoSessionRecoveryStatus: state.photoSessionRecoveryStatus,
+        photoSessionUnavailableCount: state.photoSessionUnavailableCount,
+    })));
 
     const {
         groupSize,
@@ -45,9 +65,6 @@ export default function PhotosScreen() {
         hasHydrated: settingsHydrated,
     } = useSettingsStore();
 
-    const [showNewAlbumModal, setShowNewAlbumModal] = useState(false);
-    const [newAlbumName, setNewAlbumName] = useState('');
-    const [pendingCollectionPhoto, setPendingCollectionPhoto] = useState<any>(null);
     const [managingPhotoAccess, setManagingPhotoAccess] = useState(false);
     const [showHome, setShowHome] = useState(true);
     const [showScopeSelector, setShowScopeSelector] = useState(false);
@@ -180,16 +197,10 @@ export default function PhotosScreen() {
         // accessible. Persisted review queues are kept for recovery, but are
         // filtered separately by the permission-aware queue projection.
         setKeptAllReviewPhotos(false);
-        setPendingCollectionPhoto(null);
-        setNewAlbumName('');
-        setShowNewAlbumModal(false);
         if (hasHydrated && settingsHydrated && useMediaStore.getState().organizingSessions.photo) {
             void loadPhotos(groupSize, displayOrder, selectedAlbumIds);
         }
     }, [mediaLibraryRefreshVersion, permissionRefreshVersion, hasHydrated, settingsHydrated, loadPhotos, groupSize, displayOrder, selectedAlbumIds]);
-
-    // Drop zones disabled for v0.1.1
-    const dropZones: any[] = [];
 
     const handleSwipeUp = (photo: any) => {
         markForDeletion(photo);
@@ -215,40 +226,9 @@ export default function PhotosScreen() {
         </View>
     );
 
-    const handleSwipeDown = async (photo: any, zoneId?: string): Promise<boolean> => {
-        if (zoneId) {
-            // Existing Album
-            const albumName = albums.find(a => a.id === zoneId)?.title || t('photos_album_fallback');
-            try {
-                await addAssetToAlbum(zoneId, photo);
-                markAsSkipped(photo);
-                showToast(t('photos_collected', { album: albumName }));
-                return true;
-            } catch {
-                console.error('[Photos] Failed to collect photo.');
-                showToast(t('photos_collection_failed'));
-                return false;
-            }
-        } else {
-            // Just Skip / Keep
-            markAsSkipped(photo);
-            return true;
-        }
-    };
-
-    const handleCreateAlbum = async () => {
-        if (newAlbumName && pendingCollectionPhoto) {
-            try {
-                await createAlbum(newAlbumName, pendingCollectionPhoto);
-                markAsSkipped(pendingCollectionPhoto);
-                setPendingCollectionPhoto(null);
-                setNewAlbumName('');
-                setShowNewAlbumModal(false);
-            } catch {
-                console.error('[Photos] Failed to create photo album.');
-                showToast(t('photos_create_album_failed'));
-            }
-        }
+    const handleSwipeDown = async (photo: any): Promise<boolean> => {
+        markAsSkipped(photo);
+        return true;
     };
 
     const handleTap = (photo: any) => {
@@ -525,10 +505,9 @@ export default function PhotosScreen() {
                             maxWidth={Math.min(deckSize.width, width - insets.left - insets.right) - UI_METRICS.pageInset * 2}
                             maxHeight={deckSize.height - 16}
                             onSwipeUp={() => handleSwipeUp(photo)}
-                            onSwipeDown={(zoneId) => handleSwipeDown(photo, zoneId)}
+                            onSwipeDown={() => handleSwipeDown(photo)}
                             onTap={() => handleTap(photo)}
                             enableCollections={false}
-                            dropZones={dropZones}
                         />
                     );
                 })}
@@ -558,25 +537,6 @@ export default function PhotosScreen() {
                 </View>
                 <Text style={[styles.queueHint, { color: colors.textSecondary }]}>{t('photos_queue_review_hint')}</Text>
             </View>
-
-            {showNewAlbumModal && (
-                <GlassContainer style={styles.modal}>
-                    <Text style={[styles.modalTitle, { color: colors.text }]}>{t('album_new_title')}</Text>
-                    <TextInput
-                        style={[styles.input, { color: colors.text, backgroundColor: colors.surface }]}
-                        placeholder={t('album_name_placeholder')}
-                        placeholderTextColor={colors.textSecondary}
-                        value={newAlbumName}
-                        onChangeText={setNewAlbumName}
-                    />
-                    <Pressable style={[styles.actionButton, { backgroundColor: colors.actionBackground }]} onPress={handleCreateAlbum}>
-                        <Text style={[styles.actionButtonText, { color: colors.actionForeground }]}>{t('album_create_btn')}</Text>
-                    </Pressable>
-                    <Pressable style={[styles.actionButton, { backgroundColor: 'transparent', marginTop: 10 }]} onPress={() => setShowNewAlbumModal(false)}>
-                        <Text style={[styles.actionButtonText, { color: colors.textSecondary }]}>{t('cancel')}</Text>
-                    </Pressable>
-                </GlassContainer>
-            )}
 
             {/* Toast */}
             {toast}
@@ -805,25 +765,6 @@ const styles = StyleSheet.create({
     },
     actionButtonText: {
         ...TYPOGRAPHY.button
-    },
-    modal: {
-        position: 'absolute',
-        bottom: 300,
-        left: 20,
-        right: 20,
-        padding: SPACING.l,
-        alignItems: 'center'
-    },
-    modalTitle: {
-        fontSize: 18,
-        marginBottom: SPACING.m,
-        fontWeight: 'bold'
-    },
-    input: {
-        width: '100%',
-        padding: SPACING.m,
-        borderRadius: BORDER_RADIUS.m,
-        marginBottom: SPACING.m
     },
     // Toast
     toastContainer: {

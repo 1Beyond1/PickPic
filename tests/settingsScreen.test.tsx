@@ -38,7 +38,9 @@ jest.mock('../hooks/useAIScanner', () => ({ useAIScanner: () => mockScanner }));
 jest.mock('../stores/useSettingsStore', () => ({
   APP_VERSION: 'v0.4.0', useSettingsStore: Object.assign(() => mockSettings, { getState: () => mockSettings }),
 }));
-jest.mock('../stores/useMediaStore', () => ({ useMediaStore: () => mockMedia }));
+jest.mock('../stores/useMediaStore', () => ({
+  useMediaStore: (selector?: (state: typeof mockMedia) => unknown) => (selector ? selector(mockMedia) : mockMedia),
+}));
 jest.mock('../hooks/useThemeColor', () => ({
   useThemeColor: () => {
     const palette = require('../constants/theme');
