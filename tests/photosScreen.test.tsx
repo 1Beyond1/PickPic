@@ -30,7 +30,7 @@ const mockMediaState = {
   deleteQueue: [] as ReturnType<typeof mockPhoto>[],
   videoTrashBin: [], pendingDeletionInfo: {}, permissionRefreshVersion: 0,
   isConfirmingVideoTrash: false,
-  keepPendingDeletion: jest.fn(), confirmPendingDeletion: jest.fn(),
+  keepPendingDeletion: jest.fn(), keepAllPendingDeletion: jest.fn((ids: readonly string[]) => ids.length), confirmPendingDeletion: jest.fn(),
   resetBatch: jest.fn(),
   isConfirmingDeletion: false,
   createAlbum: jest.fn(),

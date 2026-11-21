@@ -185,6 +185,7 @@ interface MediaState {
     markForDeletion: (asset: PhotoAsset) => void;
     enqueuePendingDeletion: (assets: readonly PhotoAsset[], source: PendingDeletionSource) => number;
     keepPendingDeletion: (assetId: string) => boolean;
+    keepAllPendingDeletion: (assetIds: readonly string[]) => number;
     confirmPendingDeletion: (assetIds?: readonly string[]) => Promise<PendingDeletionResult>;
     markForCollection: (asset: PhotoAsset) => void;
     markAsSkipped: (asset: PhotoAsset) => void;
@@ -1233,36 +1234,55 @@ export const useMediaStore = create<MediaState>()(
         return accepted;
     },
 
-    keepPendingDeletion: (assetId) => {
-        let kept = false;
+    keepPendingDeletion: (assetId) => get().keepAllPendingDeletion([assetId]) > 0,
+    keepAllPendingDeletion: (assetIds) => {
+        const requested = new Set(assetIds);
+        if (requested.size === 0) return 0;
+        let keptCount = 0;
         set((state) => {
             if (!state.hasHydrated || state.isConfirmingDeletion || state.isConfirmingVideoTrash || isRecordTransferActive()) return state;
-            const entry = getPendingDeletionEntries(state).find(item => item.asset.id === assetId);
-            if (!entry) return state;
-            kept = true;
-            const deleteQueue = state.deleteQueue.filter(photo => photo.id !== assetId);
-            const videoTrashBin = state.videoTrashBin.filter(video => video.id !== assetId);
-            return withRecentDecision(state, {
-                deleteQueue, videoTrashBin,
-                organizingSessions: clearDeferredDecision(state.organizingSessions, entry.type, assetId),
+            const matched = getPendingDeletionEntries(state).filter(item => requested.has(item.asset.id));
+            if (matched.length === 0) return state;
+            keptCount = matched.length;
+            const matchedIds = new Set(matched.map(entry => entry.asset.id));
+            const photoProcessed = new Set(state.photoProcessedIds);
+            const videoProcessed = new Set(state.videoProcessedIds);
+            let sessions = state.organizingSessions;
+            for (const entry of matched) {
+                sessions = clearDeferredDecision(sessions, entry.type, entry.asset.id);
+                if (entry.type === 'photo') photoProcessed.add(entry.asset.id);
+                else videoProcessed.add(entry.asset.id);
+            }
+            const deleteQueue = state.deleteQueue.filter(photo => !matchedIds.has(photo.id));
+            const videoTrashBin = state.videoTrashBin.filter(video => !matchedIds.has(video.id));
+            let next: Partial<MediaState> = {
+                deleteQueue,
+                videoTrashBin,
+                organizingSessions: sessions,
                 pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue, videoTrashBin }),
                 lastDeletionResult: null,
-                photoProcessedIds: entry.type !== 'photo' || state.photoProcessedIds.includes(assetId)
+                photoProcessedIds: photoProcessed.size === state.photoProcessedIds.length
                     ? state.photoProcessedIds
-                    : [...state.photoProcessedIds, assetId],
-                videoProcessedIds: entry.type !== 'video' || state.videoProcessedIds.includes(assetId)
-                    ? state.videoProcessedIds : [...state.videoProcessedIds, assetId],
+                    : [...photoProcessed],
+                videoProcessedIds: videoProcessed.size === state.videoProcessedIds.length
+                    ? state.videoProcessedIds
+                    : [...videoProcessed],
                 hiddenPhotoQueuedAssetIds: state.permissionScope === 'full'
                     ? null
                     : retainHiddenQueuedAssetIds(state.hiddenPhotoQueuedAssetIds, [
                         ...deleteQueue.map(photo => photo.id),
                         ...state.collectionQueue.map(photo => photo.id),
                     ]),
-                hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds === null ? null
+                hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds === null
+                    ? null
                     : retainHiddenQueuedAssetIds(state.hiddenVideoQueuedAssetIds, videoTrashBin.map(asset => asset.id)),
-            }, entry.type, assetId);
+            };
+            for (const entry of matched) {
+                next = withRecentDecision(state, next, entry.type, entry.asset.id);
+            }
+            return next;
         });
-        return kept;
+        return keptCount;
     },
     keepPhotoFromDeleteQueue: assetId => get().deleteQueue.some(asset => asset.id === assetId) && get().keepPendingDeletion(assetId),
 
@@ -1485,8 +1505,8 @@ export const useMediaStore = create<MediaState>()(
                 photos: (state.deletedCounts?.photos ?? 0) + (type === 'photo' ? newAssets.length : 0),
                 videos: (state.deletedCounts?.videos ?? 0) + (type === 'video' ? newAssets.length : 0),
             } }));
-            if (type === 'photo') for (const asset of newAssets) {
-                try { await AssetRepository.removeAssetAndDerivedData(asset.id); }
+            if (type === 'photo') {
+                try { await AssetRepository.removeAssetsAndDerivedData(newAssets.map(asset => asset.id)); }
                 catch { console.error('[PendingDeletion] Confirmed deletion index cleanup failed.'); }
             }
         };

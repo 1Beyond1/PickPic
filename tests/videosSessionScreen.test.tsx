@@ -6,7 +6,7 @@ import { FlatList, Platform } from 'react-native';
 jest.mock('expo-media-library', () => ({ getPermissionsAsync: jest.fn(), getAssetsAsync: jest.fn(), getAlbumsAsync: jest.fn(),
     getAssetInfoAsync: jest.fn(), deleteAssetsAsync: jest.fn(), SortBy: { creationTime: 'creationTime' }, presentPermissionsPickerAsync: jest.fn() }));
 jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn(async () => null), setItem: jest.fn(async () => {}), removeItem: jest.fn(async () => {}) }));
-jest.mock('../database', () => ({ AssetRepository: { removeAssetAndDerivedData: jest.fn(async () => {}) } }));
+jest.mock('../database', () => ({ AssetRepository: { removeAssetAndDerivedData: jest.fn(async () => {}), removeAssetsAndDerivedData: jest.fn(async () => {}) } }));
 const mockSettings = { displayOrder: 'oldest', selectedAlbumIds: [] as string[], hasHydrated: true, setSelectedAlbums: jest.fn() };
 jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: Object.assign(() => mockSettings, { getState: () => mockSettings }) }));
 jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));

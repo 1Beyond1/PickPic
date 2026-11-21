@@ -80,6 +80,10 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
         if (confirmingRef.current || busy) return;
         if (useMediaStore.getState().keepPendingDeletion(id)) onKeep?.();
     };
+    const keepAll = () => {
+        if (confirmingRef.current || busy || !filtered.length) return;
+        if (useMediaStore.getState().keepAllPendingDeletion(filtered.map(entry => entry.asset.id)) > 0) onKeep?.();
+    };
     const confirm = async () => {
         if (confirmingRef.current || busy || !filtered.length) return;
         confirmingRef.current = true;
@@ -140,7 +144,7 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
                         style={[styles.button, { backgroundColor: colors.dangerBackground, opacity: busy || !currentRead ? 0.5 : 1 }]}>
                         <Text style={[styles.buttonText, { color: colors.dangerForeground }]}>{t('pending_confirm', { count: filtered.length })}</Text>
                     </Pressable>
-                    <Pressable accessibilityRole="button" disabled={busy} onPress={() => filtered.forEach(entry => keep(entry.asset.id))} style={styles.button}><Text style={[styles.buttonText, { color: colors.text }]}>{t('pending_keep_all')}</Text></Pressable>
+                    <Pressable accessibilityRole="button" disabled={busy} onPress={keepAll} style={styles.button}><Text style={[styles.buttonText, { color: colors.text }]}>{t('pending_keep_all')}</Text></Pressable>
                 </>}
                 {onContinue && <Pressable accessibilityRole="button" disabled={busy} onPress={onContinue} style={[styles.button, { backgroundColor: filtered.length ? 'transparent' : colors.actionBackground }]}>
                     <Text style={[styles.buttonText, { color: filtered.length ? colors.textSecondary : colors.actionForeground }]}>{t('pending_continue')}</Text>

@@ -7,7 +7,12 @@ jest.mock('expo-media-library', () => ({
     getPermissionsAsync: jest.fn(), getAssetInfoAsync: jest.fn(), getAssetsAsync: jest.fn(), deleteAssetsAsync: jest.fn(),
 }));
 jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn(async () => null), setItem: jest.fn(async () => {}), removeItem: jest.fn(async () => {}) }));
-jest.mock('../../database', () => ({ AssetRepository: { removeAssetAndDerivedData: jest.fn(async () => {}) } }));
+jest.mock('../../database', () => ({
+    AssetRepository: {
+        removeAssetAndDerivedData: jest.fn(async () => {}),
+        removeAssetsAndDerivedData: jest.fn(async () => {}),
+    },
+}));
 jest.mock('../../stores/useSettingsStore', () => ({ useSettingsStore: { getState: () => ({ selectedAlbumIds: [] }) } }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 let mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
@@ -118,10 +123,17 @@ it('keeping the last item leaves a completion state until explicit continue', as
     expect(nativeDelete).not.toHaveBeenCalled();
 });
 
-it('keeps only the filtered type when keeping all, without discarding other pending media', async () => {
+it('keeps only the filtered type atomically in one store update when keeping all, without discarding other pending media', async () => {
     await open();
     await fireEventAsync.press(screen.getByRole('radio', { name: '图片' }));
-    await fireEventAsync.press(screen.getByRole('button', { name: '当前列表全部改为保留' }));
+    const updates = jest.fn();
+    const unsubscribe = useMediaStore.subscribe(updates);
+    try {
+        await fireEventAsync.press(screen.getByRole('button', { name: '当前列表全部改为保留' }));
+        expect(updates).toHaveBeenCalledTimes(1);
+    } finally {
+        unsubscribe();
+    }
     expect(useMediaStore.getState()).toMatchObject({ deleteQueue: [], videoTrashBin: [video], photoProcessedIds: ['first', 'second'] });
     expect(nativeDelete).not.toHaveBeenCalled();
 });
@@ -166,6 +178,9 @@ it('confirms the whole filtered queue, not only the currently rendered page', as
     await fireEventAsync.press(screen.getByRole('button', { name: '确认删除当前 19 项' }));
     await screen.findByText('已确认删除 19 项。');
     expect(nativeDelete.mock.calls[0][0]).toEqual(Array.from({ length: 19 }, (_, index) => `p${index}`));
+    expect(AssetRepository.removeAssetsAndDerivedData).toHaveBeenCalledTimes(1);
+    expect(AssetRepository.removeAssetsAndDerivedData).toHaveBeenCalledWith(Array.from({ length: 19 }, (_, index) => `p${index}`));
+    expect(AssetRepository.removeAssetAndDerivedData).not.toHaveBeenCalled();
     expect(useMediaStore.getState().deletedCounts.photos).toBe(19);
 });
 

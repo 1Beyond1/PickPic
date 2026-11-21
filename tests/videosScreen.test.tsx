@@ -36,7 +36,7 @@ const mockMediaState = {
   markVideoAsProcessed: mockMarkVideoAsProcessed,
   videoTrashBin: [] as (typeof videoOne)[],
   deleteQueue: [], pendingDeletionInfo: {}, permissionRefreshVersion: 0,
-  isConfirmingDeletion: false, keepPendingDeletion: jest.fn(), confirmPendingDeletion: jest.fn(),
+  isConfirmingDeletion: false, keepPendingDeletion: jest.fn(), keepAllPendingDeletion: jest.fn((ids: readonly string[]) => ids.length), confirmPendingDeletion: jest.fn(),
   confirmVideoTrash: jest.fn(),
   restoreFromTrash: jest.fn(),
   isConfirmingVideoTrash: false,

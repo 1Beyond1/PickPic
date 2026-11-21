@@ -16,6 +16,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 jest.mock('../database', () => ({
   AssetRepository: {
     removeAssetAndDerivedData: jest.fn(),
+    removeAssetsAndDerivedData: jest.fn(),
   },
 }));
 jest.mock('../stores/useSettingsStore', () => ({
@@ -35,6 +36,7 @@ import { getCurrentlyVisibleAssetIds, useMediaStore } from '../stores/useMediaSt
 import { getPendingDeletionEntries } from '../services/pendingDeletion';
 
 const mockRemoveAssetAndDerivedData = AssetRepository.removeAssetAndDerivedData as jest.Mock;
+const mockRemoveAssetsAndDerivedData = AssetRepository.removeAssetsAndDerivedData as jest.Mock;
 
 describe('media visibility checks', () => {
   const getPermissionsAsync = MediaLibrary.getPermissionsAsync as jest.Mock;
@@ -52,6 +54,7 @@ describe('media visibility checks', () => {
     getAssetsAsync.mockResolvedValue({ assets: [], hasNextPage: false, endCursor: '', totalCount: 0 });
     deleteAssetsAsync.mockResolvedValue(true);
     mockRemoveAssetAndDerivedData.mockResolvedValue(undefined);
+    mockRemoveAssetsAndDerivedData.mockResolvedValue(undefined);
     useMediaStore.setState({
       photos: [],
       videos: [],
@@ -364,7 +367,7 @@ describe('media visibility checks', () => {
         deleteQueue: [], videoTrashBin: [video], deletedCounts: { photos: 1, videos: 0 },
         isConfirmingDeletion: false, isConfirmingVideoTrash: false,
       });
-      expect(mockRemoveAssetAndDerivedData).toHaveBeenCalledWith('photo');
+      expect(mockRemoveAssetsAndDerivedData).toHaveBeenCalledWith(['photo']);
       expect(getAssetsAsync).not.toHaveBeenCalled(); // A cancellation is not a deletion receipt.
     });
 
@@ -542,7 +545,7 @@ describe('media visibility checks', () => {
     await expect(useMediaStore.getState().confirmDeletion()).resolves.toEqual(['visible']);
 
     expect(deleteAssetsAsync).toHaveBeenCalledWith(['visible']);
-    expect(mockRemoveAssetAndDerivedData).toHaveBeenCalledWith('visible');
+    expect(mockRemoveAssetsAndDerivedData).toHaveBeenCalledWith(['visible']);
     expect(useMediaStore.getState().deleteQueue).toEqual([hiddenAsset]);
     expect(useMediaStore.getState().photoProcessedIds).toEqual(['hidden']);
   });
@@ -626,7 +629,11 @@ describe('media visibility checks', () => {
         expect(deleteAssetsAsync).toHaveBeenCalledTimes(2);
         expect(useMediaStore.getState()[queueKey]).toEqual(assets.slice(2000));
         expect(useMediaStore.getState()[progressKey]).toEqual(assets.slice(2000).map(a => a.id));
-        expect(mockRemoveAssetAndDerivedData).toHaveBeenCalledTimes(mediaType === 'photo' ? 2000 : 0);
+        expect(mockRemoveAssetsAndDerivedData).toHaveBeenCalledTimes(mediaType === 'photo' ? 1 : 0);
+        if (mediaType === 'photo') {
+          expect(mockRemoveAssetsAndDerivedData).toHaveBeenCalledWith(assets.slice(0, 2000).map(a => a.id));
+        }
+        expect(mockRemoveAssetAndDerivedData).not.toHaveBeenCalled();
         expect(locked()).toBe(false);
       });
 
@@ -709,7 +716,7 @@ describe('media visibility checks', () => {
     jest.spyOn(console, 'error').mockImplementation(() => undefined);
     const asset = { id: 'visible', mediaType: 'photo' } as any;
     useMediaStore.setState({ deleteQueue: [asset], photoProcessedIds: ['visible'] });
-    mockRemoveAssetAndDerivedData.mockRejectedValue(new Error('Index unavailable'));
+    mockRemoveAssetsAndDerivedData.mockRejectedValue(new Error('Index unavailable'));
     await expect(useMediaStore.getState().confirmDeletion()).resolves.toEqual(['visible']);
     expect(useMediaStore.getState().deleteQueue).toEqual([]);
     expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
@@ -814,6 +821,30 @@ describe('media visibility checks', () => {
       expect(getAssetsAsync).toHaveBeenCalledTimes(1);
     } finally {
       Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOS });
+    }
+  });
+
+  it('keeps many pending items atomically in one store transition without touching excluded media', () => {
+    const photos = Array.from({ length: 200 }, (_, index) => ({
+      id: `p-${index}`,
+      mediaType: 'photo',
+      uri: `file:///p-${index}.jpg`,
+    })) as any[];
+    const video = { id: 'v-1', mediaType: 'video', uri: 'file:///v-1.mp4' } as any;
+    useMediaStore.getState().enqueuePendingDeletion([...photos, video], 'photos');
+
+    const notifications = jest.fn();
+    const unsubscribe = useMediaStore.subscribe(notifications);
+    try {
+      const kept = useMediaStore.getState().keepAllPendingDeletion(photos.map(asset => asset.id));
+      expect(kept).toBe(200);
+      expect(notifications).toHaveBeenCalledTimes(1);
+      expect(useMediaStore.getState().deleteQueue).toEqual([]);
+      expect(useMediaStore.getState().videoTrashBin).toEqual([video]);
+      expect(useMediaStore.getState().photoProcessedIds).toHaveLength(200);
+      expect(Object.keys(useMediaStore.getState().pendingDeletionInfo)).toEqual(['v-1']);
+    } finally {
+      unsubscribe();
     }
   });
 });
