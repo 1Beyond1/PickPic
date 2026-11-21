@@ -39,22 +39,64 @@ export async function getReadableMediaInfo(id: string, type: 'photo' | 'video' =
     }
 }
 
+const READ_INFO_CONCURRENCY = 20;
+
+export interface ReadableMediaInspection {
+    found: Map<string, MediaLibrary.AssetInfo>;
+    unavailableIds: Set<string>;
+}
+
+/** Batch asset-info inspection with bounded concurrency and at most one shared
+ * metadata-only fallback scan when Android rejects EXIF reads without location
+ * access. Transient native errors stay unresolved (neither found nor marked
+ * unavailable) so callers never mistake a provider error for deletion. */
+export async function inspectReadableMediaInfos(
+    ids: readonly string[],
+    type: 'photo' | 'video',
+    options: MediaLibrary.MediaLibraryAssetInfoQueryOptions = { shouldDownloadFromNetwork: false },
+): Promise<ReadableMediaInspection> {
+    const uniqueIds = [...new Set(ids)];
+    const found = new Map<string, MediaLibrary.AssetInfo>();
+    const unavailableIds = new Set<string>();
+    if (uniqueIds.length === 0) return { found, unavailableIds };
+
+    const fallback = new Set<string>();
+    let nextIndex = 0;
+    const workerCount = Math.min(READ_INFO_CONCURRENCY, uniqueIds.length);
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+        while (nextIndex < uniqueIds.length) {
+            const id = uniqueIds[nextIndex++];
+            try {
+                const asset = await MediaLibrary.getAssetInfoAsync(id, options);
+                if (asset?.id === id) found.set(id, asset);
+                else unavailableIds.add(id);
+            } catch (error) {
+                if (missingLocation(error, type)) fallback.add(id);
+            }
+        }
+    }));
+
+    if (fallback.size) {
+        try {
+            const indexed = await readIndexed(fallback, type);
+            for (const id of fallback) {
+                const asset = indexed.get(id);
+                if (asset) found.set(id, asset);
+                else unavailableIds.add(id);
+            }
+        } catch {
+            /* Keep failed lookups unresolved, never assume files deleted. */
+        }
+    }
+
+    return { found, unavailableIds };
+}
+
 /** The deletion preflight can contain thousands of IDs. A shared metadata
  * pass avoids rescanning the entire gallery separately for every EXIF error.
  * A missing result is not evidence of deletion; callers retain such items. */
 export async function getReadableMediaInfos(ids: readonly string[], type: 'photo' | 'video',
     options: MediaLibrary.MediaLibraryAssetInfoQueryOptions = { shouldDownloadFromNetwork: false }) {
-    const found = new Map<string, MediaLibrary.AssetInfo>();
-    const fallback = new Set<string>();
-    await Promise.all([...new Set(ids)].map(async id => {
-        try {
-            const asset = await MediaLibrary.getAssetInfoAsync(id, options);
-            if (asset?.id === id) found.set(id, asset);
-        } catch (error) { if (missingLocation(error, type)) fallback.add(id); }
-    }));
-    if (fallback.size) {
-        try { for (const [id, asset] of await readIndexed(fallback, type)) found.set(id, asset); }
-        catch { /* Keep failed lookups unresolved, never assume files deleted. */ }
-    }
+    const { found } = await inspectReadableMediaInfos(ids, type, options);
     return found;
 }

@@ -1,4 +1,4 @@
-import { getReadableMediaInfo } from '../services/readableMedia';
+import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
 
 import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -111,23 +111,20 @@ export function SimilarGroupDetailOverlay({
             groupSnapshot = null;
             if (requestId === loadRequestIdRef.current) setQueueFeedback(translationRef.current('similar_save_failed'));
         }
+        const infos = await getReadableMediaInfos(memberAssetIds, 'photo', { shouldDownloadFromNetwork: false });
+        if (requestId !== loadRequestIdRef.current) return;
         const items: PhotoItem[] = [];
         for (const assetId of memberAssetIds) {
-            if (requestId !== loadRequestIdRef.current) return;
-            try {
-                const info = await getReadableMediaInfo(assetId, 'photo', { shouldDownloadFromNetwork: false });
-                if (info?.id === assetId && info.mediaType === 'photo' && (info.localUri || info.uri)) {
-                    items.push({
-                        assetId,
-                        uri: info.localUri || info.uri,
-                        width: Number.isFinite(info.width) && info.width > 0 ? info.width : 0,
-                        height: Number.isFinite(info.height) && info.height > 0 ? info.height : 0,
-                        takenAt: Number.isFinite(info.creationTime) && info.creationTime > 0 ? info.creationTime : null,
-                        bytes: null,
-                    });
-                }
-            } catch {
-                // Skip
+            const info = infos.get(assetId);
+            if (info?.id === assetId && info.mediaType === 'photo' && (info.localUri || info.uri)) {
+                items.push({
+                    assetId,
+                    uri: info.localUri || info.uri,
+                    width: Number.isFinite(info.width) && info.width > 0 ? info.width : 0,
+                    height: Number.isFinite(info.height) && info.height > 0 ? info.height : 0,
+                    takenAt: Number.isFinite(info.creationTime) && info.creationTime > 0 ? info.creationTime : null,
+                    bytes: null,
+                });
             }
         }
         const sizes = await readMediaSizes('photo', items.map(item => item.assetId), () => requestId === loadRequestIdRef.current);
@@ -229,8 +226,10 @@ export function SimilarGroupDetailOverlay({
         try {
             const visibleIds = await getCurrentlyVisibleAssetIds(assetIds, 'photo');
             if (visibleIds.size !== new Set(assetIds).size) throw new Error('Unavailable');
-            const assets = await Promise.all(assetIds.map(id => getReadableMediaInfo(id, 'photo', { shouldDownloadFromNetwork: false })));
-            if (assets.some((asset, index) => asset?.id !== assetIds[index] || asset.mediaType !== 'photo')) throw new Error('Unavailable');
+            const infoMap = await getReadableMediaInfos(assetIds, 'photo', { shouldDownloadFromNetwork: false });
+            const assets = assetIds.map(id => infoMap.get(id));
+            if (assets.some((asset, index) => !asset || asset.id !== assetIds[index] || asset.mediaType !== 'photo')) throw new Error('Unavailable');
+            const validatedAssets = assets as NonNullable<typeof assets[number]>[];
             let store = useMediaStore.getState();
             if (generation !== loadRequestIdRef.current || permissionVersion !== store.permissionRefreshVersion) throw new Error('Access changed');
             const latest = await SimilarReviewRepository.getSnapshot(groupId);
@@ -241,7 +240,7 @@ export function SimilarGroupDetailOverlay({
             store = useMediaStore.getState();
             if (!store.hasHydrated || store.isConfirmingDeletion || store.isConfirmingVideoTrash) throw new Error('Busy');
             const before = new Set(getPendingDeletionEntries(store).map(entry => entry.asset.id));
-            const added = store.enqueuePendingDeletion(assets, 'similar');
+            const added = store.enqueuePendingDeletion(validatedAssets, 'similar');
             if (!added && assetIds.some(id => !before.has(id))) throw new Error('Record mutation is blocked');
             await flushMediaProgress();
             if (generation !== loadRequestIdRef.current) return;

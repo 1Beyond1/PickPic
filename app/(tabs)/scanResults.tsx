@@ -1,4 +1,4 @@
-import { getReadableMediaInfo } from '../../services/readableMedia';
+import { getReadableMediaInfo, getReadableMediaInfos } from '../../services/readableMedia';
 /**
  * Scan Results Screen - Display scanned photo analysis
  */
@@ -6,7 +6,7 @@ import { getReadableMediaInfo } from '../../services/readableMedia';
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useReducedMotion } from 'react-native-reanimated';
@@ -38,6 +38,7 @@ interface SimilarGroup {
     memberAssetIds: string[];
     bestAssetId: string | null;
     representativeUri?: string;
+    previewUris: string[];
     review: SimilarReview | null;
     allAccessible: boolean;
 }
@@ -138,44 +139,53 @@ export default function ScanResultsScreen() {
                 visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds),
                 50,
             );
-
-            const blurryWithUris: (BlurryPhoto | null)[] = await Promise.all(
-                blurryAssets.map(async (asset): Promise<BlurryPhoto | null> => {
-                    try {
-                        const info = await getReadableMediaInfo(asset.asset_id);
-                        const uri = info.localUri || info.uri;
-                        if (!uri) return null;
-                        return {
-                            assetId: asset.asset_id,
-                            blurScore: asset.blur_score,
-                            meanLuma: asset.mean_luma,
-                            uri,
-                        };
-                    } catch {
-                        return null;
-                    }
-                })
+            const groups = await DupGroupRepository.getAllGroups();
+            const groupMembersList = await Promise.all(
+                groups.map(async group => {
+                    const members = await DupGroupRepository.getGroupMembers(group.group_id);
+                    const visibleMembers = members.filter(
+                        member => visiblePhotoIds === undefined || visiblePhotoIds.has(member.asset_id),
+                    );
+                    return { group, visibleMembers };
+                }),
             );
 
+            // Resolve all blurry and similar-group asset URIs in one batched call
+            // so Android EXIF fallback scans the library at most once.
+            const allAssetIds = [
+                ...blurryAssets.map(asset => asset.asset_id),
+                ...groupMembersList.flatMap(entry => entry.visibleMembers.map(member => member.asset_id)),
+            ];
+            const readableInfos = await getReadableMediaInfos(allAssetIds, 'photo', {
+                shouldDownloadFromNetwork: false,
+            });
+
             if (requestId !== loadRequestIdRef.current) return;
-            setBlurryPhotos(blurryWithUris.filter((p): p is BlurryPhoto => p !== null));
+
+            const blurryWithUris: BlurryPhoto[] = [];
+            for (const asset of blurryAssets) {
+                const info = readableInfos.get(asset.asset_id);
+                const uri = info?.localUri || info?.uri;
+                if (!uri) continue;
+                blurryWithUris.push({
+                    assetId: asset.asset_id,
+                    blurScore: asset.blur_score,
+                    meanLuma: asset.mean_luma,
+                    uri,
+                });
+            }
+            setBlurryPhotos(blurryWithUris);
 
             // Load similar groups
-            const groups = await DupGroupRepository.getAllGroups();
             const groupsWithCount = await Promise.all(
-                groups.map(async (group) => {
-                    const members = await DupGroupRepository.getGroupMembers(group.group_id);
-                    const availableMembers = (await Promise.all(
-                        members.filter(member => visiblePhotoIds === undefined || visiblePhotoIds.has(member.asset_id)).map(async member => {
-                            try {
-                                const info = await getReadableMediaInfo(member.asset_id);
-                                const uri = info.localUri || info.uri;
-                                return uri ? { member, uri } : null;
-                            } catch {
-                                return null;
-                            }
+                groupMembersList.map(async ({ group, visibleMembers }) => {
+                    const availableMembers = visibleMembers
+                        .map(member => {
+                            const info = readableInfos.get(member.asset_id);
+                            const uri = info?.localUri || info?.uri;
+                            return uri ? { member, uri } : null;
                         })
-                    )).filter((member): member is { member: typeof members[number]; uri: string } => member !== null);
+                        .filter((member): member is { member: typeof visibleMembers[number]; uri: string } => member !== null);
 
                     // A group with a deleted/inaccessible member should not
                     // remain actionable in the results screen.
@@ -198,6 +208,7 @@ export default function ScanResultsScreen() {
                         memberAssetIds: availableMembers.map(item => item.member.asset_id),
                         bestAssetId,
                         representativeUri: representative.uri,
+                        previewUris: availableMembers.slice(0, 2).map(item => item.uri),
                         review,
                         allAccessible: !!snapshot && snapshot.assets.length === availableMembers.length
                             && snapshot.assets.every(asset => availableMembers.some(item => item.member.asset_id === asset.asset_id)),
@@ -304,6 +315,7 @@ export default function ScanResultsScreen() {
             groupId={item.groupId}
             memberCount={item.memberCount}
             memberAssetIds={item.memberAssetIds}
+            previewUris={item.previewUris}
             isProcessed={isGroupProcessed(item)}
             onPress={(layout) => {
                 if (layout) {
@@ -322,6 +334,88 @@ export default function ScanResultsScreen() {
     // Category Detail State
     const [selectedCategory, setSelectedCategory] = useState<CategoryGroup | null>(null);
     const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+    const [categoryCoverUris, setCategoryCoverUris] = useState<{ version: number; map: Record<string, string> }>({
+        version: -1,
+        map: {},
+    });
+    const [categoryDetailUris, setCategoryDetailUris] = useState<{
+        version: number;
+        categoryId: string;
+        map: Record<string, string>;
+    }>({
+        version: -1,
+        categoryId: '',
+        map: {},
+    });
+
+    const categoryCoverIds = useMemo(() => {
+        if (!shouldLoadAICategories) return [] as string[];
+        const ids: string[] = [];
+        for (const group of peopleGroups) {
+            if (group.coverAsset?.asset_id) ids.push(group.coverAsset.asset_id);
+        }
+        for (const group of objectGroups) {
+            if (group.coverAsset?.asset_id) ids.push(group.coverAsset.asset_id);
+        }
+        if (uncategorizedGroup?.coverAsset?.asset_id) {
+            ids.push(uncategorizedGroup.coverAsset.asset_id);
+        }
+        return Array.from(new Set(ids));
+    }, [shouldLoadAICategories, peopleGroups, objectGroups, uncategorizedGroup]);
+    const categoryCoverIdsKey = JSON.stringify(categoryCoverIds);
+
+    useEffect(() => {
+        let active = true;
+        if (categoryCoverIds.length === 0) {
+            setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map: {} });
+            return () => { active = false; };
+        }
+        void getReadableMediaInfos(categoryCoverIds, 'photo', {
+            shouldDownloadFromNetwork: false,
+        }).then(infos => {
+            if (!active) return;
+            const map: Record<string, string> = {};
+            for (const [assetId, info] of infos) {
+                const uri = info.localUri || info.uri;
+                if (uri) map[assetId] = uri;
+            }
+            setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map });
+        });
+        return () => { active = false; };
+        // categoryCoverIdsKey encodes the exact cover ID list.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [categoryCoverIdsKey, mediaLibraryRefreshVersion]);
+
+    const selectedCategoryAssetIds = useMemo(
+        () => selectedCategory ? selectedCategory.assets.map(asset => asset.asset_id) : [],
+        [selectedCategory],
+    );
+    const selectedCategoryKey = selectedCategory
+        ? `${selectedCategory.id}:${JSON.stringify(selectedCategoryAssetIds)}`
+        : '';
+
+    useEffect(() => {
+        let active = true;
+        if (!selectedCategory || selectedCategoryAssetIds.length === 0) {
+            setCategoryDetailUris({ version: mediaLibraryRefreshVersion, categoryId: '', map: {} });
+            return () => { active = false; };
+        }
+        const categoryId = selectedCategory.id;
+        void getReadableMediaInfos(selectedCategoryAssetIds, 'photo', {
+            shouldDownloadFromNetwork: false,
+        }).then(infos => {
+            if (!active) return;
+            const map: Record<string, string> = {};
+            for (const [assetId, info] of infos) {
+                const uri = info.localUri || info.uri;
+                if (uri) map[assetId] = uri;
+            }
+            setCategoryDetailUris({ version: mediaLibraryRefreshVersion, categoryId, map });
+        });
+        return () => { active = false; };
+        // selectedCategoryKey encodes the active category ID and asset list.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedCategoryKey, mediaLibraryRefreshVersion]);
 
     useEffect(() => {
         if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current) return;
@@ -336,6 +430,8 @@ export default function ScanResultsScreen() {
         setSelectedSimilarGroup(null);
         setSelectedCategory(null);
         setSelectedPhoto(null);
+        setCategoryCoverUris({ version: -1, map: {} });
+        setCategoryDetailUris({ version: -1, categoryId: '', map: {} });
         setQueueFeedback(null);
 
         if (permissionScope !== 'none') {
@@ -352,8 +448,18 @@ export default function ScanResultsScreen() {
         return translatedTitle === categoryTitleKey ? title : translatedTitle;
     };
 
+    const currentCategoryCoverMap = categoryCoverUris.version === mediaLibraryRefreshVersion
+        ? categoryCoverUris.map
+        : {};
+    const currentCategoryDetailMap = selectedCategory
+        && categoryDetailUris.version === mediaLibraryRefreshVersion
+        && categoryDetailUris.categoryId === selectedCategory.id
+        ? categoryDetailUris.map
+        : {};
+
     // Render AI Category Card
     const renderCategoryCard = ({ item }: { item: CategoryGroup }) => {
+        const coverAssetId = item.coverAsset?.asset_id;
         return (
             <Pressable
                 accessibilityRole="button"
@@ -368,7 +474,9 @@ export default function ScanResultsScreen() {
                 }}
             >
                 <View style={[styles.categoryMedia, { backgroundColor: colors.surfaceHover }]}>
-                    <CategoryThumbnail assetId={item.coverAsset?.asset_id} />
+                    <CategoryThumbnail
+                        uri={coverAssetId ? currentCategoryCoverMap[coverAssetId] : undefined}
+                    />
                 </View>
                 <View style={styles.categoryInfo}>
                     <Text style={[styles.categoryTitle, { color: colors.text }]}>
@@ -656,7 +764,7 @@ export default function ScanResultsScreen() {
                                     style={styles.gridItem}
                                     onPress={() => { setQueueFeedback(null); setSelectedPhoto(item.asset_id); }}
                                 >
-                                    <CategoryThumbnail assetId={item.asset_id} />
+                                    <CategoryThumbnail uri={currentCategoryDetailMap[item.asset_id]} />
                                 </Pressable>
                             )}
                         />
@@ -704,29 +812,9 @@ export default function ScanResultsScreen() {
     );
 }
 
-// Helper component to load image for category
-function CategoryThumbnail({ assetId }: { assetId?: string }) {
+// Helper component to render a batch-prefetched category thumbnail
+function CategoryThumbnail({ uri }: { uri?: string | null }) {
     const { colors } = useThemeColor();
-    const [image, setImage] = useState<{ assetId: string; uri: string } | null>(null);
-
-    useEffect(() => {
-        let mounted = true;
-        setImage(null);
-
-        if (!assetId) return () => { mounted = false; };
-
-        getReadableMediaInfo(assetId).then(info => {
-            const uri = info?.localUri || info?.uri;
-            if (mounted && uri) {
-                setImage({ assetId, uri });
-            }
-        }).catch(() => {
-            // Ignore error if asset not found
-        });
-        return () => { mounted = false; };
-    }, [assetId]);
-
-    const uri = image && image.assetId === assetId ? image.uri : null;
     if (!uri) return <View style={[styles.categoryThumbnail, { backgroundColor: colors.surfaceHover }]} />;
     return <Image source={{ uri }} style={styles.categoryThumbnail} />;
 }

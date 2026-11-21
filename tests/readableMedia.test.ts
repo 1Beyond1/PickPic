@@ -1,6 +1,6 @@
 import * as MediaLibrary from 'expo-media-library';
 import { Platform } from 'react-native';
-import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
+import { getReadableMediaInfo, getReadableMediaInfos, inspectReadableMediaInfos } from '../services/readableMedia';
 
 jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn(), getAssetsAsync: jest.fn() }));
 const info = MediaLibrary.getAssetInfoAsync as jest.Mock;
@@ -58,4 +58,48 @@ it('does not publish partial enumeration results after a provider cursor cycle',
     page.mockResolvedValue({ assets: [asset], hasNextPage: true, endCursor: 'cycle' });
     const found = await getReadableMediaInfos(['photo', 'missing'], 'photo');
     expect(found.size).toBe(0);
+});
+
+it('caps concurrent getAssetInfoAsync calls and executes at most one shared fallback scan', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const ids = Array.from({ length: 50 }, (_, index) => `photo-${index}`);
+    info.mockImplementation(async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise(resolve => setTimeout(resolve, 1));
+        inFlight -= 1;
+        throw locationFailure;
+    });
+    page.mockResolvedValue({
+        assets: ids.map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })),
+        hasNextPage: false,
+    });
+
+    const found = await getReadableMediaInfos(ids, 'photo');
+    expect(found.size).toBe(50);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(20);
+    expect(page).toHaveBeenCalledTimes(1);
+});
+
+it('distinguishes confirmed unavailable IDs from transient native failures in inspectReadableMediaInfos', async () => {
+    info.mockImplementation(async (id: string) => {
+        if (id === 'ok') return { id, mediaType: 'photo', uri: 'file:///ok.jpg' };
+        if (id === 'null-missing') return null;
+        if (id === 'transient-error') throw new Error('Provider busy');
+        throw locationFailure;
+    });
+    page.mockResolvedValue({
+        assets: [{ id: 'fallback-ok', mediaType: 'photo', uri: 'file:///fallback-ok.jpg' }],
+        hasNextPage: false,
+    });
+
+    const result = await inspectReadableMediaInfos(
+        ['ok', 'null-missing', 'transient-error', 'fallback-ok', 'fallback-gone'],
+        'photo',
+    );
+    expect([...result.found.keys()].sort()).toEqual(['fallback-ok', 'ok']);
+    expect([...result.unavailableIds].sort()).toEqual(['fallback-gone', 'null-missing']);
+    expect(page).toHaveBeenCalledTimes(1);
 });

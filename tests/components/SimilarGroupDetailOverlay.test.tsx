@@ -1,6 +1,6 @@
 import React from 'react';
 import { act, cleanup, fireEvent, renderAsync, screen, waitFor, within } from '@testing-library/react-native';
-import { FlatList, Modal, StyleSheet } from 'react-native';
+import { FlatList, Modal, Platform, StyleSheet } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 
 let mockBottomInset = 24;
@@ -21,7 +21,7 @@ jest.mock('../../services/mediaSizes', () => ({ readMediaSizes: jest.fn(async ()
 jest.mock('../../services/mediaProgressStorage', () => ({ flushMediaProgress: jest.fn(async () => {}) }));
 jest.mock('../../components/SimilarComparison', () => ({ SimilarComparison: ({ onClose }: any) =>
   require('react').createElement(require('react-native').Pressable, { testID: 'similar-comparison', accessibilityRole: 'button', accessibilityLabel: 'Close comparison', onPress: onClose }) }));
-jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn(), deleteAssetsAsync: jest.fn() }));
+jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn(), getAssetsAsync: jest.fn(), deleteAssetsAsync: jest.fn() }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 60, bottom: mockBottomInset, left: 0, right: 0 }),
 }));
@@ -347,4 +347,21 @@ it('does not complete or exit after save failure and retains the existing decisi
   expect(props.onClose).not.toHaveBeenCalled();
   expect(props.onComplete).not.toHaveBeenCalled();
   expect(screen.getAllByText('similar_kept')).toHaveLength(2);
+});
+
+it('loads all group members with one shared Android metadata fallback pass', async () => {
+  const originalOS = Platform.OS;
+  Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+  try {
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValue(new Error('Missing ACCESS_MEDIA_LOCATION permission'));
+    (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({
+      assets: ['first', 'second', 'third'].map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg`, width: 1200, height: 900, creationTime: 100 })),
+      hasNextPage: false,
+    });
+    await renderAsync(<SimilarGroupDetailOverlay {...props} memberAssetIds={['first', 'second', 'third']} />);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(3));
+    expect(MediaLibrary.getAssetsAsync).toHaveBeenCalledTimes(1);
+  } finally {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOS });
+  }
 });

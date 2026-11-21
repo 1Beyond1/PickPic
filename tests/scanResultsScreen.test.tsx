@@ -185,7 +185,7 @@ describe('result navigation preserves media decisions', () => {
     mockMediaState.permissionScope = 'full';
     mockMediaState.mediaLibraryRefreshVersion = 0;
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
-    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` }));
   });
 
   it('switches among all result types without deleting media or marking a group', async () => {
@@ -381,7 +381,7 @@ describe('category photo viewing', () => {
     mockClassificationEnabled = true;
     mockMediaState.mediaLibraryRefreshVersion = 0;
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
-    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` }));
   });
 
   it('provides a named and reachable category close control without changing media', async () => {
@@ -514,5 +514,36 @@ describe('category photo viewing', () => {
     await act(async () => { lookup.resolve({ uri: 'file:///stale.jpg' }); await lookup.promise; });
     expect(screen.UNSAFE_getAllByType(Modal).every(modal => !modal.props.visible)).toBe(true);
     expect(screen.UNSAFE_getAllByType(Image).some(image => image.props.source.uri === 'file:///stale.jpg')).toBe(false);
+  });
+
+  it('batches Android EXIF fallback into one scan across blurry photos and similar groups', async () => {
+    const { Platform } = require('react-native');
+    const originalOS = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    try {
+      (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([
+        { asset_id: 'blur-1', blur_score: 10, mean_luma: 80 },
+        { asset_id: 'blur-2', blur_score: 20, mean_luma: 90 },
+      ]);
+      (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([
+        { group_id: 'group-1', representative_asset_id: 'sim-1', best_asset_id: 'sim-1' },
+      ]);
+      (DupGroupRepository.getGroupMembers as jest.Mock).mockResolvedValue([
+        { asset_id: 'sim-1' }, { asset_id: 'sim-2' },
+      ]);
+      (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValue(new Error('Missing ACCESS_MEDIA_LOCATION permission'));
+      (MediaLibrary.getAssetsAsync as jest.Mock).mockClear();
+      (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({
+        assets: ['blur-1', 'blur-2', 'sim-1', 'sim-2'].map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })),
+        hasNextPage: false,
+      });
+
+      await renderAsync(<ScanResultsScreen />);
+      await waitFor(() => expect(screen.getAllByText('scan_blur_score')).toHaveLength(2));
+      expect(MediaLibrary.getAssetsAsync).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOS });
+      (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([]);
+    }
   });
 });

@@ -781,4 +781,39 @@ describe('media visibility checks', () => {
       random.mockRestore();
     }
   });
+
+  it('batches Android EXIF fallback into one scan for queue visibility and pruning without discarding transient failures', async () => {
+    const originalOS = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    try {
+      const exifError = new Error('Missing ACCESS_MEDIA_LOCATION permission');
+      const photos = ['a', 'b', 'c', 'transient'].map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })) as any[];
+      useMediaStore.setState({
+        deleteQueue: photos,
+        photoProcessedIds: photos.map(asset => asset.id),
+      });
+      getAssetInfoAsync.mockImplementation(async (id: string) => {
+        if (id === 'transient') throw new Error('Provider temporarily busy');
+        throw exifError;
+      });
+      getAssetsAsync.mockResolvedValue({
+        assets: [
+          { id: 'a', mediaType: 'photo', uri: 'file:///a.jpg' },
+          { id: 'b', mediaType: 'photo', uri: 'file:///b.jpg' },
+        ],
+        hasNextPage: false,
+      });
+
+      useMediaStore.getState().refreshQueuedAssetVisibility('limited', 'photo');
+      await waitFor(() => expect(useMediaStore.getState().hiddenPhotoQueuedAssetIds).toEqual(['c', 'transient']));
+      expect(getAssetsAsync).toHaveBeenCalledTimes(1);
+
+      getAssetsAsync.mockClear();
+      useMediaStore.getState().pruneUnavailableQueuedAssets('full', 'photo');
+      await waitFor(() => expect(useMediaStore.getState().deleteQueue.map(asset => asset.id)).toEqual(['a', 'b', 'transient']));
+      expect(getAssetsAsync).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOS });
+    }
+  });
 });

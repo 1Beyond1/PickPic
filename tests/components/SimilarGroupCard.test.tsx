@@ -55,14 +55,26 @@ it('does not leave loaded old thumbnails visible while another group is loading'
   expect(screen.UNSAFE_queryAllByType(Image)).toHaveLength(0);
 });
 
-it('uses the existing metadata-only fallback for Android photos without location permission', async () => {
+it('uses the existing metadata-only fallback for Android photos without location permission in one shared pass', async () => {
   jest.replaceProperty(Platform, 'OS', 'android');
   (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValue(new Error('Missing ACCESS_MEDIA_LOCATION permission'));
   (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({ assets: props.memberAssetIds.map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })), hasNextPage: false });
   render(<SimilarGroupCard {...props} />);
   await waitFor(() => expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(2));
+  expect(MediaLibrary.getAssetsAsync).toHaveBeenCalledTimes(1);
   expect(MediaLibrary.getAssetsAsync).toHaveBeenCalledWith(expect.objectContaining({ resolveWithFullInfo: false, mediaType: 'photo' }));
   expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledWith('first', { shouldDownloadFromNetwork: false });
+});
+
+it('uses prefetched previewUris directly without issuing per-card media lookups', () => {
+  jest.clearAllMocks();
+  render(<SimilarGroupCard {...props} previewUris={['file:///prefetched-1.jpg', 'file:///prefetched-2.jpg']} />);
+  expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri)).toEqual([
+    'file:///prefetched-1.jpg',
+    'file:///prefetched-2.jpg',
+  ]);
+  expect(MediaLibrary.getAssetInfoAsync).not.toHaveBeenCalled();
+  expect(MediaLibrary.getAssetsAsync).not.toHaveBeenCalled();
 });
 
 it('does not show wrong-ID, wrong-type or URI-less results as group members', async () => {

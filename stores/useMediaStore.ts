@@ -9,7 +9,7 @@ import { isRecordTransferActive } from '../services/recordOperationLock';
 import { Platform } from 'react-native';
 import { AssetRepository } from '../database';
 import { deleteAssetsInBatches, getDeletionFailureKind } from '../services/mediaDeletion';
-import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
+import { getReadableMediaInfos, inspectReadableMediaInfos } from '../services/readableMedia';
 import { getPendingDeletionEntries, retainPendingDeletionInfo, PendingDeletionIncompleteError } from '../services/pendingDeletion';
 import type { PendingDeletionInfo, PendingDeletionResult, PendingDeletionSource } from '../services/pendingDeletion';
 import { advanceOrganizingSession, continueOrganizingSession, createOrganizingSession, moveOrganizingSession, removeDeletedSessionMedia, revisitDeferredMedia } from '../services/organizingSession';
@@ -748,22 +748,15 @@ export const useMediaStore = create<MediaState>()(
             : { hiddenPhotoQueuedAssetIds: queuedAssetIds });
         if (scope === 'none' || queuedAssetIds.length === 0) return;
 
-        void Promise.all(queuedAssetIds.map(async assetId => {
-            try {
-                const info = await getReadableMediaInfo(assetId, mediaType, {
-                    shouldDownloadFromNetwork: false,
-                });
-                return info?.id === assetId ? null : assetId;
-            } catch {
-                return assetId;
-            }
-        })).then(hiddenAssetIds => {
+        void getReadableMediaInfos(queuedAssetIds, mediaType, {
+            shouldDownloadFromNetwork: false,
+        }).then(readable => {
             const currentRequestId = mediaType === 'video'
                 ? videoQueueVisibilityRequestId
                 : photoQueueVisibilityRequestId;
             if (requestId !== currentRequestId) return;
 
-            const hiddenIds = hiddenAssetIds.filter((assetId): assetId is string => assetId !== null);
+            const hiddenIds = queuedAssetIds.filter(assetId => !readable.has(assetId));
             set(mediaType === 'video'
                 ? { hiddenVideoQueuedAssetIds: hiddenIds }
                 : { hiddenPhotoQueuedAssetIds: hiddenIds });
@@ -1365,23 +1358,14 @@ export const useMediaStore = create<MediaState>()(
             ].map(asset => asset.id)));
         if (queuedAssetIds.length === 0) return;
 
-        void Promise.all(queuedAssetIds.map(async assetId => {
-            try {
-                const info = await getReadableMediaInfo(assetId, mediaType, {
-                    shouldDownloadFromNetwork: false,
-                });
-                return info?.id === assetId ? null : assetId;
-            } catch {
-                // A transient native lookup failure must not discard a queue
-                // item that may still be recoverable.
-                return null;
-            }
-        })).then(unavailableAssetIds => {
+        void inspectReadableMediaInfos(queuedAssetIds, mediaType, {
+            shouldDownloadFromNetwork: false,
+        }).then(({ unavailableIds }) => {
             const currentRequestId = mediaType === 'video'
                 ? videoQueuePruneRequestId
                 : photoQueuePruneRequestId;
             if (requestId !== currentRequestId) return;
-            const idsToRemove = unavailableAssetIds.filter((assetId): assetId is string => assetId !== null);
+            const idsToRemove = queuedAssetIds.filter(assetId => unavailableIds.has(assetId));
             if (idsToRemove.length > 0) {
                 get().removeDeletedAssets(idsToRemove);
             }
