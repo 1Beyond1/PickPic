@@ -137,12 +137,25 @@ it('drops only reviews referencing physically removed media and rolls back clean
     expect(await reviews.getReview(second)).not.toBeNull();
 });
 
-it('keeps explicit review records through a scan reset but not derived analysis', async () => {
+it('clears similar_reviews records alongside derived analysis during a full scan reset', async () => {
     const snapshot = await seedGroup();
     await reviews.save('group', snapshot.key, ['one', 'two'], []);
     await AssetRepository.resetAll();
     expect(await reviews.getSnapshot('group')).toBeNull();
-    expect(await reviews.getReview(snapshot)).toMatchObject({ keptIds: ['one', 'two'] });
+    expect(await reviews.getReview(snapshot)).toBeNull();
+    expect(await db.getAllAsync('SELECT * FROM similar_reviews')).toEqual([]);
+});
+
+it('drops similar_reviews referencing assets removed by removeMissingAssets while preserving intact groups', async () => {
+    const first = await seedGroup('group-gone', ['one', 'two']);
+    await reviews.save('group-gone', first.key, ['one'], ['two']);
+    const second = await seedGroup('group-intact', ['three', 'four']);
+    await reviews.save('group-intact', second.key, ['three', 'four'], []);
+
+    const removed = await AssetRepository.removeMissingAssets(new Set(['one', 'three', 'four']));
+    expect(removed).toEqual(['two']);
+    expect(await reviews.getReview(first)).toBeNull();
+    expect(await reviews.getReview(second)).toMatchObject({ keptIds: ['four', 'three'], pendingIds: [] });
 });
 
 it('reports malformed review JSON without disclosing its contents', async () => {

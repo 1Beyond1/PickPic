@@ -1329,15 +1329,19 @@ export const useMediaStore = create<MediaState>()(
     },
 
     undoAction: (assetId) => {
-        set((state) => state.isConfirmingDeletion
-            ? state
-            : {
-                deleteQueue: state.deleteQueue.filter(p => p.id !== assetId),
+        if (get().isConfirmingDeletion || isRecordTransferActive()) return;
+        set((state) => {
+            if (state.isConfirmingDeletion || isRecordTransferActive()) return state;
+            const deleteQueue = state.deleteQueue.filter(p => p.id !== assetId);
+            return {
+                deleteQueue,
                 collectionQueue: state.collectionQueue.filter(p => p.id !== assetId),
-                pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue: state.deleteQueue.filter(asset => asset.id !== assetId) }),
+                pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue }),
+                lastDeletionResult: null,
                 recentDecisions: state.recentDecisions.filter(entry => entry.kind !== 'photo' || entry.assetId !== assetId),
-                photoProcessedIds: state.photoProcessedIds.filter(id => id !== assetId)
-            });
+                photoProcessedIds: state.photoProcessedIds.filter(id => id !== assetId),
+            };
+        });
     },
 
     markVideoForTrash: asset => { get().enqueuePendingDeletion([asset], 'videos'); },
@@ -1449,17 +1453,22 @@ export const useMediaStore = create<MediaState>()(
     },
 
     resetPhotoProgress: () => {
-        if (get().isConfirmingDeletion) return;
+        if (get().isConfirmingDeletion || isRecordTransferActive()) return;
         photoLoadRequestId++;
-        set((state) => state.isConfirmingDeletion
+        set((state) => state.isConfirmingDeletion || isRecordTransferActive()
             ? state
             : {
                 photoProcessedIds: [],
                 recentDecisions: state.recentDecisions.filter(entry => entry.kind !== 'photo'),
                 organizingSessions: { ...state.organizingSessions, photo: null },
+                photoSessionRecoveryStatus: null,
+                photoSessionUnavailableCount: 0,
+                currentIndex: 0,
                 photos: [],
                 deleteQueue: [],
                 collectionQueue: [],
+                pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue: [] }),
+                lastDeletionResult: null,
                 hiddenPhotoQueuedAssetIds: state.permissionScope === 'full'
                     ? null
                     : retainHiddenQueuedAssetIds(
@@ -1470,9 +1479,9 @@ export const useMediaStore = create<MediaState>()(
     },
 
     resetVideoProgress: () => {
-        if (get().isConfirmingVideoTrash) return;
+        if (get().isConfirmingVideoTrash || isRecordTransferActive()) return;
         videoLoadRequestId++;
-        set((state) => state.isConfirmingVideoTrash
+        set((state) => state.isConfirmingVideoTrash || isRecordTransferActive()
             ? state
             : {
                 videoProcessedIds: [],
@@ -1481,6 +1490,8 @@ export const useMediaStore = create<MediaState>()(
                 videoSessionRecoveryStatus: null, videoSessionUnavailableCount: 0, videoCurrentIndex: 0,
                 videos: [],
                 videoTrashBin: [],
+                pendingDeletionInfo: retainPendingDeletionInfo({ ...state, videoTrashBin: [] }),
+                lastDeletionResult: null,
                 hiddenVideoQueuedAssetIds: null,
             });
     },

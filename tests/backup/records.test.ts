@@ -152,3 +152,39 @@ it('refuses a transfer during another task and releases the lock after failure',
     const available = acquireRecordOperation('scanner');
     expect(available).not.toBeNull(); available?.();
 });
+
+it('clears stale organizing sessions and preserves limited-scope hidden queue protection on restore', async () => {
+    const hiddenOld = { ...photo, id: 'hidden-old' };
+    const hiddenVideo = { ...photo, id: 'hidden-video', filename: 'old.mp4', mediaType: 'video', duration: 5 } as MediaLibrary.Asset;
+    state.permissionScope = 'limited';
+    state.deleteQueue = [hiddenOld];
+    state.videoTrashBin = [hiddenVideo];
+    state.hiddenPhotoQueuedAssetIds = ['hidden-old'];
+    state.hiddenVideoQueuedAssetIds = ['hidden-video'];
+    state.organizingSessions = {
+        photo: { sessionId: 'old-photo', kind: 'photo', phase: 'organizing' },
+        video: { sessionId: 'old-video', kind: 'video', phase: 'organizing' },
+    };
+    state.photoSessionRecoveryStatus = 'ready';
+    state.photoSessionUnavailableCount = 2;
+    state.videoSessionRecoveryStatus = 'unavailable';
+    state.videoSessionUnavailableCount = 1;
+    state.lastDeletionResult = { status: 'failed', requestedIds: ['hidden-old'], deletedIds: [], remainingIds: ['hidden-old'], failureKind: 'failed' };
+
+    jest.mocked(MediaLibrary.getPermissionsAsync).mockResolvedValue({ granted: true, accessPrivileges: 'limited' } as any);
+    jest.mocked(MediaLibrary.getAssetsAsync).mockResolvedValue({ assets: [photo], hasNextPage: false } as any);
+
+    await restoreEncryptedRecords(file(), true);
+
+    expect(state.organizingSessions).toEqual({ photo: null, video: null });
+    expect(state.photoSessionRecoveryStatus).toBeNull();
+    expect(state.photoSessionUnavailableCount).toBe(0);
+    expect(state.videoSessionRecoveryStatus).toBeNull();
+    expect(state.videoSessionUnavailableCount).toBe(0);
+    expect(state.lastDeletionResult).toBeNull();
+    expect(state.deleteQueue.map((asset: MediaLibrary.Asset) => asset.id)).toEqual(['hidden-old', 'one']);
+    // The previously hidden item must remain hidden under limited access, while
+    // the newly verified restored item is visible.
+    expect(state.hiddenPhotoQueuedAssetIds).toEqual(['hidden-old']);
+    expect(state.hiddenVideoQueuedAssetIds).toEqual(['hidden-video']);
+});

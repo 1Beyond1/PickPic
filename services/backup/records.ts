@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { acquireRecordOperation } from '../recordOperationLock';
 import { flushMediaProgress } from '../mediaProgressStorage';
+import { retainPendingDeletionInfo } from '../pendingDeletion';
 import { BackupCancellation, BackupError, BackupKeyProgress, decryptBackup, encryptBackup } from './crypto';
 import { BackupPayload, getDecisions, mediaFingerprint, parseBackupPayload, planRestore, snapshotRecords } from './payload';
 
@@ -110,10 +111,56 @@ export async function restoreEncryptedRecords(payload: BackupPayload, includePen
         const current = useMediaStore.getState();
         if (current.isConfirmingDeletion || current.isConfirmingVideoTrash) throw new BackupError('unavailable');
         const { merged, preview } = planRestore(payload, current, visible, includePending);
-        // Version-1 backups do not contain an undo journal. A restore changes
-        // decisions outside that journal; old inverse operations are stale.
-        useMediaStore.setState({ ...merged, recentDecisions: [], photos: [], videos: [], currentIndex: 0, videoCurrentIndex: 0,
-            hiddenPhotoQueuedAssetIds: null, hiddenVideoQueuedAssetIds: null });
+        const mergedPhotoQueuedIds = new Set([...merged.deleteQueue, ...merged.collectionQueue].map(asset => asset.id));
+        const mergedVideoQueuedIds = new Set(merged.videoTrashBin.map(asset => asset.id));
+        const visiblePhotoIds = new Set(
+            [...visible.values()].filter(asset => asset.mediaType === 'photo').map(asset => asset.id),
+        );
+        const visibleVideoIds = new Set(
+            [...visible.values()].filter(asset => asset.mediaType === 'video').map(asset => asset.id),
+        );
+        const hiddenPhotoQueuedAssetIds = current.permissionScope === 'full'
+            ? null
+            : current.hiddenPhotoQueuedAssetIds == null
+                ? (current.permissionScope
+                    ? [...mergedPhotoQueuedIds].filter(id => !visiblePhotoIds.has(id))
+                    : null)
+                : Array.from(new Set(
+                    current.hiddenPhotoQueuedAssetIds.filter(
+                        id => mergedPhotoQueuedIds.has(id) && !visiblePhotoIds.has(id),
+                    ),
+                ));
+        const hiddenVideoQueuedAssetIds = current.hiddenVideoQueuedAssetIds == null
+            ? null
+            : Array.from(new Set(
+                current.hiddenVideoQueuedAssetIds.filter(
+                    id => mergedVideoQueuedIds.has(id) && !visibleVideoIds.has(id),
+                ),
+            ));
+        // Version-1 backups do not contain an undo journal or organizing
+        // sessions. Clear stale sessions/recovery state while preserving
+        // limited-access hidden-queue protection.
+        useMediaStore.setState({
+            ...merged,
+            recentDecisions: [],
+            organizingSessions: { photo: null, video: null },
+            photoSessionRecoveryStatus: null,
+            photoSessionUnavailableCount: 0,
+            videoSessionRecoveryStatus: null,
+            videoSessionUnavailableCount: 0,
+            pendingDeletionInfo: retainPendingDeletionInfo({
+                deleteQueue: merged.deleteQueue,
+                videoTrashBin: merged.videoTrashBin,
+                pendingDeletionInfo: current.pendingDeletionInfo ?? {},
+            }),
+            lastDeletionResult: null,
+            photos: [],
+            videos: [],
+            currentIndex: 0,
+            videoCurrentIndex: 0,
+            hiddenPhotoQueuedAssetIds,
+            hiddenVideoQueuedAssetIds,
+        });
         current.clearLoadedMedia(); // Invalidate asynchronous feed loads too.
         await flushMediaProgress();
         await current.refreshTotalCounts();

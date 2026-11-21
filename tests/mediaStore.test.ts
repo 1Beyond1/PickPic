@@ -847,4 +847,41 @@ describe('media visibility checks', () => {
       unsubscribe();
     }
   });
+
+  it('blocks resetPhotoProgress, resetVideoProgress, and undoAction during an active record transfer and clears stale deletion metadata on reset', () => {
+    const { acquireRecordOperation } = require('../services/recordOperationLock');
+    const photo = { id: 'p-reset', mediaType: 'photo', uri: 'file:///p-reset.jpg' } as any;
+    const video = { id: 'v-reset', mediaType: 'video', uri: 'file:///v-reset.mp4' } as any;
+    useMediaStore.getState().enqueuePendingDeletion([photo, video], 'photos');
+    useMediaStore.setState({
+      lastDeletionResult: { status: 'cancelled', requestedIds: ['p-reset'], deletedIds: [], remainingIds: ['p-reset'], failureKind: 'cancelled' },
+    });
+
+    const release = acquireRecordOperation('backup')!;
+    try {
+      useMediaStore.getState().resetPhotoProgress();
+      useMediaStore.getState().resetVideoProgress();
+      useMediaStore.getState().undoAction('p-reset');
+      expect(useMediaStore.getState().deleteQueue).toEqual([photo]);
+      expect(useMediaStore.getState().videoTrashBin).toEqual([video]);
+      expect(useMediaStore.getState().pendingDeletionInfo['p-reset']).toBeDefined();
+      expect(useMediaStore.getState().lastDeletionResult).not.toBeNull();
+    } finally {
+      release();
+    }
+
+    useMediaStore.getState().resetPhotoProgress();
+    expect(useMediaStore.getState().deleteQueue).toEqual([]);
+    expect(useMediaStore.getState().pendingDeletionInfo['p-reset']).toBeUndefined();
+    expect(useMediaStore.getState().pendingDeletionInfo['v-reset']).toBeDefined();
+    expect(useMediaStore.getState().lastDeletionResult).toBeNull();
+
+    useMediaStore.setState({
+      lastDeletionResult: { status: 'failed', requestedIds: ['v-reset'], deletedIds: [], remainingIds: ['v-reset'], failureKind: 'failed' },
+    });
+    useMediaStore.getState().resetVideoProgress();
+    expect(useMediaStore.getState().videoTrashBin).toEqual([]);
+    expect(useMediaStore.getState().pendingDeletionInfo).toEqual({});
+    expect(useMediaStore.getState().lastDeletionResult).toBeNull();
+  });
 });

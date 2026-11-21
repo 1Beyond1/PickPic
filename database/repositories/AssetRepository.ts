@@ -302,6 +302,7 @@ export const AssetRepository = {
                 const placeholders = batch.map(() => '?').join(', ');
 
                 // Remove dependent scan results before removing the asset rows.
+                await removeSimilarReviewsForAssets(transactionDb, batch);
                 await transactionDb.runAsync(
                     `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
                     batch
@@ -1014,6 +1015,7 @@ export const AssetRepository = {
         await withTransaction(async db => {
             // Keep cursor, derived groups, and asset statuses in one commit so
             // a failed reset cannot leave the scanner in a half-reset state.
+            await db.runAsync('DELETE FROM similar_reviews');
             await db.runAsync('DELETE FROM ai_analysis');
             await db.runAsync('DELETE FROM dup_members');
             await db.runAsync('DELETE FROM dup_groups');
