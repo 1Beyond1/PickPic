@@ -191,6 +191,24 @@ export default function RootLayout() {
   useEffect(() => {
     if (!privacyReady || Platform.OS === 'web') return;
 
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleIncrementalRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (Object.keys(usePrivacyStore.getState().failures).length) return;
+        const mediaStore = useMediaStore.getState();
+        const scope = mediaPermissionScopeRef.current ?? 'none';
+        mediaStore.refreshQueuedAssetVisibility(scope, 'photo');
+        mediaStore.pruneUnavailableQueuedAssets(scope, 'photo');
+        if (mediaPermissionGrantedRef.current && !isScanning()) {
+          void mediaStore.loadAlbums();
+          void mediaStore.refreshTotalCounts();
+        }
+        mediaStore.notifyMediaLibraryRefresh();
+      }, 300);
+    };
+
     const subscription = MediaLibrary.addListener(event => {
       if (Object.keys(usePrivacyStore.getState().failures).length) return;
       const isPermissionScopeChange = event.hasIncrementalChanges === false;
@@ -198,53 +216,29 @@ export default function RootLayout() {
       if (!isPermissionScopeChange && !isIncrementalMediaChange) return;
 
       const mediaStore = useMediaStore.getState();
-      mediaStore.clearLoadedMedia();
-      let indexCleanupPromise: Promise<void> | null = null;
       if (isPermissionScopeChange) {
+        if (refreshTimer) {
+          clearTimeout(refreshTimer);
+          refreshTimer = null;
+        }
+        mediaStore.clearLoadedMedia();
         // The permission hook has not necessarily published the new scope
         // yet. Hide all persisted queue items until it does so.
         mediaStore.refreshQueuedAssetVisibility('none', 'photo');
         mediaStore.notifyPermissionRefresh();
-      } else {
-        const deletedAssetIds = event.deletedAssets?.map(asset => asset.id) ?? [];
-        if (deletedAssetIds.length > 0) {
-          // Incremental deletion events identify media that is genuinely gone.
-          // Permission-scope changes use hasIncrementalChanges=false and must
-          // not remove progress that may become visible again later.
-          mediaStore.removeDeletedAssets(deletedAssetIds);
-          indexCleanupPromise = AssetRepository.removeAssetsAndDerivedData(deletedAssetIds)
-            .catch(() => {
-              // The media is already gone. Keep the UI refresh, and let the
-              // next complete scan repair the index if this cleanup failed.
-              console.error('[RootLayout] Failed to clean externally deleted assets from scan index.');
-            });
+        if (isScanning()) {
+          stopScanner();
         }
-        mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none', 'photo');
-        mediaStore.pruneUnavailableQueuedAssets(mediaPermissionScopeRef.current ?? 'none', 'photo');
-        if (!indexCleanupPromise) {
-          mediaStore.notifyMediaLibraryRefresh();
+
+        if (mediaPermissionGrantedRef.current) {
+          const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
+          void mediaStore.loadAlbums();
+          void mediaStore.refreshTotalCounts();
+          if (!mediaStore.organizingSessions.photo) {
+            void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+          }
         }
-      }
-      if (isScanning()) {
-        stopScanner();
-      }
 
-      if (mediaPermissionGrantedRef.current) {
-        const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
-        void mediaStore.loadAlbums();
-        void mediaStore.refreshTotalCounts();
-        void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-      }
-
-      if (indexCleanupPromise) {
-        void indexCleanupPromise.then(() => {
-          // Refresh scanner status only after the index transaction has
-          // committed, otherwise deleted rows can be reported once more.
-          useMediaStore.getState().notifyMediaLibraryRefresh();
-        });
-      }
-
-      if (isPermissionScopeChange) {
         void getMediaPermission()
           .then(permission => {
             // A limited-to-limited selection change keeps the same coarse
@@ -263,13 +257,38 @@ export default function RootLayout() {
             refreshedStore.refreshQueuedAssetVisibility(refreshedScope, 'photo');
             refreshedStore.pruneUnavailableQueuedAssets(refreshedScope, 'photo');
           })
-          .catch(error => {
+          .catch(() => {
             console.error('[RootLayout] Failed to refresh permission after media-library scope change.');
           });
+        return;
       }
+
+      // Incremental media changes (e.g. a new screenshot or edit outside the
+      // app) should not clear an active video feed or stop an in-progress AI
+      // scan. Remove explicitly deleted assets immediately and debounce the
+      // lightweight visibility/metadata refresh.
+      const deletedAssetIds = event.deletedAssets?.map(asset => asset.id) ?? [];
+      if (deletedAssetIds.length > 0) {
+        mediaStore.removeDeletedAssets(deletedAssetIds);
+        void AssetRepository.removeAssetsAndDerivedData(deletedAssetIds)
+          .catch(() => {
+            // The media is already gone. Keep the UI refresh, and let the
+            // next complete scan repair the index if this cleanup failed.
+            console.error('[RootLayout] Failed to clean externally deleted assets from scan index.');
+          })
+          .finally(() => {
+            scheduleIncrementalRefresh();
+          });
+        return;
+      }
+
+      scheduleIncrementalRefresh();
     });
 
-    return () => subscription.remove();
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      subscription.remove();
+    };
   }, [privacyReady, getMediaPermission]);
 
   // Initialize app

@@ -1,5 +1,7 @@
 jest.mock('expo-image', () => ({ Image: { clearDiskCache: jest.fn() } }));
 jest.mock('expo-file-system/legacy', () => ({ cacheDirectory: 'file:///isolated/cache/', deleteAsync: jest.fn() }));
+import fs from 'node:fs';
+import path from 'node:path';
 import { Image } from 'expo-image';
 import * as FileSystem from 'expo-file-system/legacy';
 import { clearLegacyMediaCache } from '../../services/privacy/mediaCache';
@@ -20,4 +22,18 @@ it('keeps the gate closed for failed cleanup, with explicit successful retry', a
     expect(usePrivacyStore.getState().failures.cache).toBe('read');
     await clearLegacyMediaCache();
     expect(usePrivacyStore.getState().failures).toEqual({});
+});
+
+it.each([
+    'app/(tabs)/photos.tsx',
+    'app/(tabs)/scanResults.tsx',
+    'components/PhotoPreviewModal.tsx',
+    'components/SimilarComparison.tsx',
+    'components/SimilarGroupCard.tsx',
+    'components/SimilarGroupDetailOverlay.tsx',
+])('enforces expo-image with cachePolicy="memory" in %s instead of RN Image', relativePath => {
+    const source = fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8');
+    expect(source).toMatch(/import\s*\{[^}]*\bImage\b[^}]*\}\s*from\s*'expo-image'/);
+    expect(source).not.toMatch(/import\s*\{[^}]*\bImage\b[^}]*\}\s*from\s*'react-native'/);
+    expect(source).toContain('cachePolicy="memory"');
 });

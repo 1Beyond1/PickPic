@@ -1,12 +1,12 @@
 import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
 
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     BackHandler,
     FlatList,
-    Image,
     Modal,
     Pressable,
     ScrollView,
@@ -303,7 +303,7 @@ export function SimilarGroupDetailOverlay({
                 onLongPress={() => handleLongPress(item.assetId)}
                 disabled={isDeleting}
             >
-                <Image source={{ uri: item.uri }} style={styles.photoImage} />
+                <Image source={{ uri: item.uri }} cachePolicy="memory" contentFit="cover" style={styles.photoImage} />
                 {isSelected && (
                     <View style={[styles.checkmark, { backgroundColor: colors.actionBackground }]}>
                         <Ionicons name="checkmark" size={16} color={colors.actionForeground} />
@@ -509,7 +509,7 @@ function SimilarPhotoPreview({ photo }: { photo: PhotoItem }) {
     );
     const uri = image.uri;
     return <Image key={attempt} accessible accessibilityRole="image" accessibilityLabel={t('photo_detail_title')}
-        source={{ uri }} style={styles.previewImage} resizeMode="contain"
+        source={{ uri }} cachePolicy="memory" contentFit="contain" style={styles.previewImage}
         onError={() => setImage(previous => previous?.attempt === attempt && previous.uri === uri ? { ...previous, failed: true } : previous)} />;
 }
 

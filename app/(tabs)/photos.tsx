@@ -1,9 +1,10 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 // import { BlurView } from 'expo-blur';
+import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlassContainer } from '../../components/GlassContainer';
 import { OrganizingScopeModal } from '../../components/OrganizingScopeModal';
@@ -400,11 +401,11 @@ export default function PhotosScreen() {
 
                     <View style={styles.homePreviewSection}>
                         {previewPhotos.length > 0 ? <View accessibilityLabel={t('photos_home_preview')} style={[styles.homeMosaic, { height: previewHeight }]}>
-                            <Image source={{ uri: previewPhotos[0].uri }} style={[styles.homeMosaicLarge, { backgroundColor: colors.surfaceHover }]} resizeMode="cover" />
+                            <Image source={{ uri: previewPhotos[0].uri }} cachePolicy="memory" contentFit="cover" style={[styles.homeMosaicLarge, { backgroundColor: colors.surfaceHover }]} />
                             {previewPhotos.length > 1 && (
                                 <View style={styles.homeMosaicSide}>
                                     {previewPhotos.slice(1).map(photo => (
-                                        <Image key={photo.id} source={{ uri: photo.uri }} style={[styles.homeMosaicSmall, { backgroundColor: colors.surfaceHover }]} resizeMode="cover" />
+                                        <Image key={photo.id} source={{ uri: photo.uri }} cachePolicy="memory" contentFit="cover" style={[styles.homeMosaicSmall, { backgroundColor: colors.surfaceHover }]} />
                                     ))}
                                 </View>
                             )}

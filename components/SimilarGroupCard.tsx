@@ -3,9 +3,10 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import { getReadableMediaInfos } from '../services/readableMedia';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
@@ -80,7 +81,7 @@ export function SimilarGroupCard({
             <View style={styles.previews}>
                 {[0, 1].map(index => (
                     <View key={index} style={[styles.thumbnail, { backgroundColor: colors.surfaceHover }]}>
-                        {thumbnails[index] && <Image source={{ uri: thumbnails[index] }} style={styles.image} resizeMode="cover" />}
+                        {thumbnails[index] && <Image source={{ uri: thumbnails[index] }} cachePolicy="memory" contentFit="cover" style={styles.image} />}
                     </View>
                 ))}
             </View>

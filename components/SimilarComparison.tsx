@@ -1,5 +1,6 @@
+import { Image } from 'expo-image';
 import React, { useState } from 'react';
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue } from 'react-native-reanimated';
 import type { SharedValue } from 'react-native-reanimated';
@@ -71,8 +72,11 @@ function Pane({ photo, viewport, label }: { photo: ComparisonPhoto; viewport: Li
                 </Pressable>
             </View> : <Animated.View style={[StyleSheet.absoluteFill, imageStyle]}>
                 <Image key={attempt} accessible accessibilityRole="image" accessibilityLabel={label}
-                    source={{ uri: photo.uri }} resizeMode="contain" style={styles.image}
-                    onLoad={event => { const source = event.nativeEvent.source; if (source?.width > 0 && source?.height > 0) setDimensions({ width: source.width, height: source.height }); }}
+                    source={{ uri: photo.uri }} cachePolicy="memory" contentFit="contain" style={styles.image}
+                    onLoad={event => {
+                        const source = event?.source ?? (event as unknown as { nativeEvent?: { source?: { width: number; height: number } } })?.nativeEvent?.source;
+                        if (source && source.width > 0 && source.height > 0) setDimensions({ width: source.width, height: source.height });
+                    }}
                     onError={() => setFailed(true)} />
             </Animated.View>}
         </View>

@@ -400,7 +400,9 @@ describe('category photo viewing', () => {
   it('dismisses a readable preview with the visible close button and keeps its category open', async () => {
     await openPhoto();
     await waitFor(() => expect(screen.UNSAFE_getAllByType(Image).some(image => (
-      image.props.source.uri === 'file:///category-photo.jpg' && image.props.style?.resizeMode === 'contain'
+      image.props.source.uri === 'file:///category-photo.jpg'
+      && image.props.contentFit === 'contain'
+      && image.props.cachePolicy === 'memory'
     ))).toBe(true));
     fireEvent.press(screen.getByRole('button', { name: 'close' }));
     expect(screen.UNSAFE_getAllByType(Modal).find(modal => modal.props.transparent)?.props.visible).toBe(false);
@@ -456,7 +458,7 @@ describe('category photo viewing', () => {
     await screen.findByText('scan_photo_unavailable');
     fireEvent.press(screen.getByRole('button', { name: 'retry' }));
     await waitFor(() => expect(screen.queryByText('scan_photo_unavailable')).toBeNull());
-    expect(screen.UNSAFE_getAllByType(Image).some(image => image.props.style?.resizeMode === 'contain')).toBe(true);
+    expect(screen.UNSAFE_getAllByType(Image).some(image => image.props.contentFit === 'contain' && image.props.cachePolicy === 'memory')).toBe(true);
     expect(screen.UNSAFE_queryAllByType(ActivityIndicator)).toHaveLength(0);
   });
 
@@ -467,7 +469,7 @@ describe('category photo viewing', () => {
     (MediaLibrary.getAssetInfoAsync as jest.Mock).mockResolvedValue({ uri: 'file:///category-photo.jpg' });
     fireEvent.press(screen.getByRole('button', { name: 'retry' }));
     const image = await waitFor(() => {
-      const viewerImage = screen.UNSAFE_getAllByType(Image).find(item => item.props.style?.resizeMode === 'contain');
+      const viewerImage = screen.UNSAFE_getAllByType(Image).find(item => item.props.contentFit === 'contain');
       expect(viewerImage).toBeDefined();
       return viewerImage!;
     });
@@ -478,7 +480,7 @@ describe('category photo viewing', () => {
   it('opens a readable photo and lets system back return to its category without changing data', async () => {
     await openPhoto();
     await waitFor(() => expect(screen.UNSAFE_getAllByType(Image).some(image => (
-      image.props.style?.resizeMode === 'contain' && image.props.source.uri === 'file:///category-photo.jpg'
+      image.props.contentFit === 'contain' && image.props.source.uri === 'file:///category-photo.jpg'
     ))).toBe(true));
     const viewer = screen.UNSAFE_getAllByType(Modal).find(modal => modal.props.transparent)!;
     fireEvent(viewer, 'requestClose');

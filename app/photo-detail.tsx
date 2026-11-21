@@ -11,6 +11,7 @@ import { PhotoReadFeedback } from '../components/PhotoReadFeedback';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { usePhotoPreviewSource } from '../hooks/usePhotoPreviewSource';
+import { getReadableMediaInfo } from '../services/readableMedia';
 import { useMediaStore } from '../stores/useMediaStore';
 
 export default function PhotoDetailScreen() {
@@ -55,11 +56,11 @@ export default function PhotoDetailScreen() {
         if (!assetId) return;
 
         let active = true;
-        void MediaLibrary.getAssetInfoAsync(assetId, {
+        void getReadableMediaInfo(assetId, 'photo', {
             shouldDownloadFromNetwork: false,
         })
             .then(info => {
-                if (!active || info) return;
+                if (!active || (info && (!info.id || info.id === assetId))) return;
 
                 // A regular media-library change may have removed the asset
                 // shown by this route. Do not leave a stale URI on screen or
@@ -67,9 +68,12 @@ export default function PhotoDetailScreen() {
                 router.replace(permissionScope === 'none' ? '/' : '/(tabs)/photos');
             })
             .catch(error => {
-                if (active) {
-                    console.warn('[PhotoDetail] Failed to verify asset after media-library refresh.');
+                if (!active) return;
+                if (error instanceof Error && error.message === 'Media is not accessible') {
+                    router.replace(permissionScope === 'none' ? '/' : '/(tabs)/photos');
+                    return;
                 }
+                console.warn('[PhotoDetail] Failed to verify asset after media-library refresh.');
             });
 
         return () => {

@@ -4,10 +4,11 @@ import { getReadableMediaInfo, getReadableMediaInfos } from '../../services/read
  */
 
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useReducedMotion } from 'react-native-reanimated';
 
@@ -277,7 +278,7 @@ export default function ScanResultsScreen() {
     const renderBlurryItem = ({ item }: { item: BlurryPhoto }) => (
         <View style={[styles.photoCard, { borderBottomColor: colors.divider }]}>
             {item.uri && (
-                <Image source={{ uri: item.uri }} style={styles.thumbnail} />
+                <Image source={{ uri: item.uri }} cachePolicy="memory" contentFit="cover" style={styles.thumbnail} />
             )}
             <View style={styles.cardInfo}>
                 <Text style={[styles.scoreText, { color: colors.danger }]}>
@@ -816,7 +817,7 @@ export default function ScanResultsScreen() {
 function CategoryThumbnail({ uri }: { uri?: string | null }) {
     const { colors } = useThemeColor();
     if (!uri) return <View style={[styles.categoryThumbnail, { backgroundColor: colors.surfaceHover }]} />;
-    return <Image source={{ uri }} style={styles.categoryThumbnail} />;
+    return <Image source={{ uri }} cachePolicy="memory" contentFit="cover" style={styles.categoryThumbnail} />;
 }
 
 // Full Screen Viewer Helper
@@ -867,7 +868,9 @@ function FullPhotoViewer({ assetId }: { assetId: string }) {
             accessibilityRole="image"
             accessibilityLabel={t('photo_detail_title')}
             source={{ uri }}
-            style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
+            cachePolicy="memory"
+            contentFit="contain"
+            style={{ width: '100%', height: '100%' }}
             onError={() => setImage(previous => (
                 previous?.assetId === assetId && previous.uri === uri
                     ? { ...previous, failed: true }

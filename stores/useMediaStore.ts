@@ -333,16 +333,27 @@ function applyDecisionSnapshot(state: MediaState, entry: RecentDecision, snapsho
 function removeDeletedState(state: MediaState, deletedIds: ReadonlySet<string>): Partial<MediaState> {
     const deleteQueue = state.deleteQueue.filter(asset => !deletedIds.has(asset.id));
     const videoTrashBin = state.videoTrashBin.filter(asset => !deletedIds.has(asset.id));
-    return { deleteQueue, videoTrashBin,
+    const photos = state.photos.filter(asset => !deletedIds.has(asset.id));
+    const videos = state.videos.filter(asset => !deletedIds.has(asset.id));
+    const organizingSessions = {
+        photo: removeDeletedSessionMedia(state.organizingSessions.photo, deletedIds),
+        video: removeDeletedSessionMedia(state.organizingSessions.video, deletedIds),
+    };
+    return {
+        photos,
+        videos,
+        videoCurrentIndex: currentVideoIndex(videos, organizingSessions.video, state.videoCurrentIndex),
+        deleteQueue,
+        videoTrashBin,
         recentDecisions: state.recentDecisions.filter(entry => !deletedIds.has(entry.assetId)),
-        organizingSessions: { photo: removeDeletedSessionMedia(state.organizingSessions.photo, deletedIds),
-            video: removeDeletedSessionMedia(state.organizingSessions.video, deletedIds) },
+        organizingSessions,
         collectionQueue: state.collectionQueue.filter(asset => !deletedIds.has(asset.id)),
         pendingDeletionInfo: retainPendingDeletionInfo({ ...state, deleteQueue, videoTrashBin }),
         photoProcessedIds: state.photoProcessedIds.filter(id => !deletedIds.has(id)),
         videoProcessedIds: state.videoProcessedIds.filter(id => !deletedIds.has(id)),
         hiddenPhotoQueuedAssetIds: state.hiddenPhotoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
-        hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null };
+        hiddenVideoQueuedAssetIds: state.hiddenVideoQueuedAssetIds?.filter(id => !deletedIds.has(id)) ?? null,
+    };
 }
 
 async function normalizeAlbumIds(albumIds: readonly string[]): Promise<string[]> {
