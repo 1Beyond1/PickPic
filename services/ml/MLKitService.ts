@@ -34,12 +34,17 @@ function getBridgeQueue() {
     return mlBridgeQueue;
 }
 
+const DEFAULT_ML_REQUEST_TIMEOUT_MS = 10000;
+
 function enqueueRequest<T>(
     queue: any,
     type: 'detectFaces' | 'labelImage',
     imageUri: string
 ): Promise<T> {
     const requestId = `${Date.now()}-${Math.random()}`;
+    const timeoutMs = typeof queue.timeoutMs === 'number' && queue.timeoutMs > 0
+        ? queue.timeoutMs
+        : DEFAULT_ML_REQUEST_TIMEOUT_MS;
 
     return new Promise<T>((resolve, reject) => {
         let settled = false;
@@ -50,7 +55,7 @@ function enqueueRequest<T>(
             queue.cancel?.(requestId);
             console.warn(`[MLKit] ${type} timed out`);
             reject(new Error(`${type} timed out`));
-        }, 5000);
+        }, timeoutMs);
 
         try {
             queue.push({
@@ -93,8 +98,30 @@ export const MLKitService = {
      */
     async waitUntilAvailable(timeoutMs: number = 10000): Promise<boolean> {
         const queue = getBridgeQueue();
-        const deadline = Date.now() + Math.max(0, timeoutMs);
+        if (queue.isAvailable?.()) return true;
+        const waitMs = Math.max(0, timeoutMs);
+        if (waitMs === 0) return false;
 
+        if (typeof queue.subscribeReady === 'function') {
+            return await new Promise<boolean>(resolve => {
+                let done = false;
+                let unsubscribe: (() => void) | null = null;
+                const finish = (ready: boolean) => {
+                    if (done) return;
+                    done = true;
+                    clearTimeout(timer);
+                    unsubscribe?.();
+                    resolve(ready);
+                };
+                const timer = setTimeout(() => finish(queue.isAvailable?.() || false), waitMs);
+                unsubscribe = queue.subscribeReady(() => {
+                    if (queue.isAvailable?.()) finish(true);
+                });
+                if (queue.isAvailable?.()) finish(true);
+            });
+        }
+
+        const deadline = Date.now() + waitMs;
         while (!queue.isAvailable?.() && Date.now() < deadline) {
             await new Promise<void>(resolve => setTimeout(resolve, 100));
         }

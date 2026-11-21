@@ -69,6 +69,7 @@ let mlCircuitBreakerTripped = false;
 let scannerRunGeneration = 0;
 
 const BATCH_SIZE = 20;
+const FACE_DETECTION_MAX_DIMENSION = 1024;
 
 // ============================================================================
 // Utility Functions
@@ -549,14 +550,64 @@ async function analyzeAIPhoto(assetInfo: MediaLibrary.AssetInfo, uri: string) {
     }
 
     // Phase 2b: Face Detection (Context-Aware)
-    const rawFaces = await MLKitService.detectFaces(uri);
+    // Downscale high-resolution originals before native face detection to avoid
+    // OOM on 48-200MP photos, and clean up the temporary file immediately.
+    let faceDetectionUri = uri;
+    let faceImageWidth = assetInfo.width || 0;
+    let faceImageHeight = assetInfo.height || 0;
+    let isFaceResized = false;
+
+    try {
+        if (
+            imageOps.resizeForFaceDetection
+            && faceImageWidth > 0
+            && faceImageHeight > 0
+            && Math.max(faceImageWidth, faceImageHeight) > FACE_DETECTION_MAX_DIMENSION
+        ) {
+            const resized = await imageOps.resizeForFaceDetection(
+                uri,
+                faceImageWidth,
+                faceImageHeight,
+                FACE_DETECTION_MAX_DIMENSION,
+            );
+            faceDetectionUri = resized.uri;
+            faceImageWidth = resized.width;
+            faceImageHeight = resized.height;
+            isFaceResized = faceDetectionUri !== uri;
+        }
+    } catch {
+        console.warn('[AIScanner] Face resize failed, using original.');
+    }
+
+    const rawFaces = await (async () => {
+        try {
+            return await MLKitService.detectFaces(faceDetectionUri);
+        } finally {
+            if (isFaceResized) {
+                await FileSystem.deleteAsync(faceDetectionUri, { idempotent: true }).catch(() => {
+                    if (Platform.OS !== 'web') {
+                        usePrivacyStore.getState().block('cache', 'read');
+                        stop();
+                        throw new LocalPrivacyError();
+                    }
+                });
+            }
+        }
+    })();
 
     // Filter 1: Size Filter (Ignore tiny faces like icons/ads)
-    const imgWidth = assetInfo.width || 1000;
-    const MIN_Face_RATIO = 0.1; // Face must be 10% of image width
+    const baseWidth = faceImageWidth > 0 ? faceImageWidth : 1000;
+    const baseHeight = faceImageHeight > 0 ? faceImageHeight : baseWidth;
+    const MIN_FACE_RATIO = 0.1; // Face must be 10% of image width
     const validFaces = rawFaces.filter(f => {
-        // Check bounding box width (ML Kit returns 'width')
-        return (f.boundingBox?.width || 0) > (imgWidth * MIN_Face_RATIO);
+        const boxWidth = f.boundingBox?.width || 0;
+        const boxX = f.boundingBox?.x || 0;
+        // Account for EXIF-rotated unscaled images where ML Kit returns
+        // coordinates in the display-oriented frame.
+        const effectiveWidth = !isFaceResized && boxX + boxWidth > baseWidth && boxX + boxWidth <= baseHeight
+            ? baseHeight
+            : baseWidth;
+        return boxWidth > (effectiveWidth * MIN_FACE_RATIO);
     });
 
     // Filter 2: Context Disqualifier (Ignore faces in Screenshots/Websites)
@@ -583,10 +634,17 @@ async function analyzeAIPhoto(assetInfo: MediaLibrary.AssetInfo, uri: string) {
     return { labelsJson: labelsJson ?? '[]', faceCount };
 }
 
-async function processAIForAsset(assetId: string): Promise<boolean> {
+async function processAIForAsset(
+    assetId: string,
+    knownVisibleIds?: ReadonlySet<string> | null,
+): Promise<boolean> {
     const source = await AssetRepository.getById(assetId);
     if (!source || source.status !== AssetStatus.DONE || source.algo_version !== GLOBAL_ALGO_VERSION) return false;
-    const isVisible = async () => {
+    const checkPermissionVisible = async () => {
+        const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+        if (!permission.granted) return false;
+        if (permission.accessPrivileges !== 'limited') return true;
+        if (knownVisibleIds) return knownVisibleIds.has(assetId);
         const scope = await getVisiblePhotoIdsForStatus();
         return scope === null || scope.has(assetId);
     };
@@ -596,18 +654,23 @@ async function processAIForAsset(assetId: string): Promise<boolean> {
             && (source.file_signature === null || signature === source.file_signature);
     };
     try {
-        if (!await isVisible() || shouldStop) return false;
+        if (shouldStop || !await checkPermissionVisible()) return false;
         const info = await getReadableAssetInfo(assetId, source.taken_at);
         if (!info.localUri || !await matchesSource(info)) return false;
         const result = await analyzeAIPhoto(info, info.localUri);
-        if (!await isVisible()) return false;
+        const latestPermission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+        if (!latestPermission.granted) return false;
         const latest = await getReadableAssetInfo(assetId, source.taken_at);
         if (!await matchesSource(latest) || latest.modificationTime !== info.modificationTime) return false;
         return await AIAnalysisRepository.save(source, result);
     } catch (error) {
+        if (error instanceof LocalPrivacyError) {
+            shouldStop = true;
+            return false;
+        }
         // AI errors must never clear completed base results or group membership.
         recordMLFailure(error);
-        if (await isVisible()) await AIAnalysisRepository.save(source, null);
+        if (await checkPermissionVisible()) await AIAnalysisRepository.save(source, null);
         return false;
     }
 }
@@ -674,8 +737,12 @@ async function processAsset(
 
         const { useSettingsStore } = await import('../../stores/useSettingsStore');
         if (useSettingsStore.getState().enableAIClassification && !shouldStop) {
-            try { await processAIForAsset(assetId); }
-            catch {
+            try {
+                await processAIForAsset(
+                    assetId,
+                    similarityCandidateAssetIds ? new Set(similarityCandidateAssetIds) : null,
+                );
+            } catch {
                 useScannerStore.getState().setLastError(new Error('AI result could not be saved; base analysis was preserved'));
             }
         }
@@ -695,6 +762,11 @@ async function processAsset(
         // Release gray if allocated
         if (gray) {
             imageOps.dispose(gray);
+        }
+
+        if (error instanceof LocalPrivacyError) {
+            shouldStop = true;
+            return false;
         }
 
         // Mark as error
@@ -1214,7 +1286,7 @@ export async function startClassification(errorsOnly = false): Promise<void> {
             await waitForInteractions();
             if (shouldStop) break;
             const before = await AIAnalysisRepository.getCounts([id]);
-            await processAIForAsset(id);
+            await processAIForAsset(id, visible);
             const after = await AIAnalysisRepository.getCounts([id]);
             const progress = useScannerStore.getState().classificationProgress;
             store.setClassificationProgress({

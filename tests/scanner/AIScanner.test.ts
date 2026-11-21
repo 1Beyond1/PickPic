@@ -66,6 +66,7 @@ describe('AIScanner engine safety', () => {
     resizeToGray256: jest.fn(), computeLaplacianVar: jest.fn(),
     computeMeanLuma: jest.fn(), computeDHash64: jest.fn(),
     hammingDistance64: jest.fn(), dispose: jest.fn(), centerCropSquare: jest.fn(),
+    resizeForFaceDetection: jest.fn(),
   };
 
   beforeEach(() => {
@@ -110,6 +111,15 @@ describe('AIScanner engine safety', () => {
     ops.computeDHash64.mockReturnValue('0000000000000000');
     ops.hammingDistance64.mockReturnValue(64);
     ops.centerCropSquare.mockResolvedValue('file:///test-crop.jpg');
+    ops.resizeForFaceDetection.mockImplementation(async (uri: string, width: number, height: number, maxDimension = 1024) => {
+      if (Math.max(width, height) <= maxDimension) return { uri, width, height };
+      const scale = maxDimension / Math.max(width, height);
+      return {
+        uri: 'file:///test-face-resized.jpg',
+        width: Math.round(width * scale),
+        height: Math.round(height * scale),
+      };
+    });
     ml.waitUntilAvailable.mockResolvedValue(true);
     ml.isAvailable.mockReturnValue(true);
     ml.labelImage.mockResolvedValue([]);
@@ -467,5 +477,49 @@ describe('AIScanner engine safety', () => {
     await resumeOnce({ mode: 'count', count: 5 });
     expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 5, error: 0, pending: 0 });
     expect((await AssetRepository.getById('ml-4'))?.labels_json).toContain('Cat');
+  });
+
+  it('does not mark an asset as AI ERROR when LocalPrivacyError aborts crop cleanup', async () => {
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true });
+    fs.deleteAsync.mockRejectedValueOnce(new Error('PRIVATE_CROP_PATH_DELETE_FAILURE'));
+    await start();
+    expect(usePrivacyStore.getState().failures.cache).toBe('read');
+    expect(await database.getFirstAsync('SELECT COUNT(*) AS count FROM ai_analysis WHERE status = 2')).toEqual({ count: 0 });
+  });
+
+  it('downscales high-resolution photos before face detection, computes ratio against scaled size, and cleans temp file', async () => {
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true });
+    const hugePhoto = { ...photo('huge', 100), width: 8000, height: 6000 } as MediaLibrary.Asset;
+    media.getAssetsAsync.mockResolvedValue(page([hugePhoto]));
+    media.getAssetInfoAsync.mockResolvedValue({ ...hugePhoto, localUri: 'file:///huge.jpg' } as MediaLibrary.AssetInfo);
+    // 150px face on 1024px scaled width = 14.6% (> 10%), whereas on 8000px raw width it would be 1.8%.
+    ml.detectFaces.mockResolvedValueOnce([{ boundingBox: { x: 100, y: 100, width: 150, height: 150 }, confidence: 0.9 }]);
+
+    await start();
+
+    expect(ops.resizeForFaceDetection).toHaveBeenCalledWith('file:///huge.jpg', 8000, 6000, 1024);
+    expect(ml.detectFaces).toHaveBeenCalledWith('file:///test-face-resized.jpg');
+    expect(fs.deleteAsync).toHaveBeenCalledWith('file:///test-face-resized.jpg', { idempotent: true });
+    expect((await AssetRepository.getById('huge'))?.face_count).toBe(1);
+  });
+
+  it('avoids repeated full-library pagination per asset during limited-access AI backfill', async () => {
+    (useSettingsStore.getState as jest.Mock).mockReturnValue({ enableAIClassification: true, selectedAlbumIds: [] });
+    media.getPermissionsAsync.mockResolvedValue({ granted: true, accessPrivileges: 'limited' } as any);
+    const items = [photo('a', 100), photo('b', 200), photo('c', 300)];
+    for (const item of items) await seed(item.id, AssetStatus.DONE, GLOBAL_ALGO_VERSION, item.creationTime);
+    media.getAssetsAsync.mockResolvedValue(page(items));
+    media.getAssetInfoAsync.mockImplementation(async asset => {
+      const id = typeof asset === 'string' ? asset : asset.id;
+      const found = items.find(item => item.id === id)!;
+      return { ...found, localUri: found.uri } as MediaLibrary.AssetInfo;
+    });
+
+    await startClassification();
+
+    // Expected getAssetsAsync calls: sync(1) + limited verification(1) + initial status(1) + final status(1) + finalizer status(1) = 5.
+    // Previously each of the 3 assets added 2 more full-library scans (+6 = 11+).
+    expect(media.getAssetsAsync.mock.calls.length).toBeLessThanOrEqual(6);
+    expect(await getClassificationStatus()).toEqual({ done: 3, pending: 0, error: 0 });
   });
 });

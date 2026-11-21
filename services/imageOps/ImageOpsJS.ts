@@ -15,8 +15,23 @@ import { GrayImageRef, IImageOps } from './IImageOps';
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-function base64ToBytes(value: string): Uint8Array {
-    const base64 = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
+let quickBase64Decoder: ((b64: string, removeLinebreaks?: boolean) => Uint8Array) | null | undefined;
+
+function getQuickBase64Decoder(): ((b64: string, removeLinebreaks?: boolean) => Uint8Array) | null {
+    if (quickBase64Decoder !== undefined) return quickBase64Decoder;
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const mod = require('react-native-quick-base64') as {
+            toByteArray?: (b64: string, removeLinebreaks?: boolean) => Uint8Array;
+        };
+        quickBase64Decoder = typeof mod?.toByteArray === 'function' ? mod.toByteArray : null;
+    } catch {
+        quickBase64Decoder = null;
+    }
+    return quickBase64Decoder;
+}
+
+function base64ToBytesPortable(base64: string): Uint8Array {
     const normalized = base64.replace(/[^A-Za-z0-9+/=]/g, '');
     const padding = normalized.endsWith('==') ? 2 : normalized.endsWith('=') ? 1 : 0;
     const output = new Uint8Array(Math.max(0, Math.floor((normalized.length * 3) / 4) - padding));
@@ -43,6 +58,19 @@ function base64ToBytes(value: string): Uint8Array {
     }
 
     return output;
+}
+
+function base64ToBytes(value: string): Uint8Array {
+    const base64 = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
+    const nativeDecode = getQuickBase64Decoder();
+    if (nativeDecode) {
+        try {
+            return nativeDecode(base64, true);
+        } catch {
+            // Fall back to portable JS decoding when native bindings are unavailable (e.g. Jest/Web).
+        }
+    }
+    return base64ToBytesPortable(base64);
 }
 
 export class ImageOpsJS implements IImageOps {
@@ -207,9 +235,12 @@ export class ImageOpsJS implements IImageOps {
      * Center crop to square and resize to targetSize (default 224)
      */
     async centerCropSquare(assetUri: string, width: number, height: number, targetSize: number = 224): Promise<string> {
-        const size = Math.min(width, height);
-        const originX = (width - size) / 2;
-        const originY = (height - size) / 2;
+        const safeWidth = Math.max(1, Math.floor(width));
+        const safeHeight = Math.max(1, Math.floor(height));
+        const size = Math.min(safeWidth, safeHeight);
+        const originX = Math.floor((safeWidth - size) / 2);
+        const originY = Math.floor((safeHeight - size) / 2);
+        const target = Math.max(1, Math.round(targetSize));
 
         try {
             const result = await ImageManipulator.manipulateAsync(
@@ -223,7 +254,7 @@ export class ImageOpsJS implements IImageOps {
                             height: size
                         }
                     },
-                    { resize: { width: targetSize, height: targetSize } }
+                    { resize: { width: target, height: target } }
                 ],
                 { format: ImageManipulator.SaveFormat.JPEG, compress: 0.8 }
             );
@@ -231,6 +262,46 @@ export class ImageOpsJS implements IImageOps {
         } catch {
             console.warn('[ImageOpsJS] Failed to crop image, using original.');
             return assetUri;
+        }
+    }
+
+    /**
+     * Downscale large photos proportionally so the longest edge is at most
+     * maxDimension (default 1024px) before native face detection.
+     */
+    async resizeForFaceDetection(
+        assetUri: string,
+        width: number,
+        height: number,
+        maxDimension: number = 1024,
+    ): Promise<{ uri: string; width: number; height: number }> {
+        const safeWidth = Number.isFinite(width) && width > 0 ? Math.floor(width) : 0;
+        const safeHeight = Number.isFinite(height) && height > 0 ? Math.floor(height) : 0;
+        const limit = Math.max(1, Math.floor(maxDimension));
+        if (!safeWidth || !safeHeight || Math.max(safeWidth, safeHeight) <= limit) {
+            return { uri: assetUri, width: safeWidth, height: safeHeight };
+        }
+
+        const resizeAction = safeWidth >= safeHeight
+            ? { resize: { width: limit } }
+            : { resize: { height: limit } };
+
+        try {
+            const result = await ImageManipulator.manipulateAsync(
+                assetUri,
+                [resizeAction],
+                { format: ImageManipulator.SaveFormat.JPEG, compress: 0.85 },
+            );
+            const scaledWidth = Number.isFinite(result.width) && result.width > 0
+                ? result.width
+                : (safeWidth >= safeHeight ? limit : Math.max(1, Math.round((safeWidth * limit) / safeHeight)));
+            const scaledHeight = Number.isFinite(result.height) && result.height > 0
+                ? result.height
+                : (safeHeight > safeWidth ? limit : Math.max(1, Math.round((safeHeight * limit) / safeWidth)));
+            return { uri: result.uri, width: scaledWidth, height: scaledHeight };
+        } catch {
+            console.warn('[ImageOpsJS] Failed to resize image for face detection, using original.');
+            return { uri: assetUri, width: safeWidth, height: safeHeight };
         }
     }
 }
