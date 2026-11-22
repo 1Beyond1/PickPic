@@ -54,6 +54,9 @@ app-example
 credentials.json
 *.pickpic
 
+# Local temporary scratch workspace (do not leave scratch files at repo root)
+.tmp/
+
 # One-off dependency size reports belong in build-artifacts/, not source control.
 /nm_sizes.txt
 /reanimated_files.txt
