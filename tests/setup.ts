@@ -112,10 +112,10 @@ jest.mock('../services/reviewIgnores', () => {
 });
 
 jest.mock('../services/protectedAlbums', () => {
-  const actual = jest.requireActual('../services/protectedAlbums');
+  const core = jest.requireActual('../services/protectedAlbumsCore');
   let stored: { albumId: string; title: string; createdAt: number }[] = [];
   return {
-    ...actual,
+    ...core,
     loadProtectedAlbums: jest.fn(async () => stored.map(item => ({ ...item }))),
     saveProtectedAlbums: jest.fn(async (albums: readonly { albumId: string; title: string; createdAt?: number }[]) => {
       stored = albums.map(item => ({
