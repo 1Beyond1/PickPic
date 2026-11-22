@@ -210,3 +210,25 @@ it('batch-loads snapshots and reviews for multiple groups in O(1) SQL queries', 
     expect(reviewMap.get(first.key)).toMatchObject({ keptIds: ['a1'], pendingIds: ['a2'] });
     expect(reviewMap.get(second.key)).toMatchObject({ keptIds: ['b1', 'b2'], pendingIds: ['b3'] });
 });
+
+it('reuses pre-built Set instances in isSimilarReviewCurrent without rebuilding O(N) sets', () => {
+    const processed = new Set(['a1', 'a2']);
+    const pending = new Set(['a2']);
+    const review = { keptIds: ['a1'], pendingIds: ['a2'], reviewedAt: 100 };
+
+    const OriginalSet = globalThis.Set;
+    let allocations = 0;
+    const SpySet = new Proxy(OriginalSet, {
+        construct(target, args, newTarget) {
+            allocations++;
+            return Reflect.construct(target, args, newTarget);
+        },
+    });
+    (globalThis as any).Set = SpySet;
+    try {
+        expect(isSimilarReviewCurrent(review, processed, pending)).toBe(true);
+        expect(allocations).toBe(0);
+    } finally {
+        (globalThis as any).Set = OriginalSet;
+    }
+});

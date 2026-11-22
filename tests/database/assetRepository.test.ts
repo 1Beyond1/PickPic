@@ -227,4 +227,59 @@ describe('AssetRepository', () => {
       seeded.slice(50, 60).map(item => item.asset_id),
     );
   });
+
+  it('applies BlurDetector brightness-adaptive 0.7x SQL threshold for dark (<40) and overexposed (>220) photos', async () => {
+    await AssetRepository.upsertBatch([
+      { asset_id: 'dark-not-blurry', blur_score: 80, mean_luma: 25, status: AssetStatus.DONE },
+      { asset_id: 'dark-boundary-70', blur_score: 70, mean_luma: 30, status: AssetStatus.DONE },
+      { asset_id: 'dark-truly-blurry', blur_score: 65, mean_luma: 25, status: AssetStatus.DONE },
+      { asset_id: 'bright-not-blurry', blur_score: 85, mean_luma: 235, status: AssetStatus.DONE },
+      { asset_id: 'bright-truly-blurry', blur_score: 69.5, mean_luma: 235, status: AssetStatus.DONE },
+      { asset_id: 'luma-40-normal', blur_score: 85, mean_luma: 40, status: AssetStatus.DONE },
+      { asset_id: 'luma-220-normal', blur_score: 90, mean_luma: 220, status: AssetStatus.DONE },
+      { asset_id: 'normal-sharp', blur_score: 100, mean_luma: 120, status: AssetStatus.DONE },
+    ]);
+
+    const results = await AssetRepository.getBlurryAssets(undefined, 50, 0);
+    expect(results.map(item => item.asset_id)).toEqual([
+      'dark-truly-blurry',
+      'bright-truly-blurry',
+      'luma-40-normal',
+      'luma-220-normal',
+    ]);
+  });
+
+  it('paginates blurry assets stably with keyset cursor even when earlier rows are deleted mid-scroll', async () => {
+    await AssetRepository.upsertBatch(
+      Array.from({ length: 10 }, (_, idx) => ({
+        asset_id: `k-${String(idx).padStart(2, '0')}`,
+        blur_score: idx < 4 ? 10 : 20 + idx,
+        mean_luma: 120,
+        status: AssetStatus.DONE,
+      })),
+    );
+
+    const page1 = await AssetRepository.getBlurryAssets(undefined, 3, 0);
+    expect(page1.map(item => item.asset_id)).toEqual(['k-00', 'k-01', 'k-02']);
+
+    // Delete an earlier item before fetching page 2: OFFSET would skip 'k-03', keyset must not!
+    await database.runAsync("DELETE FROM assets WHERE asset_id = 'k-00'");
+    const last = page1[page1.length - 1];
+    const page2 = await AssetRepository.getBlurryAssets(undefined, 3, 0, {
+      blurScore: last.blur_score,
+      assetId: last.asset_id,
+    });
+    expect(page2.map(item => item.asset_id)).toEqual(['k-03', 'k-04', 'k-05']);
+
+    // Multi-chunk (>500 IDs) keyset pagination stays accurate and bounded per chunk.
+    const wideScope = [
+      ...Array.from({ length: 510 }, (_, idx) => `pad-${idx}`),
+      ...Array.from({ length: 10 }, (_, idx) => `k-${String(idx).padStart(2, '0')}`),
+    ];
+    const scopedPage2 = await AssetRepository.getBlurryAssets(wideScope, 3, 0, {
+      blurScore: last.blur_score,
+      assetId: last.asset_id,
+    });
+    expect(scopedPage2.map(item => item.asset_id)).toEqual(['k-03', 'k-04', 'k-05']);
+  });
 });

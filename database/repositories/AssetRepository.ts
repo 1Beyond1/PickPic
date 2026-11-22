@@ -15,6 +15,7 @@ import {
 } from './FaceRepository';
 import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
 import { removeSimilarReviewsForAssets } from './SimilarReviewRepository';
+import { DEFAULT_BLUR_CONFIG } from '../../services/imageOps/IImageOps';
 
 export interface AssetRecord {
     asset_id: string;
@@ -43,6 +44,11 @@ export interface BlurryAsset {
     asset_id: string;
     blur_score: number;
     mean_luma: number;
+}
+
+export interface BlurryAssetsCursor {
+    blurScore: number;
+    assetId: string;
 }
 
 export interface LibraryAssetSyncInput {
@@ -1115,46 +1121,88 @@ export const AssetRepository = {
     },
 
     /**
-     * Get the lowest-scoring completed assets, optionally restricted to a
-     * permission-visible set. Apply the scope before LIMIT/OFFSET so hidden
-     * local index rows cannot crowd visible results out of the result window.
+     * Get the lowest-scoring completed blurry assets using the same
+     * brightness-adaptive threshold as BlurDetector (0.7x for dark meanLuma < 40
+     * and overexposed meanLuma > 220), optionally restricted to a
+     * permission-visible set. Supports stable keyset pagination via `cursor`
+     * to prevent OFFSET drift and quadratic scanning on >500 limited-access sets.
      */
     async getBlurryAssets(
         assetIds?: readonly string[],
         limit: number = 50,
-        offset: number = 0
+        offset: number = 0,
+        cursor?: BlurryAssetsCursor | null
     ): Promise<BlurryAsset[]> {
-        if (limit <= 0 || offset < 0) return [];
+        if (limit <= 0 || (!cursor && offset < 0)) return [];
 
         const db = await getDatabase();
         const batches = splitAssetIds(assetIds);
         if (batches.length === 0) return [];
 
+        const baseThreshold = DEFAULT_BLUR_CONFIG.baseThreshold;
+        const darkThreshold = DEFAULT_BLUR_CONFIG.darkThreshold;
+        const darkBlurLimit = baseThreshold * DEFAULT_BLUR_CONFIG.darkMultiplier;
+        const brightThreshold = DEFAULT_BLUR_CONFIG.brightThreshold;
+        const brightBlurLimit = baseThreshold * DEFAULT_BLUR_CONFIG.brightMultiplier;
+
+        const adaptiveWhere = `status = ?
+                 AND blur_score IS NOT NULL
+                 AND blur_score < ?
+                 AND blur_score < CASE
+                     WHEN mean_luma IS NOT NULL AND mean_luma < ? THEN ?
+                     WHEN mean_luma IS NOT NULL AND mean_luma > ? THEN ?
+                     ELSE ?
+                 END`;
+        const adaptiveParams: (string | number)[] = [
+            AssetStatus.DONE,
+            baseThreshold,
+            darkThreshold,
+            darkBlurLimit,
+            brightThreshold,
+            brightBlurLimit,
+            baseThreshold,
+        ];
+        const cursorClause = cursor
+            ? ' AND (blur_score > ? OR (blur_score = ? AND asset_id > ?))'
+            : '';
+        const cursorParams: (string | number)[] = cursor
+            ? [cursor.blurScore, cursor.blurScore, cursor.assetId]
+            : [];
+
         if (batches.length === 1) {
             const batch = batches[0];
             if (batch !== undefined && batch.length === 0) return [];
             const scope = createAssetScope(batch);
+            if (cursor) {
+                return db.getAllAsync<BlurryAsset>(
+                    `SELECT asset_id, blur_score, mean_luma FROM assets
+                     WHERE ${adaptiveWhere}${cursorClause}${scope.clause}
+                     ORDER BY blur_score ASC, asset_id ASC
+                     LIMIT ?`,
+                    [...adaptiveParams, ...cursorParams, ...scope.params, limit]
+                );
+            }
             return db.getAllAsync<BlurryAsset>(
                 `SELECT asset_id, blur_score, mean_luma FROM assets
-                 WHERE status = ? AND blur_score < ?${scope.clause}
+                 WHERE ${adaptiveWhere}${scope.clause}
                  ORDER BY blur_score ASC, asset_id ASC
                  LIMIT ? OFFSET ?`,
-                [AssetStatus.DONE, 100, ...scope.params, limit, offset]
+                [...adaptiveParams, ...scope.params, limit, offset]
             );
         }
 
         const blurryAssets: BlurryAsset[] = [];
-        const windowLimit = offset + limit;
+        const windowLimit = cursor ? limit : offset + limit;
         for (const assetIdBatch of batches) {
             if (assetIdBatch !== undefined && assetIdBatch.length === 0) continue;
 
             const scope = createAssetScope(assetIdBatch);
             blurryAssets.push(...await db.getAllAsync<BlurryAsset>(
                 `SELECT asset_id, blur_score, mean_luma FROM assets
-                 WHERE status = ? AND blur_score < ?${scope.clause}
+                 WHERE ${adaptiveWhere}${cursorClause}${scope.clause}
                  ORDER BY blur_score ASC, asset_id ASC
                  LIMIT ?`,
-                [AssetStatus.DONE, 100, ...scope.params, windowLimit]
+                [...adaptiveParams, ...cursorParams, ...scope.params, windowLimit]
             ));
         }
 
@@ -1162,7 +1210,7 @@ export const AssetRepository = {
             if (a.blur_score !== b.blur_score) return a.blur_score - b.blur_score;
             return a.asset_id.localeCompare(b.asset_id);
         });
-        return blurryAssets.slice(offset, offset + limit);
+        return cursor ? blurryAssets.slice(0, limit) : blurryAssets.slice(offset, offset + limit);
     },
 
     /**

@@ -7,13 +7,14 @@ export { AssetRepository } from './repositories/AssetRepository';
 export type {
     AssetRecord,
     BlurryAsset,
+    BlurryAssetsCursor,
     LibraryAssetSyncInput,
     LibraryMetadataSyncBatchOptions,
     LibraryMetadataSyncBatchResult,
     PendingAsset,
 } from './repositories/AssetRepository';
 export { DupGroupRepository } from './repositories/DupGroupRepository';
-export type { DupGroup, DupMember } from './repositories/DupGroupRepository';
+export type { DupGroup, DupGroupsCursor, DupMember } from './repositories/DupGroupRepository';
 export { SimilarReviewRepository, isSimilarReviewCurrent } from './repositories/SimilarReviewRepository';
 export type { SimilarGroupSnapshot, SimilarReview, SimilarReviewAsset } from './repositories/SimilarReviewRepository';
 export { FaceRepository } from './repositories/FaceRepository';

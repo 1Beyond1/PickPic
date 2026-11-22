@@ -2,7 +2,7 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OrganizingScopeModal } from '../../components/OrganizingScopeModal';
@@ -128,9 +128,12 @@ export default function PhotosScreen() {
         }
     }, [displayOrder, groupSize, loadAlbums, loadPhotos, managingPhotoAccess, router, selectedAlbumIds]);
 
-    const processedIds = new Set(photoProcessedIds);
-    const deferredIds = new Set(session?.deferredIds ?? []);
-    const visiblePhotos = photos.filter(p => !processedIds.has(p.id) && !deferredIds.has(p.id));
+    const processedIds = useMemo(() => new Set(photoProcessedIds), [photoProcessedIds]);
+    const deferredIds = useMemo(() => new Set(session?.deferredIds ?? []), [session?.deferredIds]);
+    const visiblePhotos = useMemo(
+        () => photos.filter(p => !processedIds.has(p.id) && !deferredIds.has(p.id)),
+        [deferredIds, photos, processedIds],
+    );
     const deckTotal = session?.assetIds.length ?? photos.length;
     const deckPosition = session ? Math.max(0, session.assetIds.indexOf(visiblePhotos[0]?.id)) + 1 : photos.length - visiblePhotos.length + 1;
     const unresolvedCount = session?.assetIds.slice(session.position).filter(id => !processedIds.has(id) && !deferredIds.has(id)).length ?? 0;

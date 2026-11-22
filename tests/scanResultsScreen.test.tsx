@@ -4,9 +4,10 @@ import { ActivityIndicator, Image, Modal, StyleSheet } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 
 const mockMediaState = {
-  permissionScope: 'full', mediaLibraryRefreshVersion: 0,
+  permissionScope: 'full', mediaLibraryRefreshVersion: 0, permissionRefreshVersion: 0,
+  lastDeletionResult: null as null | { status: string; requestedIds: string[]; deletedIds: string[]; remainingIds: string[]; failureKind: null },
   removeDeletedAssets: jest.fn(),
-  deleteQueue: [], videoTrashBin: [], pendingDeletionInfo: {}, enqueuePendingDeletion: jest.fn(() => 1),
+  deleteQueue: [] as any[], videoTrashBin: [], pendingDeletionInfo: {}, enqueuePendingDeletion: jest.fn(() => 1),
   photoProcessedIds: [] as string[], hasHydrated: true,
 };
 const mockGetSimilarSnapshotsBatch = jest.fn(async (..._args: any[]): Promise<Map<string, any>> => new Map());
@@ -78,6 +79,10 @@ describe('empty results and read failures', () => {
     mockClassificationEnabled = true;
     mockMediaState.permissionScope = 'full';
     mockMediaState.mediaLibraryRefreshVersion = 0;
+    mockMediaState.permissionRefreshVersion = 0;
+    mockMediaState.lastDeletionResult = null;
+    mockMediaState.deleteQueue = [];
+    mockMediaState.photoProcessedIds = [];
     mockCategories.hasError = false;
     mockCategories.completedCount = 1;
     (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'all' });
@@ -175,6 +180,7 @@ describe('empty results and read failures', () => {
     (AssetRepository.getBlurryAssets as jest.Mock).mockReturnValueOnce(stale).mockResolvedValue([]);
     const view = await renderAsync(<ScanResultsScreen />);
     await waitFor(() => expect(AssetRepository.getBlurryAssets).toHaveBeenCalledTimes(1));
+    mockMediaState.permissionRefreshVersion += 1;
     mockMediaState.mediaLibraryRefreshVersion += 1;
     await view.rerenderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
@@ -190,6 +196,10 @@ describe('result navigation preserves media decisions', () => {
     mockClassificationEnabled = true;
     mockMediaState.permissionScope = 'full';
     mockMediaState.mediaLibraryRefreshVersion = 0;
+    mockMediaState.permissionRefreshVersion = 0;
+    mockMediaState.lastDeletionResult = null;
+    mockMediaState.deleteQueue = [];
+    mockMediaState.photoProcessedIds = [];
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
     (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` }));
   });
@@ -311,6 +321,9 @@ describe('scan result deletion safety', () => {
   beforeEach(() => {
     mockClassificationEnabled = true;
     mockMediaState.mediaLibraryRefreshVersion = 0;
+    mockMediaState.permissionRefreshVersion = 0;
+    mockMediaState.lastDeletionResult = null;
+    mockMediaState.deleteQueue = [];
     mockMediaState.permissionScope = 'full';
     (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([
       { asset_id: 'blurred', blur_score: 12, mean_luma: 80 },
@@ -373,6 +386,7 @@ describe('scan result deletion safety', () => {
     (AssetRepository.getBlurryAssets as jest.Mock).mockReturnValueOnce(staleRead.promise).mockResolvedValue([]);
     const view = await renderAsync(<ScanResultsScreen />);
     await waitFor(() => expect(AssetRepository.getBlurryAssets).toHaveBeenCalledTimes(1));
+    mockMediaState.permissionRefreshVersion += 1;
     mockMediaState.mediaLibraryRefreshVersion += 1;
     await view.rerenderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
@@ -387,6 +401,9 @@ describe('category photo viewing', () => {
   beforeEach(() => {
     mockClassificationEnabled = true;
     mockMediaState.mediaLibraryRefreshVersion = 0;
+    mockMediaState.permissionRefreshVersion = 0;
+    mockMediaState.lastDeletionResult = null;
+    mockMediaState.deleteQueue = [];
     (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'all' });
     (AssetRepository.getBlurryAssets as jest.Mock).mockReset().mockResolvedValue([]);
     (DupGroupRepository.getGroupsPage as jest.Mock).mockReset().mockResolvedValue([]);
@@ -521,6 +538,7 @@ describe('category photo viewing', () => {
     const view = await openPhoto(() => {
       (MediaLibrary.getAssetInfoAsync as jest.Mock).mockReturnValueOnce(lookup.promise);
     });
+    mockMediaState.permissionRefreshVersion += 1;
     mockMediaState.mediaLibraryRefreshVersion += 1;
     await view.rerenderAsync(<ScanResultsScreen />);
     await act(async () => { lookup.resolve({ uri: 'file:///stale.jpg' }); await lookup.promise; });
@@ -576,7 +594,10 @@ describe('category photo viewing', () => {
 
     await act(async () => { blurryList.props.onEndReached(); });
     await waitFor(() => expect(screen.getByTestId('blurry-results-list').props.data).toHaveLength(62));
-    expect(AssetRepository.getBlurryAssets).toHaveBeenNthCalledWith(2, undefined, 50, 50);
+    expect(AssetRepository.getBlurryAssets).toHaveBeenNthCalledWith(2, undefined, 50, 0, {
+      blurScore: 50,
+      assetId: 'blur-49',
+    });
   });
 
   it('loads similar groups with batched SQL queries and paginates subsequent pages on scroll', async () => {
@@ -621,7 +642,11 @@ describe('category photo viewing', () => {
 
       await act(async () => { similarList.props.onEndReached(); });
       await waitFor(() => expect(screen.getByTestId('similar-results-list').props.data).toHaveLength(35));
-      expect(DupGroupRepository.getGroupsPage).toHaveBeenNthCalledWith(2, { limit: 30, offset: 30, repair: false });
+      expect(DupGroupRepository.getGroupsPage).toHaveBeenNthCalledWith(2, {
+        limit: 30,
+        cursor: { createdAt: 971, groupId: 'grp-29' },
+        repair: false,
+      });
       expect(DupGroupRepository.getGroupMembersBatch).toHaveBeenCalledTimes(2);
       expect(mockGetSimilarSnapshotsBatch).toHaveBeenCalledTimes(2);
       expect(mockGetSimilarReviewsBatch).toHaveBeenCalledTimes(2);
@@ -669,5 +694,209 @@ describe('category photo viewing', () => {
       mockCategory.assets = originalAssets;
       mockCategory.count = originalCount;
     }
+  });
+
+  it('loads category thumbnails immediately when jumping to items 100, 500, and 2000 via onViewableItemsChanged (>120 deadlock fix)', async () => {
+    const hugeAssets = Array.from({ length: 2200 }, (_, idx) => ({ asset_id: `huge-cat-${idx}` }));
+    const originalAssets = mockCategory.assets;
+    const originalCount = mockCategory.count;
+    mockCategory.assets = hugeAssets;
+    mockCategory.count = hugeAssets.length;
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockClear();
+
+    try {
+      await renderAsync(<ScanResultsScreen />);
+      await screen.findByText('scan_no_blurry');
+      await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
+      await act(async () => { fireEvent.press(screen.getByText('Cat')); });
+
+      const grid = await screen.findByTestId('category-detail-grid');
+      await waitFor(() => expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledWith('huge-cat-59', { shouldDownloadFromNetwork: false }));
+
+      // Jump directly to item 100, 500, and 2000 without ever firing onEndReached at the bottom!
+      for (const targetIndex of [100, 500, 2000]) {
+        await act(async () => {
+          screen.getByTestId('category-detail-grid').props.onViewableItemsChanged({
+            viewableItems: [{ item: hugeAssets[targetIndex], index: targetIndex, isViewable: true }],
+          });
+        });
+        await waitFor(() => expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledWith(
+          `huge-cat-${targetIndex}`,
+          { shouldDownloadFromNetwork: false },
+        ));
+        expect(screen.getByTestId('category-detail-grid').props.extraData[`huge-cat-${targetIndex}`]).toBe(`file:///huge-cat-${targetIndex}.jpg`);
+      }
+
+      // Bounded detail URI map never exceeds CATEGORY_URI_CACHE_MAX (600).
+      expect(Object.keys(screen.getByTestId('category-detail-grid').props.extraData).length).toBeLessThanOrEqual(600);
+    } finally {
+      mockCategory.assets = originalAssets;
+      mockCategory.count = originalCount;
+    }
+  });
+
+  it('continues past empty filtered similar pages under limited access with a loop bound instead of falsely reporting empty', async () => {
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'limited' });
+    (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({
+      assets: [{ id: 'vis-a' }, { id: 'vis-b' }],
+      hasNextPage: false,
+    });
+    const hiddenPage = Array.from({ length: 30 }, (_, idx) => ({
+      group_id: `hid-${idx}`,
+      representative_asset_id: `h-a-${idx}`,
+      best_asset_id: `h-a-${idx}`,
+      created_at: 2000 - idx,
+    }));
+    const visiblePage = [
+      { group_id: 'vis-group', representative_asset_id: 'vis-a', best_asset_id: 'vis-a', created_at: 500 },
+    ];
+    (DupGroupRepository.getGroupsPage as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce(hiddenPage)
+      .mockResolvedValueOnce(visiblePage);
+    (DupGroupRepository.getGroupMembersBatch as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce(new Map(hiddenPage.map(g => [g.group_id, [
+        { group_id: g.group_id, asset_id: `h-a-${g.group_id}`, distance: 0 },
+        { group_id: g.group_id, asset_id: `h-b-${g.group_id}`, distance: 1 },
+      ]])))
+      .mockResolvedValueOnce(new Map([['vis-group', [
+        { group_id: 'vis-group', asset_id: 'vis-a', distance: 0 },
+        { group_id: 'vis-group', asset_id: 'vis-b', distance: 1 },
+      ]]]));
+
+    try {
+      await renderAsync(<ScanResultsScreen />);
+      await screen.findByText('scan_no_blurry');
+      await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
+
+      const similarList = await screen.findByTestId('similar-results-list');
+      expect(similarList.props.data.map((g: any) => g.groupId)).toEqual(['vis-group']);
+      expect(screen.queryByText('scan_no_similar')).toBeNull();
+      expect(DupGroupRepository.getGroupsPage).toHaveBeenCalledTimes(2);
+    } finally {
+      (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+      (DupGroupRepository.getGroupsPage as jest.Mock).mockReset().mockResolvedValue([]);
+      (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockReset().mockResolvedValue(new Map());
+    }
+  });
+
+  it('caps empty filtered page continuation at MAX_FILTER_SKIP_PAGES to prevent infinite loops', async () => {
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'limited' });
+    (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({
+      assets: [{ id: 'unrelated-visible' }],
+      hasNextPage: false,
+    });
+    let pageCounter = 0;
+    (DupGroupRepository.getGroupsPage as jest.Mock).mockReset().mockImplementation(async () => {
+      pageCounter += 1;
+      return Array.from({ length: 30 }, (_, idx) => ({
+        group_id: `loop-p${pageCounter}-${idx}`,
+        representative_asset_id: `x-${pageCounter}-${idx}`,
+        best_asset_id: `x-${pageCounter}-${idx}`,
+        created_at: 10000 - pageCounter * 100 - idx,
+      }));
+    });
+    (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockReset().mockImplementation(async (ids: string[]) => new Map(
+      ids.map(id => [id, [
+        { group_id: id, asset_id: `hid-a-${id}`, distance: 0 },
+        { group_id: id, asset_id: `hid-b-${id}`, distance: 1 },
+      ]]),
+    ));
+
+    try {
+      await renderAsync(<ScanResultsScreen />);
+      await screen.findByText('scan_no_blurry');
+      await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
+      await screen.findByText('scan_no_similar');
+      // Bounded to exactly 10 pages total (1 initial + 9 continuation pages).
+      expect(DupGroupRepository.getGroupsPage).toHaveBeenCalledTimes(10);
+    } finally {
+      (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+      (DupGroupRepository.getGroupsPage as jest.Mock).mockReset().mockResolvedValue([]);
+      (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockReset().mockResolvedValue(new Map());
+    }
+  });
+
+  it('preserves pagination and open modals on unrelated incremental mediaLibraryRefreshVersion events, and avoids resetting page on inspect-only overlay close', async () => {
+    const page1 = Array.from({ length: 30 }, (_, idx) => ({
+      group_id: `stay-${idx}`,
+      representative_asset_id: `sa-${idx}`,
+      best_asset_id: `sa-${idx}`,
+      created_at: 1000 - idx,
+    }));
+    const page2 = [
+      { group_id: 'stay-30', representative_asset_id: 'sa-30', best_asset_id: 'sa-30', created_at: 900 },
+    ];
+    const membersFor = (groups: typeof page1) => new Map(
+      groups.map(g => [g.group_id, [
+        { group_id: g.group_id, asset_id: `a-${g.group_id}`, distance: 0 },
+        { group_id: g.group_id, asset_id: `b-${g.group_id}`, distance: 1 },
+      ]]),
+    );
+    (DupGroupRepository.getGroupsPage as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2);
+    (DupGroupRepository.getGroupMembersBatch as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce(membersFor(page1))
+      .mockResolvedValueOnce(membersFor(page2));
+
+    try {
+      const view = await renderAsync(<ScanResultsScreen />);
+      await screen.findByText('scan_no_blurry');
+      await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
+      const similarList = await screen.findByTestId('similar-results-list');
+      await act(async () => { similarList.props.onEndReached(); });
+      await waitFor(() => expect(screen.getByTestId('similar-results-list').props.data).toHaveLength(31));
+
+      // Open and close SimilarGroupDetailOverlay without mutating -> must NOT reload or reset to page 1!
+      const callsBeforeInspect = (DupGroupRepository.getGroupsPage as jest.Mock).mock.calls.length;
+      fireEvent.press(screen.getAllByRole('button', { name: 'Open group' })[0]);
+      await act(async () => { fireEvent.press(screen.getByRole('button', { name: 'Close group' })); });
+      expect(DupGroupRepository.getGroupsPage).toHaveBeenCalledTimes(callsBeforeInspect);
+      expect(screen.getByTestId('similar-results-list').props.data).toHaveLength(31);
+
+      // Unrelated external screenshot bumps mediaLibraryRefreshVersion (not permissionRefreshVersion):
+      // loaded pages must NOT be wiped!
+      mockMediaState.mediaLibraryRefreshVersion += 1;
+      await view.rerenderAsync(<ScanResultsScreen />);
+      expect(screen.getByTestId('similar-results-list').props.data).toHaveLength(31);
+      expect(DupGroupRepository.getGroupsPage).toHaveBeenCalledTimes(callsBeforeInspect);
+    } finally {
+      (DupGroupRepository.getGroupsPage as jest.Mock).mockReset().mockResolvedValue([]);
+      (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockReset().mockResolvedValue(new Map());
+    }
+  });
+
+  it('shows a pending-deletion badge on queued blurry rows and syncs immediately after confirmPendingDeletion', async () => {
+    mockMediaState.deleteQueue = [{ id: 'blur-queued', mediaType: 'photo', uri: 'file:///blur-queued.jpg' }];
+    (AssetRepository.getBlurryAssets as jest.Mock)
+      .mockReset()
+      .mockResolvedValueOnce([
+        { asset_id: 'blur-queued', blur_score: 12, mean_luma: 90 },
+        { asset_id: 'blur-other', blur_score: 18, mean_luma: 95 },
+      ])
+      .mockResolvedValueOnce([
+        { asset_id: 'blur-other', blur_score: 18, mean_luma: 95 },
+      ]);
+
+    const view = await renderAsync(<ScanResultsScreen />);
+    await screen.findByTestId('blurry-queued-badge-blur-queued');
+    expect(screen.queryByTestId('blurry-queued-badge-blur-other')).toBeNull();
+    expect(screen.getByTestId('blurry-results-list').props.data).toHaveLength(2);
+
+    // Simulate confirmPendingDeletion completing deletion of 'blur-queued'.
+    mockMediaState.deleteQueue = [];
+    mockMediaState.lastDeletionResult = {
+      status: 'success',
+      requestedIds: ['blur-queued'],
+      deletedIds: ['blur-queued'],
+      remainingIds: [],
+      failureKind: null,
+    };
+    await view.rerenderAsync(<ScanResultsScreen />);
+    await waitFor(() => expect(screen.getByTestId('blurry-results-list').props.data.map((i: any) => i.assetId)).toEqual(['blur-other']));
   });
 });

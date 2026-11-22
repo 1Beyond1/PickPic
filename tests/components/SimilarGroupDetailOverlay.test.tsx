@@ -73,7 +73,8 @@ beforeEach(() => {
   mockComplete.mockResolvedValue('saved');
   mockEnqueuePending.mockImplementation((assets?: any[]) => {
     for (const asset of assets ?? []) {
-      mockMediaState.deleteQueue.push(asset); mockMediaState.photoProcessedIds.push(asset.id);
+      mockMediaState.deleteQueue = [...mockMediaState.deleteQueue, asset];
+      mockMediaState.photoProcessedIds = [...mockMediaState.photoProcessedIds, asset.id];
     }
     return 1;
   });
@@ -185,6 +186,7 @@ it('names the group close and selected-delete icon controls and provides reachab
   expect(StyleSheet.flatten(deleteButton.props.style).minHeight).toBeGreaterThanOrEqual(44);
   fireEvent.press(close);
   expect(props.onClose).toHaveBeenCalledTimes(1);
+  expect(props.onClose).toHaveBeenCalledWith(false);
   expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
 });
 
@@ -331,6 +333,7 @@ it('requires complete accessible membership and actual decisions before explicit
   expect(mockComplete).toHaveBeenCalledWith('group', 'snapshot', ['first'], expect.any(Function));
   expect(props.onComplete).toHaveBeenCalledTimes(1);
   expect(props.onClose).toHaveBeenCalledTimes(1);
+  expect(props.onClose).toHaveBeenCalledWith(true);
   expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
 });
 

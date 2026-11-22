@@ -2,7 +2,7 @@ import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readabl
 
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     BackHandler,
@@ -52,7 +52,7 @@ interface SimilarGroupDetailOverlayProps {
     groupId: string;
     memberAssetIds: string[];
     originRect: { x: number; y: number; width: number; height: number } | null;
-    onClose: () => void;
+    onClose: (didChange?: boolean) => void;
     onComplete: () => void;
 }
 
@@ -85,6 +85,12 @@ export function SimilarGroupDetailOverlay({
     const [showDetails, setShowDetails] = useState(false);
     const isDeletingRef = useRef(false);
     const loadRequestIdRef = useRef(0);
+    const hasMutatedRef = useRef(false);
+    const processedIdSet = useMemo(() => new Set(processedIds), [processedIds]);
+    const pendingPhotoIdSet = useMemo(
+        () => new Set(pendingPhotos.map(asset => asset.id)),
+        [pendingPhotos],
+    );
 
     // Animation state
     const overlayOpacity = useSharedValue(0);
@@ -139,10 +145,11 @@ export function SimilarGroupDetailOverlay({
     }, [groupId, memberAssetIds]);
 
     const animateClose = useCallback(() => {
+        const didChange = hasMutatedRef.current;
         // Exit animation
         overlayOpacity.value = withTiming(0, { duration: reducedMotion ? 0 : 250 }, (finished) => {
             if (finished) {
-                runOnJS(onClose)();
+                runOnJS(onClose)(didChange);
             }
         });
     }, [onClose, overlayOpacity, reducedMotion]);
@@ -154,6 +161,7 @@ export function SimilarGroupDetailOverlay({
 
     useEffect(() => {
         if (visible && memberAssetIds.length > 0) {
+            hasMutatedRef.current = false;
             loadPhotos();
             setSelectedIds(new Set());
             setPreviewPhoto(null);
@@ -214,7 +222,7 @@ export function SimilarGroupDetailOverlay({
 
     const queuePhotos = async (assetIds: readonly string[]) => {
         if (!assetIds.length || isDeletingRef.current) return;
-        const confirmedKeeps = Array.from(keptIds).filter(id => processedIds.includes(id) && !pendingPhotos.some(asset => asset.id === id));
+        const confirmedKeeps = Array.from(keptIds).filter(id => processedIdSet.has(id) && !pendingPhotoIdSet.has(id));
         if (!confirmedKeeps.length || assetIds.some(id => confirmedKeeps.includes(id))) {
             setQueueFeedback(t('similar_keep_first')); return;
         }
@@ -244,6 +252,7 @@ export function SimilarGroupDetailOverlay({
             if (!added && assetIds.some(id => !before.has(id))) throw new Error('Record mutation is blocked');
             await flushMediaProgress();
             if (generation !== loadRequestIdRef.current) return;
+            if (added) hasMutatedRef.current = true;
             setQueueFeedback(t(added ? 'pending_added' : 'pending_already_added'));
             setSelectedIds(new Set());
             setPreviewPhoto(null);
@@ -255,11 +264,15 @@ export function SimilarGroupDetailOverlay({
     const handleDeleteSelected = () => queuePhotos(Array.from(selectedIds));
     const handleClosePreview = () => { if (!isDeletingRef.current) setPreviewPhoto(null); };
     const handleDeleteFromPreview = () => previewPhoto && queuePhotos([previewPhoto.assetId]);
-    const confirmedKeptIds = Array.from(keptIds).filter(id => processedIds.includes(id) && !pendingPhotos.some(asset => asset.id === id));
+    const confirmedKeptIds = useMemo(
+        () => Array.from(keptIds).filter(id => processedIdSet.has(id) && !pendingPhotoIdSet.has(id)),
+        [keptIds, pendingPhotoIdSet, processedIdSet],
+    );
+    const confirmedKeptIdSet = useMemo(() => new Set(confirmedKeptIds), [confirmedKeptIds]);
     const allAccessible = !!snapshot && snapshot.assets.length === photos.length
         && snapshot.assets.every(asset => photos.some(photo => photo.assetId === asset.asset_id));
-    const canComplete = allAccessible && confirmedKeptIds.length > 0 && photos.every(photo => confirmedKeptIds.includes(photo.assetId)
-        || (processedIds.includes(photo.assetId) && pendingPhotos.some(asset => asset.id === photo.assetId)));
+    const canComplete = allAccessible && confirmedKeptIds.length > 0 && photos.every(photo => confirmedKeptIdSet.has(photo.assetId)
+        || (processedIdSet.has(photo.assetId) && pendingPhotoIdSet.has(photo.assetId)));
     const keepPhotos = async (ids: readonly string[]) => {
         if (!snapshot || isDeletingRef.current) return;
         const generation = loadRequestIdRef.current;
@@ -268,6 +281,7 @@ export function SimilarGroupDetailOverlay({
             const result = await keepSimilarPhotos(groupId, snapshot.key, ids, () => generation === loadRequestIdRef.current);
             if (generation !== loadRequestIdRef.current) return;
             if (result === 'saved') {
+                hasMutatedRef.current = true;
                 setKeptIds(previous => new Set([...previous, ...ids]));
                 setSelectedIds(new Set());
                 setQueueFeedback(t('similar_kept_saved'));
@@ -281,7 +295,7 @@ export function SimilarGroupDetailOverlay({
         try {
             const result = await completeSimilarGroup(groupId, snapshot.key, confirmedKeptIds, () => generation === loadRequestIdRef.current);
             if (generation !== loadRequestIdRef.current) return;
-            if (result === 'saved') { onComplete(); onClose(); }
+            if (result === 'saved') { hasMutatedRef.current = true; onComplete(); onClose(true); }
             else setQueueFeedback(t(result === 'stale' ? 'similar_group_changed' : 'similar_save_failed'));
         } finally { isDeletingRef.current = false; setIsDeleting(false); }
     };

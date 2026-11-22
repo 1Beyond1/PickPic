@@ -15,6 +15,11 @@ export interface DupGroup {
     created_at: number;
 }
 
+export interface DupGroupsCursor {
+    createdAt: number | null;
+    groupId: string;
+}
+
 export interface DupMember {
     group_id: string;
     asset_id: string;
@@ -546,33 +551,57 @@ export const DupGroupRepository = {
     },
 
     /**
-     * Get a deterministic page of actionable duplicate groups. Only the first
-     * page runs the legacy repair pass (unless explicitly requested) so
-     * subsequent scroll pages stay read-only on the shared connection.
+     * Get a deterministic page of actionable duplicate groups. Supports stable
+     * keyset pagination via `cursor` (backed by `idx_dup_groups_created`) to
+     * prevent OFFSET drift when groups are inserted or deleted concurrently.
+     * Only the initial page runs the legacy repair pass (unless explicitly
+     * requested) so subsequent scroll pages stay read-only on the shared connection.
      */
-    async getGroupsPage(options: { limit?: number; offset?: number; repair?: boolean } = {}): Promise<DupGroup[]> {
+    async getGroupsPage(options: {
+        limit?: number;
+        offset?: number;
+        cursor?: DupGroupsCursor | null;
+        repair?: boolean;
+    } = {}): Promise<DupGroup[]> {
         const limit = options.limit ?? 30;
         const offset = options.offset ?? 0;
-        if (limit <= 0 || offset < 0) return [];
-        const shouldRepair = options.repair ?? offset === 0;
+        const cursor = options.cursor ?? null;
+        if (limit <= 0 || (!cursor && offset < 0)) return [];
+        const shouldRepair = options.repair ?? (!cursor && offset === 0);
+
+        let cursorClause = '';
+        const params: (string | number)[] = [];
+        if (cursor) {
+            if (cursor.createdAt !== null && cursor.createdAt !== undefined) {
+                cursorClause = ' AND (created_at < ? OR (created_at = ? AND group_id > ?) OR created_at IS NULL)';
+                params.push(cursor.createdAt, cursor.createdAt, cursor.groupId);
+            } else {
+                cursorClause = ' AND (created_at IS NULL AND group_id > ?)';
+                params.push(cursor.groupId);
+            }
+            params.push(limit);
+        } else {
+            params.push(limit, offset);
+        }
+
         const query = `SELECT * FROM dup_groups
             WHERE group_id IN (
                 SELECT group_id FROM dup_members
                 GROUP BY group_id
                 HAVING COUNT(*) >= 2
-            )
+            )${cursorClause}
             ORDER BY created_at DESC, group_id ASC
-            LIMIT ? OFFSET ?`;
+            LIMIT ?${cursor ? '' : ' OFFSET ?'}`;
 
         if (shouldRepair) {
             return withTransaction(async db => {
                 await repairDuplicateGroupsInDatabase(db, { removeSingletonGroups: false });
-                return db.getAllAsync<DupGroup>(query, [limit, offset]);
+                return db.getAllAsync<DupGroup>(query, params);
             });
         }
 
         const db = await getDatabase();
-        return db.getAllAsync<DupGroup>(query, [limit, offset]);
+        return db.getAllAsync<DupGroup>(query, params);
     },
 
     /**

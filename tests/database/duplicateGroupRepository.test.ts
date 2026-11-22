@@ -165,5 +165,15 @@ describe('duplicate group repair', () => {
     expect(batched.get('grp-5')?.map((m: any) => m.asset_id)).toEqual(['grp-5-a', 'grp-5-b']);
     expect(batched.get('grp-4')?.map((m: any) => m.asset_id)).toEqual(['grp-4-a', 'grp-4-b']);
     expect(batched.get('missing')).toEqual([]);
+
+    // Keyset cursor pagination must not skip or duplicate rows when a newer group is deleted mid-scroll.
+    await database.runAsync("DELETE FROM dup_members WHERE group_id = 'grp-5'");
+    await database.runAsync("DELETE FROM dup_groups WHERE group_id = 'grp-5'");
+    const keysetPage2 = await DupGroupRepository.getGroupsPage({
+      limit: 3,
+      cursor: { createdAt: page1[2].created_at, groupId: page1[2].group_id },
+      repair: false,
+    });
+    expect(keysetPage2.map((g: any) => g.group_id)).toEqual(['grp-2', 'grp-1']);
   });
 });

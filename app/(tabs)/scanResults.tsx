@@ -8,7 +8,7 @@ import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View, type ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useReducedMotion } from 'react-native-reanimated';
 
@@ -18,7 +18,7 @@ import { PendingDeletionButton } from '../../components/PendingDeletionReview';
 import { getPendingDeletionEntries } from '../../services/pendingDeletion';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { AssetRepository, DupGroupRepository } from '../../database';
-import type { DupGroup, DupMember } from '../../database';
+import type { BlurryAssetsCursor, DupGroup, DupGroupsCursor, DupMember } from '../../database';
 import { SimilarReviewRepository, isSimilarReviewCurrent } from '../../database/repositories/SimilarReviewRepository';
 import type { SimilarReview } from '../../database/repositories/SimilarReviewRepository';
 import { CategoryGroup, useAICategories } from '../../hooks/useAICategories';
@@ -48,7 +48,10 @@ interface SimilarGroup {
 const RESULTS_MEDIA_PAGE_SIZE = 100;
 const BLURRY_PAGE_SIZE = 50;
 const SIMILAR_PAGE_SIZE = 30;
+const MAX_FILTER_SKIP_PAGES = 10;
 const CATEGORY_URI_PAGE_SIZE = 60;
+const CATEGORY_URI_OVERSCAN_BEFORE = 15;
+const CATEGORY_URI_OVERSCAN_AFTER = 45;
 const CATEGORY_URI_CACHE_MAX = 600;
 
 function writeBoundedUriCache(cache: Map<string, string>, assetId: string, uri: string): void {
@@ -61,6 +64,51 @@ function writeBoundedUriCache(cache: Map<string, string>, assetId: string, uri: 
         if (oldestKey === undefined) break;
         cache.delete(oldestKey);
     }
+}
+
+function mergeBoundedDetailMap(
+    base: Record<string, string>,
+    patch: Record<string, string>,
+    assetIds: readonly string[],
+    anchorIndex: number,
+): Record<string, string> {
+    const merged: Record<string, string> = { ...base, ...patch };
+    const keys = Object.keys(merged);
+    if (keys.length <= CATEGORY_URI_CACHE_MAX) {
+        return merged;
+    }
+    const indexById = new Map<string, number>();
+    assetIds.forEach((id, idx) => indexById.set(id, idx));
+    keys.sort((left, right) => {
+        const leftDist = Math.abs((indexById.get(left) ?? anchorIndex) - anchorIndex);
+        const rightDist = Math.abs((indexById.get(right) ?? anchorIndex) - anchorIndex);
+        return leftDist - rightDist;
+    });
+    const bounded: Record<string, string> = {};
+    for (let i = 0; i < CATEGORY_URI_CACHE_MAX; i++) {
+        const key = keys[i];
+        bounded[key] = merged[key];
+    }
+    return bounded;
+}
+
+function sortSimilarGroupPage(
+    groups: readonly SimilarGroup[],
+    hasHydrated: boolean,
+    processedIdSet: ReadonlySet<string>,
+    pendingDeleteIdSet: ReadonlySet<string>,
+): SimilarGroup[] {
+    if (groups.length <= 1) return [...groups];
+    const processedRank = new Map<string, number>();
+    for (const group of groups) {
+        const isProcessed = hasHydrated
+            && group.allAccessible
+            && isSimilarReviewCurrent(group.review, processedIdSet, pendingDeleteIdSet);
+        processedRank.set(group.groupId, isProcessed ? 1 : 0);
+    }
+    return [...groups].sort(
+        (left, right) => (processedRank.get(left.groupId) ?? 0) - (processedRank.get(right.groupId) ?? 0),
+    );
 }
 
 async function hydrateSimilarGroupPage(
@@ -172,10 +220,14 @@ export default function ScanResultsScreen() {
 
     const { enableAIClassification } = useSettingsStore();
     const permissionScope = useMediaStore(state => state.permissionScope);
-    const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion);
+    const permissionRefreshVersion = useMediaStore(state => state.permissionRefreshVersion ?? 0);
+    const lastDeletionResult = useMediaStore(state => state.lastDeletionResult ?? null);
     const photoProcessedIds = useMediaStore(state => state.photoProcessedIds);
     const deleteQueue = useMediaStore(state => state.deleteQueue);
     const hasHydrated = useMediaStore(state => state.hasHydrated);
+
+    const processedPhotoIdSet = useMemo(() => new Set(photoProcessedIds), [photoProcessedIds]);
+    const pendingDeleteIdSet = useMemo(() => new Set(deleteQueue.map(asset => asset.id)), [deleteQueue]);
 
     const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'ai'>('blur');
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
@@ -189,8 +241,8 @@ export default function ScanResultsScreen() {
     const [completedCount, setCompletedCount] = useState<number | null>(null);
     const loadRequestIdRef = useRef(0);
     const visiblePhotoIdsRef = useRef<ReadonlySet<string> | undefined>(undefined);
-    const blurryOffsetRef = useRef(0);
-    const similarOffsetRef = useRef(0);
+    const blurryCursorRef = useRef<BlurryAssetsCursor | null>(null);
+    const similarCursorRef = useRef<DupGroupsCursor | null>(null);
     const loadingMoreBlurryRef = useRef(false);
     const loadingMoreSimilarRef = useRef(false);
     const [isDeletingBlurry, setIsDeletingBlurry] = useState(false);
@@ -202,7 +254,8 @@ export default function ScanResultsScreen() {
         group: SimilarGroup;
         origin: { x: number; y: number; width: number; height: number };
     } | null>(null);
-    const previousMediaLibraryRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
+    const previousPermissionRefreshVersionRef = useRef(permissionRefreshVersion);
+    const previousLastDeletionResultRef = useRef(lastDeletionResult);
 
     // AI Categories Hook
     // Category loading reads the complete DONE snapshot. Defer that work
@@ -217,10 +270,112 @@ export default function ScanResultsScreen() {
         }
     }, [activeTab, enableAIClassification]);
 
+    const fetchAdditionalBlurryPages = useCallback(async (
+        visibleIdsArray: readonly string[] | undefined,
+        initialCursor: BlurryAssetsCursor | null,
+        requestId: number,
+        maxPages: number,
+    ): Promise<{ items: BlurryPhoto[]; cursor: BlurryAssetsCursor | null; hasMore: boolean } | null> => {
+        let cursor = initialCursor;
+        let hasMore = true;
+        const collected: BlurryPhoto[] = [];
+
+        for (let page = 0; page < maxPages && collected.length === 0 && hasMore; page++) {
+            const nextAssets = await AssetRepository.getBlurryAssets(
+                visibleIdsArray,
+                BLURRY_PAGE_SIZE,
+                0,
+                cursor,
+            );
+            if (requestId !== loadRequestIdRef.current) return null;
+
+            hasMore = nextAssets.length === BLURRY_PAGE_SIZE;
+            if (nextAssets.length === 0) break;
+            const last = nextAssets[nextAssets.length - 1];
+            cursor = { blurScore: last.blur_score, assetId: last.asset_id };
+
+            const readableInfos = await getReadableMediaInfos(nextAssets.map(asset => asset.asset_id), 'photo', {
+                shouldDownloadFromNetwork: false,
+            });
+            if (requestId !== loadRequestIdRef.current) return null;
+
+            for (const asset of nextAssets) {
+                const info = readableInfos.get(asset.asset_id);
+                const uri = info?.localUri || info?.uri;
+                if (!uri) continue;
+                collected.push({
+                    assetId: asset.asset_id,
+                    blurScore: asset.blur_score,
+                    meanLuma: asset.mean_luma,
+                    uri,
+                });
+            }
+        }
+
+        return { items: collected, cursor, hasMore };
+    }, []);
+
+    const fetchAdditionalSimilarPages = useCallback(async (
+        visiblePhotoIds: ReadonlySet<string> | undefined,
+        initialCursor: DupGroupsCursor | null,
+        requestId: number,
+        maxPages: number,
+    ): Promise<{ groups: SimilarGroup[]; cursor: DupGroupsCursor | null; hasMore: boolean } | null> => {
+        let cursor = initialCursor;
+        let hasMore = true;
+        const collected: SimilarGroup[] = [];
+
+        for (let page = 0; page < maxPages && collected.length === 0 && hasMore; page++) {
+            const nextGroups = await DupGroupRepository.getGroupsPage({
+                limit: SIMILAR_PAGE_SIZE,
+                cursor,
+                repair: false,
+            });
+            if (requestId !== loadRequestIdRef.current) return null;
+
+            hasMore = nextGroups.length === SIMILAR_PAGE_SIZE;
+            if (nextGroups.length === 0) break;
+            const last = nextGroups[nextGroups.length - 1];
+            cursor = { createdAt: last.created_at ?? null, groupId: last.group_id };
+
+            const membersByGroupId = await DupGroupRepository.getGroupMembersBatch(
+                nextGroups.map(group => group.group_id),
+            );
+            if (requestId !== loadRequestIdRef.current) return null;
+
+            const visibleMemberIds: string[] = [];
+            for (const group of nextGroups) {
+                const members = membersByGroupId.get(group.group_id) ?? [];
+                for (const member of members) {
+                    if (visiblePhotoIds === undefined || visiblePhotoIds.has(member.asset_id)) {
+                        visibleMemberIds.push(member.asset_id);
+                    }
+                }
+            }
+            const readableInfos = visibleMemberIds.length > 0
+                ? await getReadableMediaInfos(visibleMemberIds, 'photo', {
+                    shouldDownloadFromNetwork: false,
+                })
+                : new Map();
+            if (requestId !== loadRequestIdRef.current) return null;
+
+            const hydrated = await hydrateSimilarGroupPage(
+                nextGroups,
+                membersByGroupId,
+                visiblePhotoIds,
+                readableInfos,
+            );
+            if (requestId !== loadRequestIdRef.current) return null;
+            collected.push(...hydrated);
+        }
+
+        return { groups: collected, cursor, hasMore };
+    }, []);
+
     const loadResults = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
-        blurryOffsetRef.current = 0;
-        similarOffsetRef.current = 0;
+        blurryCursorRef.current = null;
+        similarCursorRef.current = null;
         loadingMoreBlurryRef.current = false;
         loadingMoreSimilarRef.current = false;
         setLoadingMoreBlurry(false);
@@ -266,7 +421,7 @@ export default function ScanResultsScreen() {
 
             if (requestId !== loadRequestIdRef.current) return;
 
-            const blurryWithUris: BlurryPhoto[] = [];
+            let blurryWithUris: BlurryPhoto[] = [];
             for (const asset of blurryAssets) {
                 const info = readableInfos.get(asset.asset_id);
                 const uri = info?.localUri || info?.uri;
@@ -279,21 +434,76 @@ export default function ScanResultsScreen() {
                 });
             }
 
-            const hydratedGroups = await hydrateSimilarGroupPage(
+            let hydratedGroups = await hydrateSimilarGroupPage(
                 groups,
                 membersByGroupId,
                 visiblePhotoIds,
                 readableInfos,
             );
+            if (requestId !== loadRequestIdRef.current) return;
+
+            let nextBlurryCursor: BlurryAssetsCursor | null = blurryAssets.length > 0
+                ? {
+                    blurScore: blurryAssets[blurryAssets.length - 1].blur_score,
+                    assetId: blurryAssets[blurryAssets.length - 1].asset_id,
+                }
+                : null;
+            let nextHasMoreBlurry = blurryAssets.length === BLURRY_PAGE_SIZE;
+
+            let nextSimilarCursor: DupGroupsCursor | null = groups.length > 0
+                ? {
+                    createdAt: groups[groups.length - 1].created_at ?? null,
+                    groupId: groups[groups.length - 1].group_id,
+                }
+                : null;
+            let nextHasMoreSimilar = groups.length === SIMILAR_PAGE_SIZE;
+
+            // Under limited permissions (or after external deletions), page 1 can
+            // filter down to 0 visible rows while later pages still hold visible
+            // matches. Advance bounded pages via keyset cursor so we never show
+            // a false empty state that blocks onEndReached.
+            if (blurryWithUris.length === 0 && nextHasMoreBlurry && nextBlurryCursor) {
+                const continued = await fetchAdditionalBlurryPages(
+                    visibleIdsArray,
+                    nextBlurryCursor,
+                    requestId,
+                    MAX_FILTER_SKIP_PAGES - 1,
+                );
+                if (!continued || requestId !== loadRequestIdRef.current) return;
+                blurryWithUris = continued.items;
+                nextBlurryCursor = continued.cursor;
+                nextHasMoreBlurry = continued.hasMore;
+            }
+
+            if (hydratedGroups.length === 0 && nextHasMoreSimilar && nextSimilarCursor) {
+                const continued = await fetchAdditionalSimilarPages(
+                    visiblePhotoIds,
+                    nextSimilarCursor,
+                    requestId,
+                    MAX_FILTER_SKIP_PAGES - 1,
+                );
+                if (!continued || requestId !== loadRequestIdRef.current) return;
+                hydratedGroups = continued.groups;
+                nextSimilarCursor = continued.cursor;
+                nextHasMoreSimilar = continued.hasMore;
+            }
 
             if (requestId !== loadRequestIdRef.current) return;
-            blurryOffsetRef.current = blurryAssets.length;
-            similarOffsetRef.current = groups.length;
-            setHasMoreBlurry(blurryAssets.length === BLURRY_PAGE_SIZE);
-            setHasMoreSimilar(groups.length === SIMILAR_PAGE_SIZE);
+            const storeState = useMediaStore.getState();
+            const initialSortedGroups = sortSimilarGroupPage(
+                hydratedGroups,
+                !!storeState.hasHydrated,
+                new Set(storeState.photoProcessedIds ?? []),
+                new Set((storeState.deleteQueue ?? []).map(asset => asset.id)),
+            );
+
+            blurryCursorRef.current = nextBlurryCursor;
+            similarCursorRef.current = nextSimilarCursor;
+            setHasMoreBlurry(nextHasMoreBlurry);
+            setHasMoreSimilar(nextHasMoreSimilar);
             setBlurryPhotos(blurryWithUris);
             setCompletedCount(statusCounts.done);
-            setSimilarGroups(hydratedGroups);
+            setSimilarGroups(initialSortedGroups);
         } catch {
             console.error('[ScanResults] Results could not be loaded.');
             if (requestId === loadRequestIdRef.current) {
@@ -312,49 +522,30 @@ export default function ScanResultsScreen() {
                 setLoading(false);
             }
         }
-    }, []);
+    }, [fetchAdditionalBlurryPages, fetchAdditionalSimilarPages]);
 
     const loadMoreBlurry = useCallback(async () => {
-        if (loading || loadingMoreBlurryRef.current || !hasMoreBlurry) return;
+        if (loading || loadingMoreBlurryRef.current || !hasMoreBlurry || !blurryCursorRef.current) return;
         const requestId = loadRequestIdRef.current;
         loadingMoreBlurryRef.current = true;
         setLoadingMoreBlurry(true);
         try {
             const visiblePhotoIds = visiblePhotoIdsRef.current;
             const visibleIdsArray = visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds);
-            const nextAssets = await AssetRepository.getBlurryAssets(
+            const result = await fetchAdditionalBlurryPages(
                 visibleIdsArray,
-                BLURRY_PAGE_SIZE,
-                blurryOffsetRef.current,
+                blurryCursorRef.current,
+                requestId,
+                MAX_FILTER_SKIP_PAGES,
             );
-            if (requestId !== loadRequestIdRef.current) return;
+            if (!result || requestId !== loadRequestIdRef.current) return;
 
-            const readableInfos = nextAssets.length > 0
-                ? await getReadableMediaInfos(nextAssets.map(asset => asset.asset_id), 'photo', {
-                    shouldDownloadFromNetwork: false,
-                })
-                : new Map();
-            if (requestId !== loadRequestIdRef.current) return;
-
-            const nextItems: BlurryPhoto[] = [];
-            for (const asset of nextAssets) {
-                const info = readableInfos.get(asset.asset_id);
-                const uri = info?.localUri || info?.uri;
-                if (!uri) continue;
-                nextItems.push({
-                    assetId: asset.asset_id,
-                    blurScore: asset.blur_score,
-                    meanLuma: asset.mean_luma,
-                    uri,
-                });
-            }
-
-            blurryOffsetRef.current += nextAssets.length;
-            setHasMoreBlurry(nextAssets.length === BLURRY_PAGE_SIZE);
-            if (nextItems.length > 0) {
+            blurryCursorRef.current = result.cursor;
+            setHasMoreBlurry(result.hasMore);
+            if (result.items.length > 0) {
                 setBlurryPhotos(previous => {
                     const seen = new Set(previous.map(item => item.assetId));
-                    const appended = nextItems.filter(item => !seen.has(item.assetId));
+                    const appended = result.items.filter(item => !seen.has(item.assetId));
                     return appended.length > 0 ? [...previous, ...appended] : previous;
                 });
             }
@@ -366,57 +557,37 @@ export default function ScanResultsScreen() {
                 setLoadingMoreBlurry(false);
             }
         }
-    }, [hasMoreBlurry, loading]);
+    }, [fetchAdditionalBlurryPages, hasMoreBlurry, loading]);
 
     const loadMoreSimilar = useCallback(async () => {
-        if (loading || loadingMoreSimilarRef.current || !hasMoreSimilar) return;
+        if (loading || loadingMoreSimilarRef.current || !hasMoreSimilar || !similarCursorRef.current) return;
         const requestId = loadRequestIdRef.current;
         loadingMoreSimilarRef.current = true;
         setLoadingMoreSimilar(true);
         try {
-            const visiblePhotoIds = visiblePhotoIdsRef.current;
-            const nextGroups = await DupGroupRepository.getGroupsPage({
-                limit: SIMILAR_PAGE_SIZE,
-                offset: similarOffsetRef.current,
-                repair: false,
-            });
-            if (requestId !== loadRequestIdRef.current) return;
-
-            const membersByGroupId = await DupGroupRepository.getGroupMembersBatch(
-                nextGroups.map(group => group.group_id),
+            const result = await fetchAdditionalSimilarPages(
+                visiblePhotoIdsRef.current,
+                similarCursorRef.current,
+                requestId,
+                MAX_FILTER_SKIP_PAGES,
             );
-            if (requestId !== loadRequestIdRef.current) return;
+            if (!result || requestId !== loadRequestIdRef.current) return;
 
-            const visibleMemberIds: string[] = [];
-            for (const group of nextGroups) {
-                const members = membersByGroupId.get(group.group_id) ?? [];
-                for (const member of members) {
-                    if (visiblePhotoIds === undefined || visiblePhotoIds.has(member.asset_id)) {
-                        visibleMemberIds.push(member.asset_id);
-                    }
-                }
-            }
-            const readableInfos = visibleMemberIds.length > 0
-                ? await getReadableMediaInfos(visibleMemberIds, 'photo', {
-                    shouldDownloadFromNetwork: false,
-                })
-                : new Map();
-            if (requestId !== loadRequestIdRef.current) return;
-
-            const hydrated = await hydrateSimilarGroupPage(
-                nextGroups,
-                membersByGroupId,
-                visiblePhotoIds,
-                readableInfos,
-            );
-            if (requestId !== loadRequestIdRef.current) return;
-
-            similarOffsetRef.current += nextGroups.length;
-            setHasMoreSimilar(nextGroups.length === SIMILAR_PAGE_SIZE);
-            if (hydrated.length > 0) {
+            similarCursorRef.current = result.cursor;
+            setHasMoreSimilar(result.hasMore);
+            if (result.groups.length > 0) {
+                // Sort only the newly fetched page before appending so previously
+                // rendered items above the viewport never jump mid-scroll.
+                const storeState = useMediaStore.getState();
+                const sortedNextPage = sortSimilarGroupPage(
+                    result.groups,
+                    !!storeState.hasHydrated,
+                    new Set(storeState.photoProcessedIds ?? []),
+                    new Set((storeState.deleteQueue ?? []).map(asset => asset.id)),
+                );
                 setSimilarGroups(previous => {
                     const seen = new Set(previous.map(item => item.groupId));
-                    const appended = hydrated.filter(item => !seen.has(item.groupId));
+                    const appended = sortedNextPage.filter(item => !seen.has(item.groupId));
                     return appended.length > 0 ? [...previous, ...appended] : previous;
                 });
             }
@@ -428,7 +599,49 @@ export default function ScanResultsScreen() {
                 setLoadingMoreSimilar(false);
             }
         }
-    }, [hasMoreSimilar, loading]);
+    }, [fetchAdditionalSimilarPages, hasMoreSimilar, loading]);
+
+    const refreshSimilarGroupInPlace = useCallback(async (groupId: string) => {
+        const requestId = loadRequestIdRef.current;
+        try {
+            const visiblePhotoIds = visiblePhotoIdsRef.current;
+            const membersByGroupId = await DupGroupRepository.getGroupMembersBatch([groupId]);
+            if (requestId !== loadRequestIdRef.current) return;
+            const members = membersByGroupId.get(groupId) ?? [];
+            const visibleMemberIds = visiblePhotoIds === undefined
+                ? members.map(member => member.asset_id)
+                : members.map(member => member.asset_id).filter(id => visiblePhotoIds.has(id));
+            const readableInfos = visibleMemberIds.length > 0
+                ? await getReadableMediaInfos(visibleMemberIds, 'photo', { shouldDownloadFromNetwork: false })
+                : new Map();
+            if (requestId !== loadRequestIdRef.current) return;
+
+            const existingGroup = similarGroups.find(group => group.groupId === groupId);
+            const syntheticRow: DupGroup = {
+                group_id: groupId,
+                representative_asset_id: existingGroup?.memberAssetIds[0] ?? members[0]?.asset_id ?? null,
+                best_asset_id: existingGroup?.bestAssetId ?? null,
+                created_at: 0,
+            };
+            const hydrated = await hydrateSimilarGroupPage(
+                [syntheticRow],
+                membersByGroupId,
+                visiblePhotoIds,
+                readableInfos,
+            );
+            if (requestId !== loadRequestIdRef.current) return;
+
+            const updated = hydrated[0] ?? null;
+            setSimilarGroups(previous => {
+                if (!updated) {
+                    return previous.filter(item => item.groupId !== groupId);
+                }
+                return previous.map(item => (item.groupId === groupId ? updated : item));
+            });
+        } catch {
+            console.error('[ScanResults] Failed to refresh similar group in place.');
+        }
+    }, [similarGroups]);
 
     useFocusEffect(
         useCallback(() => {
@@ -446,7 +659,9 @@ export default function ScanResultsScreen() {
 
     const queueFromAI = async (assetId: string, source: 'blur' | 'classification') => {
         if (isDeletingBlurryRef.current) return;
-        const refreshVersion = useMediaStore.getState().mediaLibraryRefreshVersion;
+        const initialStore = useMediaStore.getState();
+        const refreshVersion = initialStore.mediaLibraryRefreshVersion;
+        const permVersion = initialStore.permissionRefreshVersion ?? 0;
         isDeletingBlurryRef.current = true;
         setIsDeletingBlurry(true);
         setQueueFeedback(null);
@@ -456,7 +671,12 @@ export default function ScanResultsScreen() {
             const info = await getReadableMediaInfo(assetId, 'photo', { shouldDownloadFromNetwork: false });
             if (info?.id !== assetId || info.mediaType !== 'photo') throw new Error('Unavailable');
             const store = useMediaStore.getState();
-            if (refreshVersion !== store.mediaLibraryRefreshVersion) throw new Error('Access changed');
+            if (
+                refreshVersion !== store.mediaLibraryRefreshVersion
+                || permVersion !== (store.permissionRefreshVersion ?? 0)
+            ) {
+                throw new Error('Access changed');
+            }
             const existed = getPendingDeletionEntries(store).some(entry => entry.asset.id === assetId);
             const added = store.enqueuePendingDeletion([info], source);
             if (!added && !existed) throw new Error('Record mutation is blocked');
@@ -470,42 +690,47 @@ export default function ScanResultsScreen() {
     };
     const handleDeleteBlurry = (assetId: string) => queueFromAI(assetId, 'blur');
 
-    const renderBlurryItem = ({ item }: { item: BlurryPhoto }) => (
-        <View style={[styles.photoCard, { borderBottomColor: colors.divider }]}>
-            {item.uri && (
-                <Image source={{ uri: item.uri }} cachePolicy="memory" contentFit="cover" style={styles.thumbnail} />
-            )}
-            <View style={styles.cardInfo}>
-                <Text style={[styles.scoreText, { color: colors.danger }]}>
-                    {t('scan_blur_score', { score: item.blurScore.toFixed(1) })}
-                </Text>
-                <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                    {t('scan_brightness', { value: item.meanLuma.toFixed(0) })}
-                </Text>
+    const renderBlurryItem = ({ item }: { item: BlurryPhoto }) => {
+        const isQueued = pendingDeleteIdSet.has(item.assetId);
+        return (
+            <View style={[styles.photoCard, { borderBottomColor: colors.divider }]}>
+                {item.uri && (
+                    <Image source={{ uri: item.uri }} cachePolicy="memory" contentFit="cover" style={styles.thumbnail} />
+                )}
+                <View style={styles.cardInfo}>
+                    <Text style={[styles.scoreText, { color: colors.danger }]}>
+                        {t('scan_blur_score', { score: item.blurScore.toFixed(1) })}
+                    </Text>
+                    <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+                        {t('scan_brightness', { value: item.meanLuma.toFixed(0) })}
+                    </Text>
+                    {isQueued && (
+                        <View
+                            testID={`blurry-queued-badge-${item.assetId}`}
+                            style={[styles.queuedBadge, { backgroundColor: colors.surfaceHover }]}
+                        >
+                            <Text style={[styles.queuedBadgeText, { color: colors.danger }]}>
+                                {t('pending_already_added')}
+                            </Text>
+                        </View>
+                    )}
+                </View>
+                <Pressable
+                    style={({ pressed }) => [styles.deleteButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }, isDeletingBlurry && { opacity: 0.5 }]}
+                    disabled={isDeletingBlurry}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('pending_add')}
+                    accessibilityState={{ disabled: isDeletingBlurry, busy: isDeletingBlurry }}
+                    onPress={() => handleDeleteBlurry(item.assetId)}
+                >
+                    <Ionicons name={isQueued ? 'trash' : 'trash-outline'} size={20} color={colors.danger} />
+                </Pressable>
             </View>
-            <Pressable
-                style={({ pressed }) => [styles.deleteButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }, isDeletingBlurry && { opacity: 0.5 }]}
-                disabled={isDeletingBlurry}
-                accessibilityRole="button"
-                accessibilityLabel={t('pending_add')}
-                accessibilityState={{ disabled: isDeletingBlurry, busy: isDeletingBlurry }}
-                onPress={() => handleDeleteBlurry(item.assetId)}
-            >
-                <Ionicons name="trash-outline" size={20} color={colors.danger} />
-            </Pressable>
-        </View>
-    );
+        );
+    };
 
-    const pendingDeleteIds = useMemo(() => deleteQueue.map(asset => asset.id), [deleteQueue]);
     const isGroupProcessed = useCallback((group: SimilarGroup) => hasHydrated && group.allAccessible
-        && isSimilarReviewCurrent(group.review, photoProcessedIds, pendingDeleteIds), [hasHydrated, pendingDeleteIds, photoProcessedIds]);
-
-    // Sort similar groups: unprocessed first, processed at end
-    const sortedSimilarGroups = useMemo(() => [...similarGroups].sort((a, b) => {
-        const aProcessed = isGroupProcessed(a) ? 1 : 0;
-        const bProcessed = isGroupProcessed(b) ? 1 : 0;
-        return aProcessed - bProcessed;
-    }), [isGroupProcessed, similarGroups]);
+        && isSimilarReviewCurrent(group.review, processedPhotoIdSet, pendingDeleteIdSet), [hasHydrated, pendingDeleteIdSet, processedPhotoIdSet]);
 
     const renderSimilarItem = ({ item }: { item: SimilarGroup }) => (
         <SimilarGroupCard
@@ -536,7 +761,7 @@ export default function ScanResultsScreen() {
         entries: new Map(),
     });
     const categoryThumbnailWindowRef = useRef(0);
-    const loadingCategoryThumbnailsRef = useRef(false);
+    const inFlightCategoryAssetIdsRef = useRef<Set<string>>(new Set());
     const [categoryCoverUris, setCategoryCoverUris] = useState<{ version: number; map: Record<string, string> }>({
         version: -1,
         map: {},
@@ -550,6 +775,8 @@ export default function ScanResultsScreen() {
         categoryId: '',
         map: {},
     });
+    const categoryDetailUrisRef = useRef(categoryDetailUris);
+    categoryDetailUrisRef.current = categoryDetailUris;
 
     const getScopedUriCache = useCallback((version: number): Map<string, string> => {
         if (categoryUriCacheRef.current.version !== version) {
@@ -577,10 +804,10 @@ export default function ScanResultsScreen() {
     useEffect(() => {
         let active = true;
         if (categoryCoverIds.length === 0) {
-            setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map: {} });
+            setCategoryCoverUris({ version: permissionRefreshVersion, map: {} });
             return () => { active = false; };
         }
-        const cache = getScopedUriCache(mediaLibraryRefreshVersion);
+        const cache = getScopedUriCache(permissionRefreshVersion);
         const initialMap: Record<string, string> = {};
         const missingIds: string[] = [];
         for (const assetId of categoryCoverIds) {
@@ -592,7 +819,7 @@ export default function ScanResultsScreen() {
             }
         }
         if (Object.keys(initialMap).length > 0 || missingIds.length === 0) {
-            setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map: initialMap });
+            setCategoryCoverUris({ version: permissionRefreshVersion, map: initialMap });
         }
         if (missingIds.length === 0) {
             return () => { active = false; };
@@ -609,12 +836,12 @@ export default function ScanResultsScreen() {
                     nextMap[assetId] = uri;
                 }
             }
-            setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map: nextMap });
+            setCategoryCoverUris({ version: permissionRefreshVersion, map: nextMap });
         });
         return () => { active = false; };
         // categoryCoverIdsKey encodes the exact cover ID list.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [categoryCoverIdsKey, getScopedUriCache, mediaLibraryRefreshVersion]);
+    }, [categoryCoverIdsKey, getScopedUriCache, permissionRefreshVersion]);
 
     const selectedCategoryAssetIds = useMemo(
         () => selectedCategory ? selectedCategory.assets.map(asset => asset.asset_id) : [],
@@ -624,125 +851,222 @@ export default function ScanResultsScreen() {
         ? `${selectedCategory.id}:${JSON.stringify(selectedCategoryAssetIds)}`
         : '';
 
-    const fetchCategoryThumbnailWindow = useCallback(async (
+    const fetchCategoryAssetRange = useCallback(async (
         categoryId: string,
         assetIds: readonly string[],
         startIndex: number,
+        endIndex: number,
         version: number,
         isActive: () => boolean,
     ) => {
-        const endIndex = Math.min(assetIds.length, startIndex + CATEGORY_URI_PAGE_SIZE);
-        const slice = assetIds.slice(startIndex, endIndex);
-        if (slice.length === 0) return;
+        const clampedStart = Math.max(0, startIndex);
+        const clampedEnd = Math.min(assetIds.length, endIndex);
+        if (clampedStart >= clampedEnd) return;
 
+        const slice = assetIds.slice(clampedStart, clampedEnd);
         const cache = getScopedUriCache(version);
+        const currentDetail = categoryDetailUrisRef.current;
+        const currentMap = currentDetail.version === version && currentDetail.categoryId === categoryId
+            ? currentDetail.map
+            : {};
+
         const missingIds: string[] = [];
         const cachedPatch: Record<string, string> = {};
         for (const assetId of slice) {
             const cachedUri = cache.get(assetId);
             if (cachedUri) {
-                cachedPatch[assetId] = cachedUri;
-            } else {
+                if (currentMap[assetId] !== cachedUri) {
+                    cachedPatch[assetId] = cachedUri;
+                }
+            } else if (!inFlightCategoryAssetIdsRef.current.has(assetId)) {
                 missingIds.push(assetId);
             }
         }
-        categoryThumbnailWindowRef.current = Math.max(categoryThumbnailWindowRef.current, endIndex);
 
+        const anchorIndex = Math.floor((clampedStart + clampedEnd) / 2);
         if (Object.keys(cachedPatch).length > 0 && isActive()) {
             setCategoryDetailUris(previous => {
                 const base = previous.version === version && previous.categoryId === categoryId ? previous.map : {};
-                return { version, categoryId, map: { ...base, ...cachedPatch } };
+                return {
+                    version,
+                    categoryId,
+                    map: mergeBoundedDetailMap(base, cachedPatch, assetIds, anchorIndex),
+                };
             });
         }
 
         if (missingIds.length === 0) return;
-        const infos = await getReadableMediaInfos(missingIds, 'photo', {
-            shouldDownloadFromNetwork: false,
-        });
-        if (!isActive()) return;
-        const resolvedPatch: Record<string, string> = {};
-        for (const [assetId, info] of infos) {
-            const uri = info.localUri || info.uri;
-            if (uri) {
-                writeBoundedUriCache(cache, assetId, uri);
-                resolvedPatch[assetId] = uri;
+        for (const id of missingIds) inFlightCategoryAssetIdsRef.current.add(id);
+        try {
+            const infos = await getReadableMediaInfos(missingIds, 'photo', {
+                shouldDownloadFromNetwork: false,
+            });
+            if (!isActive()) return;
+            const resolvedPatch: Record<string, string> = {};
+            for (const [assetId, info] of infos) {
+                const uri = info.localUri || info.uri;
+                if (uri) {
+                    writeBoundedUriCache(cache, assetId, uri);
+                    resolvedPatch[assetId] = uri;
+                }
             }
+            if (Object.keys(resolvedPatch).length > 0) {
+                setCategoryDetailUris(previous => {
+                    const base = previous.version === version && previous.categoryId === categoryId ? previous.map : {};
+                    return {
+                        version,
+                        categoryId,
+                        map: mergeBoundedDetailMap(base, resolvedPatch, assetIds, anchorIndex),
+                    };
+                });
+            }
+        } finally {
+            for (const id of missingIds) inFlightCategoryAssetIdsRef.current.delete(id);
         }
-        setCategoryDetailUris(previous => {
-            const base = previous.version === version && previous.categoryId === categoryId ? previous.map : {};
-            return { version, categoryId, map: { ...base, ...cachedPatch, ...resolvedPatch } };
-        });
     }, [getScopedUriCache]);
 
-    const selectedCategoryRef = useRef<{ key: string; version: number; categoryId: string; assetIds: string[] }>({
+    const selectedCategoryRef = useRef<{
+        key: string;
+        version: number;
+        categoryId: string;
+        assetIds: string[];
+        indexById: Map<string, number>;
+    }>({
         key: '',
         version: -1,
         categoryId: '',
         assetIds: [],
+        indexById: new Map(),
     });
+
+    const fetchCategoryAssetRangeRef = useRef(fetchCategoryAssetRange);
+    fetchCategoryAssetRangeRef.current = fetchCategoryAssetRange;
 
     useEffect(() => {
         let active = true;
         categoryThumbnailWindowRef.current = 0;
-        loadingCategoryThumbnailsRef.current = false;
+        inFlightCategoryAssetIdsRef.current.clear();
         if (!selectedCategory || selectedCategoryAssetIds.length === 0) {
-            selectedCategoryRef.current = { key: '', version: mediaLibraryRefreshVersion, categoryId: '', assetIds: [] };
-            setCategoryDetailUris({ version: mediaLibraryRefreshVersion, categoryId: '', map: {} });
+            selectedCategoryRef.current = {
+                key: '',
+                version: permissionRefreshVersion,
+                categoryId: '',
+                assetIds: [],
+                indexById: new Map(),
+            };
+            setCategoryDetailUris({ version: permissionRefreshVersion, categoryId: '', map: {} });
             return () => { active = false; };
         }
         const categoryId = selectedCategory.id;
+        const indexById = new Map<string, number>();
+        selectedCategoryAssetIds.forEach((id, idx) => indexById.set(id, idx));
         selectedCategoryRef.current = {
             key: selectedCategoryKey,
-            version: mediaLibraryRefreshVersion,
+            version: permissionRefreshVersion,
             categoryId,
             assetIds: selectedCategoryAssetIds,
+            indexById,
         };
-        setCategoryDetailUris({ version: mediaLibraryRefreshVersion, categoryId, map: {} });
-        void fetchCategoryThumbnailWindow(
+        const initialEnd = Math.min(selectedCategoryAssetIds.length, CATEGORY_URI_PAGE_SIZE);
+        categoryThumbnailWindowRef.current = initialEnd;
+        setCategoryDetailUris({ version: permissionRefreshVersion, categoryId, map: {} });
+        void fetchCategoryAssetRange(
             categoryId,
             selectedCategoryAssetIds,
             0,
-            mediaLibraryRefreshVersion,
+            initialEnd,
+            permissionRefreshVersion,
             () => active,
         );
         return () => { active = false; };
         // selectedCategoryKey encodes the active category ID and asset list.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [fetchCategoryThumbnailWindow, selectedCategoryKey, mediaLibraryRefreshVersion]);
+    }, [fetchCategoryAssetRange, selectedCategoryKey, permissionRefreshVersion]);
 
-    const loadMoreCategoryThumbnails = useCallback(() => {
-        if (loadingCategoryThumbnailsRef.current) return;
+    // Viewport-driven thumbnail loader: scrolling or jumping to ANY position
+    // (item 100, 500, 2000, or back to 0) resolves that visible window immediately
+    // without deadlocking on FlatList's single-shot onEndReached.
+    const categoryViewabilityConfig = useRef({
+        itemVisiblePercentThreshold: 1,
+        minimumViewTime: 0,
+    }).current;
+
+    const onCategoryViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
         const current = selectedCategoryRef.current;
-        if (!current.categoryId || categoryThumbnailWindowRef.current >= current.assetIds.length) return;
-        loadingCategoryThumbnailsRef.current = true;
-        const start = categoryThumbnailWindowRef.current;
-        void fetchCategoryThumbnailWindow(
+        if (!current.categoryId || current.assetIds.length === 0 || viewableItems.length === 0) return;
+
+        let minIndex = Number.POSITIVE_INFINITY;
+        let maxIndex = -1;
+        for (const token of viewableItems) {
+            const rawItem = token.item as { asset_id?: string } | { asset_id?: string }[] | null | undefined;
+            if (Array.isArray(rawItem)) {
+                for (const sub of rawItem) {
+                    const idx = sub?.asset_id ? current.indexById.get(sub.asset_id) : undefined;
+                    if (idx !== undefined) {
+                        if (idx < minIndex) minIndex = idx;
+                        if (idx > maxIndex) maxIndex = idx;
+                    }
+                }
+            } else {
+                const idx = rawItem?.asset_id !== undefined
+                    ? current.indexById.get(rawItem.asset_id)
+                    : (typeof token.index === 'number' ? token.index : undefined);
+                if (idx !== undefined) {
+                    if (idx < minIndex) minIndex = idx;
+                    if (idx > maxIndex) maxIndex = idx;
+                }
+            }
+        }
+        if (maxIndex < 0 || !Number.isFinite(minIndex)) return;
+
+        const start = Math.max(0, minIndex - CATEGORY_URI_OVERSCAN_BEFORE);
+        const end = Math.min(current.assetIds.length, maxIndex + 1 + CATEGORY_URI_OVERSCAN_AFTER);
+        categoryThumbnailWindowRef.current = Math.max(categoryThumbnailWindowRef.current, end);
+        void fetchCategoryAssetRangeRef.current(
             current.categoryId,
             current.assetIds,
             start,
+            end,
             current.version,
             () => selectedCategoryRef.current.key === current.key && selectedCategoryRef.current.version === current.version,
-        ).finally(() => {
-            loadingCategoryThumbnailsRef.current = false;
-        });
-    }, [fetchCategoryThumbnailWindow]);
+        );
+    }).current;
 
+    const loadMoreCategoryThumbnails = useCallback(() => {
+        const current = selectedCategoryRef.current;
+        if (!current.categoryId || categoryThumbnailWindowRef.current >= current.assetIds.length) return;
+        const start = categoryThumbnailWindowRef.current;
+        const end = Math.min(current.assetIds.length, start + CATEGORY_URI_PAGE_SIZE);
+        categoryThumbnailWindowRef.current = end;
+        void fetchCategoryAssetRange(
+            current.categoryId,
+            current.assetIds,
+            start,
+            end,
+            current.version,
+            () => selectedCategoryRef.current.key === current.key && selectedCategoryRef.current.version === current.version,
+        );
+    }, [fetchCategoryAssetRange]);
+
+    // Hard reset ONLY on permission/scope changes (`permissionRefreshVersion`),
+    // never on unrelated external media additions (screenshots/edits) which
+    // would otherwise destroy pagination and force-close open detail modals.
     useEffect(() => {
-        if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current) return;
-        previousMediaLibraryRefreshVersionRef.current = mediaLibraryRefreshVersion;
+        if (permissionRefreshVersion === previousPermissionRefreshVersionRef.current) return;
+        previousPermissionRefreshVersionRef.current = permissionRefreshVersion;
 
         // Invalidate and clear every result surface immediately. Otherwise a
         // full-access snapshot can remain visible while the new permission
         // scope is still being loaded.
         loadRequestIdRef.current += 1;
         visiblePhotoIdsRef.current = undefined;
-        blurryOffsetRef.current = 0;
-        similarOffsetRef.current = 0;
+        blurryCursorRef.current = null;
+        similarCursorRef.current = null;
         loadingMoreBlurryRef.current = false;
         loadingMoreSimilarRef.current = false;
         categoryUriCacheRef.current = { version: -1, entries: new Map() };
         categoryThumbnailWindowRef.current = 0;
-        loadingCategoryThumbnailsRef.current = false;
+        inFlightCategoryAssetIdsRef.current.clear();
         setBlurryPhotos([]);
         setSimilarGroups([]);
         setHasMoreBlurry(false);
@@ -762,7 +1086,37 @@ export default function ScanResultsScreen() {
         if (activeTab === 'ai' && enableAIClassification) {
             void refreshAI();
         }
-    }, [activeTab, enableAIClassification, loadResults, mediaLibraryRefreshVersion, permissionScope, refreshAI]);
+    }, [activeTab, enableAIClassification, loadResults, permissionRefreshVersion, permissionScope, refreshAI]);
+
+    // Synchronize scan result views immediately after confirmPendingDeletion
+    // physically deletes one or more items from the header review modal.
+    useEffect(() => {
+        if (lastDeletionResult === previousLastDeletionResultRef.current) return;
+        previousLastDeletionResultRef.current = lastDeletionResult;
+        if (!lastDeletionResult || lastDeletionResult.deletedIds.length === 0) return;
+
+        const deletedIdSet = new Set(lastDeletionResult.deletedIds);
+        setBlurryPhotos(previous => previous.filter(item => !deletedIdSet.has(item.assetId)));
+        setSimilarGroups(previous => previous
+            .map(group => {
+                const remainingIds = group.memberAssetIds.filter(id => !deletedIdSet.has(id));
+                if (remainingIds.length === group.memberAssetIds.length) return group;
+                if (remainingIds.length < 2) return null;
+                return {
+                    ...group,
+                    memberCount: remainingIds.length,
+                    memberAssetIds: remainingIds,
+                    bestAssetId: group.bestAssetId && deletedIdSet.has(group.bestAssetId) ? null : group.bestAssetId,
+                };
+            })
+            .filter((group): group is SimilarGroup => group !== null));
+        setSelectedPhoto(previous => (previous && deletedIdSet.has(previous) ? null : previous));
+
+        void loadResults();
+        if (activeTab === 'ai' && enableAIClassification) {
+            void refreshAI();
+        }
+    }, [activeTab, enableAIClassification, lastDeletionResult, loadResults, refreshAI]);
 
     const getCategoryDisplayTitle = (title: string): string => {
         const categoryTitleKey = `ai_category_${title}`;
@@ -770,11 +1124,11 @@ export default function ScanResultsScreen() {
         return translatedTitle === categoryTitleKey ? title : translatedTitle;
     };
 
-    const currentCategoryCoverMap = categoryCoverUris.version === mediaLibraryRefreshVersion
+    const currentCategoryCoverMap = categoryCoverUris.version === permissionRefreshVersion
         ? categoryCoverUris.map
         : {};
     const currentCategoryDetailMap = selectedCategory
-        && categoryDetailUris.version === mediaLibraryRefreshVersion
+        && categoryDetailUris.version === permissionRefreshVersion
         && categoryDetailUris.categoryId === selectedCategory.id
         ? categoryDetailUris.map
         : {};
@@ -998,6 +1352,7 @@ export default function ScanResultsScreen() {
                     <FlatList<BlurryPhoto>
                         testID="blurry-results-list"
                         data={blurryPhotos}
+                        extraData={pendingDeleteIdSet}
                         renderItem={renderBlurryItem}
                         keyExtractor={(item) => item.assetId}
                         contentContainerStyle={styles.listContent}
@@ -1019,7 +1374,8 @@ export default function ScanResultsScreen() {
                 ) : (
                     <FlatList<SimilarGroup>
                         testID="similar-results-list"
-                        data={sortedSimilarGroups}
+                        data={similarGroups}
+                        extraData={processedPhotoIdSet}
                         renderItem={renderSimilarItem}
                         keyExtractor={(item) => item.groupId}
                         contentContainerStyle={styles.listContent}
@@ -1047,12 +1403,15 @@ export default function ScanResultsScreen() {
                 groupId={selectedSimilarGroup?.group.groupId || ''}
                 memberAssetIds={selectedSimilarGroup?.group.memberAssetIds || []}
                 originRect={selectedSimilarGroup?.origin || null}
-                onClose={() => {
+                onClose={(didChange = false) => {
+                    const closedGroupId = selectedSimilarGroup?.group.groupId;
                     setSelectedSimilarGroup(null);
-                    // The detail overlay can delete only part of a group and
-                    // remain open. Refresh on every close so the parent card
-                    // cannot keep showing its pre-deletion member count.
-                    void loadResults();
+                    // Only refresh when the user actually changed a decision in the
+                    // overlay, updating the card in place so scrolling/pagination is
+                    // never jolted back to page 1 on an inspect-only close.
+                    if (didChange && closedGroupId) {
+                        void refreshSimilarGroupInPlace(closedGroupId);
+                    }
                 }}
                 onComplete={() => setSelectedSimilarGroup(null)}
             />
@@ -1111,6 +1470,8 @@ export default function ScanResultsScreen() {
                             maxToRenderPerBatch={15}
                             updateCellsBatchingPeriod={50}
                             removeClippedSubviews
+                            viewabilityConfig={categoryViewabilityConfig}
+                            onViewableItemsChanged={onCategoryViewableItemsChanged}
                             onEndReached={loadMoreCategoryThumbnails}
                             onEndReachedThreshold={0.5}
                             renderItem={({ item, index }) => (
@@ -1347,6 +1708,17 @@ const styles = StyleSheet.create({
     },
     metaText: {
         ...TYPOGRAPHY.secondary,
+    },
+    queuedBadge: {
+        alignSelf: 'flex-start',
+        marginTop: 6,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 6,
+    },
+    queuedBadgeText: {
+        ...TYPOGRAPHY.caption,
+        fontWeight: '600',
     },
     deleteButton: {
         width: 44,

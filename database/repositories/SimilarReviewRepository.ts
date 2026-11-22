@@ -193,10 +193,14 @@ export const SimilarReviewRepository = {
 /** Current decisions must still agree: undoing a decision or changing a
  * queued photo to keep reopens the group until explicitly confirmed again.
  * Caller must use hydrated records; unresolved permissions are not deletion. */
-export function isSimilarReviewCurrent(review: SimilarReview | null, processedIds: readonly string[], pendingIds: readonly string[]): boolean {
+export function isSimilarReviewCurrent(
+    review: SimilarReview | null,
+    processedIds: readonly string[] | ReadonlySet<string>,
+    pendingIds: readonly string[] | ReadonlySet<string>,
+): boolean {
     if (!review) return false;
-    const processed = new Set(processedIds);
-    const pending = new Set(pendingIds);
+    const processed = processedIds instanceof Set ? processedIds : new Set(processedIds);
+    const pending = pendingIds instanceof Set ? pendingIds : new Set(pendingIds);
     return review.keptIds.every(id => processed.has(id) && !pending.has(id))
         && review.pendingIds.every(id => processed.has(id) && pending.has(id));
 }
