@@ -25,3 +25,35 @@ jest.mock('../services/privacy/encryptedStorage', () => {
   return { encryptedRecordStorage: storage, encryptedSettingsStorage: storage,
     canWriteEncryptedStorage: () => true, markEncryptedStorageHydrated: () => {} };
 });
+jest.mock('../services/privacy/mediaCollectionsStorage', () => {
+  let stored = {
+    photoProcessedIds: [] as string[],
+    videoProcessedIds: [] as string[],
+    deleteQueue: [] as any[],
+    videoTrashBin: [] as any[],
+  };
+  return {
+    loadPersistedMediaCollections: jest.fn(async () => ({
+      photoProcessedIds: [...stored.photoProcessedIds],
+      videoProcessedIds: [...stored.videoProcessedIds],
+      deleteQueue: [...stored.deleteQueue],
+      videoTrashBin: [...stored.videoTrashBin],
+    })),
+    replacePersistedMediaCollections: jest.fn(async (next: typeof stored) => {
+      stored = {
+        photoProcessedIds: [...next.photoProcessedIds],
+        videoProcessedIds: [...next.videoProcessedIds],
+        deleteQueue: [...next.deleteQueue],
+        videoTrashBin: [...next.videoTrashBin],
+      };
+    }),
+    syncPersistedMediaCollections: jest.fn(async (_prev: typeof stored, next: typeof stored) => {
+      stored = {
+        photoProcessedIds: [...next.photoProcessedIds],
+        videoProcessedIds: [...next.videoProcessedIds],
+        deleteQueue: [...next.deleteQueue],
+        videoTrashBin: [...next.videoTrashBin],
+      };
+    }),
+  };
+});

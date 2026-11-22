@@ -48,6 +48,7 @@ export const MetaKeys = {
   GLOBAL_ALGO_VERSION: 'global_algo_version',
   SCAN_CURSOR_TAKEN_AT: 'scan_cursor_taken_at',
   SCAN_CURSOR_ASSET_ID: 'scan_cursor_asset_id',
+  MEDIA_PROGRESS_SQLITE_MIGRATED: 'media_progress_sqlite_migrated',
 } as const;
 
 // Table creation SQL
@@ -132,4 +133,34 @@ export const SQL_CREATE_FACE_INSTANCES = `
 export const SQL_CREATE_FACE_INSTANCES_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_face_instances_asset ON face_instances(asset_id);',
   'CREATE INDEX IF NOT EXISTS idx_face_instances_face ON face_instances(face_id);',
+];
+
+// Row-level encrypted storage for unbounded organizing progress and pending
+// deletion queues. Keeping one row per asset avoids Android AsyncStorage's
+// 2 MB single-row CursorWindow limit while preserving exact insertion order.
+export const SQL_CREATE_MEDIA_PROCESSED_RECORDS = `
+  CREATE TABLE IF NOT EXISTS media_processed_records (
+    media_type TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (media_type, asset_id)
+  );
+`;
+
+export const SQL_CREATE_MEDIA_PROCESSED_RECORDS_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS idx_media_processed_order ON media_processed_records(media_type, seq);',
+];
+
+export const SQL_CREATE_MEDIA_PENDING_QUEUE = `
+  CREATE TABLE IF NOT EXISTS media_pending_queue (
+    queue_type TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    asset_json TEXT NOT NULL,
+    PRIMARY KEY (queue_type, asset_id)
+  );
+`;
+
+export const SQL_CREATE_MEDIA_PENDING_QUEUE_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS idx_media_pending_queue_order ON media_pending_queue(queue_type, seq);',
 ];

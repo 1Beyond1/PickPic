@@ -18,6 +18,17 @@ export { SimilarReviewRepository, isSimilarReviewCurrent } from './repositories/
 export type { SimilarGroupSnapshot, SimilarReview, SimilarReviewAsset } from './repositories/SimilarReviewRepository';
 export { FaceRepository } from './repositories/FaceRepository';
 export type { FaceGroup, FaceInstance } from './repositories/FaceRepository';
+export {
+    MediaProgressRepository,
+    emptyMediaProgressCollections,
+    mediaProgressCollectionsEqual,
+    normalizeMediaProgressCollections,
+} from './repositories/MediaProgressRepository';
+export type {
+    MediaProgressCollections,
+    PendingQueueType,
+    ProcessedMediaType,
+} from './repositories/MediaProgressRepository';
 export { MetaRepository } from './repositories/MetaRepository';
 export type { ScanCursor } from './repositories/MetaRepository';
 export * from './schema';

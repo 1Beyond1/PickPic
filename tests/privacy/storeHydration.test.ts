@@ -1,7 +1,9 @@
 jest.unmock('../../services/privacy/encryptedStorage');
+jest.unmock('../../services/privacy/mediaCollectionsStorage');
 let mockDisk: Map<string, string>, mockKeys: Map<string, string>;
 let mockLocked = false;
 let mockVisibleAssets: any[] = [];
+let mockDb: import('../helpers/testDatabase').TestDatabase | null = null;
 jest.mock('@react-native-async-storage/async-storage', () => ({
     getItem: jest.fn(async (name: string) => mockDisk.get(name) ?? null),
     setItem: jest.fn(async (name: string, value: string) => { mockDisk.set(name, value); }),
@@ -21,6 +23,19 @@ jest.mock('expo-media-library', () => ({
     getPermissionsAsync: jest.fn(async () => ({ granted: true, accessPrivileges: 'all' })),
     getAssetsAsync: jest.fn(async ({ mediaType }: any) => ({ assets: mockVisibleAssets.filter(asset => asset.mediaType === mediaType), hasNextPage: false })),
 }));
+jest.mock('expo-sqlite', () => ({}));
+jest.mock('../../database/db', () => ({
+    getDatabase: jest.fn(async () => {
+        if (mockLocked) throw new Error('locked');
+        return mockDb;
+    }),
+    withTransaction: jest.fn(async (callback: (db: any) => Promise<any>) => {
+        if (mockLocked) throw new Error('locked');
+        let result: unknown;
+        await mockDb!.withTransactionAsync(async () => { result = await callback(mockDb); });
+        return result;
+    }),
+}));
 jest.mock('../../database', () => ({ AssetRepository: {} }));
 
 const recordsName = 'photoapp-media-progress';
@@ -28,7 +43,16 @@ const settingsName = 'photoapp-settings';
 const records = JSON.stringify({ state: { photoProcessedIds: ['kept'], videoProcessedIds: ['video'], deleteQueue: [{ id: 'pending', mediaType: 'photo' }], collectionQueue: [], videoTrashBin: [] }, version: 0 });
 const settings = JSON.stringify({ state: { theme: 'dark', selectedAlbumIds: ['private-album'], displayOrder: 'oldest', language: 'en', groupSize: 20 }, version: 0 });
 beforeEach(() => {
-    jest.resetModules(); mockDisk = new Map([[recordsName, records], [settingsName, settings]]); mockKeys = new Map(); mockLocked = false; mockVisibleAssets = [];
+    jest.resetModules();
+    const { TestDatabase } = require('../helpers/testDatabase');
+    mockDb = new TestDatabase();
+    mockDisk = new Map([[recordsName, records], [settingsName, settings]]); mockKeys = new Map(); mockLocked = false; mockVisibleAssets = [];
+});
+afterEach(async () => {
+    if (mockDb) {
+        await mockDb.closeAsync();
+        mockDb = null;
+    }
 });
 async function openStores() {
     const { useMediaStore } = require('../../stores/useMediaStore');

@@ -402,12 +402,12 @@ export default function RootLayout() {
       }
       await clearLegacyMediaCache();
       const failures = usePrivacyStore.getState().failures;
+      if (failures.scanner) await closeDatabase();
+      await getDatabase();
       if (failures.settings === 'read') await useSettingsStore.persist.rehydrate();
       else await flushSettings();
       if (failures.records === 'read') await useMediaStore.persist.rehydrate();
       else await flushMediaProgress();
-      if (failures.scanner) await closeDatabase();
-      await getDatabase();
     } catch {
       // The privacy gate retains the data and a non-sensitive failure state.
     } finally { setPrivacyRetrying(false); }

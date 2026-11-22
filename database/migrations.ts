@@ -15,13 +15,17 @@ import {
     SQL_CREATE_FACE_GROUPS,
     SQL_CREATE_FACE_INSTANCES,
     SQL_CREATE_FACE_INSTANCES_INDEXES,
+    SQL_CREATE_MEDIA_PENDING_QUEUE,
+    SQL_CREATE_MEDIA_PENDING_QUEUE_INDEXES,
+    SQL_CREATE_MEDIA_PROCESSED_RECORDS,
+    SQL_CREATE_MEDIA_PROCESSED_RECORDS_INDEXES,
     SQL_CREATE_META,
     SQL_CREATE_AI_ANALYSIS,
     AI_ALGO_VERSION,
     SQL_CREATE_SIMILAR_REVIEWS,
 } from './schema';
 
-const CURRENT_SCHEMA_VERSION = 5;
+const CURRENT_SCHEMA_VERSION = 6;
 
 /**
  * Run all migrations to bring database to current version
@@ -66,6 +70,19 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
             // Legacy in-memory flags did not record explicit decisions and
             // cannot be migrated as confirmed reviews.
             await setSchemaVersion(db, 5);
+        });
+    }
+    if (schemaVersion < 6) {
+        await db.withTransactionAsync(async () => {
+            await db.execAsync(SQL_CREATE_MEDIA_PROCESSED_RECORDS);
+            for (const indexSql of SQL_CREATE_MEDIA_PROCESSED_RECORDS_INDEXES) {
+                await db.execAsync(indexSql);
+            }
+            await db.execAsync(SQL_CREATE_MEDIA_PENDING_QUEUE);
+            for (const indexSql of SQL_CREATE_MEDIA_PENDING_QUEUE_INDEXES) {
+                await db.execAsync(indexSql);
+            }
+            await setSchemaVersion(db, 6);
         });
     }
 }

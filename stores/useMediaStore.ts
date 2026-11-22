@@ -1,7 +1,7 @@
 import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import { flushMediaProgress, mediaProgressStorage } from '../services/mediaProgressStorage';
+import { flushMediaProgress, mediaProgressStorage, scheduleMediaCollectionsPersist } from '../services/mediaProgressStorage';
 import { markEncryptedStorageHydrated } from '../services/privacy/encryptedStorage';
 import { mergeProtectedState } from '../services/privacy/mergeState';
 import { usePrivacyStore } from './usePrivacyStore';
@@ -1629,15 +1629,11 @@ export const useMediaStore = create<MediaState>()(
             storage: createJSONStorage(() => mediaProgressStorage),
             merge: mergeProtectedState,
             partialize: (state) => ({
-                photoProcessedIds: state.photoProcessedIds,
-                videoProcessedIds: state.videoProcessedIds,
-                // Keep in-flight decisions recoverable. The processed ID
-                // lists are updated immediately to hide items from the
-                // current session, so dropping these queues on restart would
-                // silently skip media that was never actually deleted.
-                deleteQueue: state.deleteQueue,
+                // Large unbounded collections (photoProcessedIds, videoProcessedIds,
+                // deleteQueue, videoTrashBin) are persisted row-by-row inside the
+                // encrypted SQLCipher database via MediaProgressRepository so
+                // AsyncStorage never hits Android's 2 MB CursorWindow limit.
                 collectionQueue: state.collectionQueue,
-                videoTrashBin: state.videoTrashBin,
                 pendingDeletionInfo: retainPendingDeletionInfo(state),
                 deletedCounts: state.deletedCounts,
                 organizingSessions: state.organizingSessions,
@@ -1652,3 +1648,21 @@ export const useMediaStore = create<MediaState>()(
         }
     )
 );
+
+useMediaStore.subscribe((state, prevState) => {
+    if (!state.hasHydrated) return;
+    if (
+        state.photoProcessedIds === prevState.photoProcessedIds
+        && state.videoProcessedIds === prevState.videoProcessedIds
+        && state.deleteQueue === prevState.deleteQueue
+        && state.videoTrashBin === prevState.videoTrashBin
+    ) {
+        return;
+    }
+    scheduleMediaCollectionsPersist({
+        photoProcessedIds: state.photoProcessedIds,
+        videoProcessedIds: state.videoProcessedIds,
+        deleteQueue: state.deleteQueue,
+        videoTrashBin: state.videoTrashBin,
+    });
+});
