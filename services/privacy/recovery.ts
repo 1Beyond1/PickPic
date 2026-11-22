@@ -108,6 +108,7 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
             videoProcessedIds: [],
             protectedAlbums: [],
             protectedAssetIds: [],
+            missingProtectedAlbumIds: [],
             hiddenPhotoQueuedAssetIds: null,
             hiddenVideoQueuedAssetIds: null,
             hasHydrated: false,

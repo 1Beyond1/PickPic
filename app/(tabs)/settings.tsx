@@ -70,7 +70,7 @@ export default function SettingsScreen() {
         totalPhotos, totalVideos, refreshTotalCounts,
         hasHydrated: mediaHydrated, getVisibleProcessedCounts, mediaLibraryRefreshVersion,
         isConfirmingDeletion, isConfirmingVideoTrash,
-        albums, protectedAlbums, setProtectedAlbums,
+        albums, protectedAlbums, missingProtectedAlbumIds, setProtectedAlbums,
     } = useMediaStore(useShallow(state => ({
         photoProcessedIds: state.photoProcessedIds,
         videoProcessedIds: state.videoProcessedIds,
@@ -86,9 +86,11 @@ export default function SettingsScreen() {
         isConfirmingVideoTrash: state.isConfirmingVideoTrash,
         albums: state.albums,
         protectedAlbums: state.protectedAlbums,
+        missingProtectedAlbumIds: state.missingProtectedAlbumIds,
         setProtectedAlbums: state.setProtectedAlbums,
     })));
     const safeProtectedAlbums = protectedAlbums ?? [];
+    const safeMissingProtectedAlbumIds = missingProtectedAlbumIds ?? [];
     const safeAlbums = albums ?? [];
     const pendingBackupChanges = useBackupReminderStore(state => state.pendingChanges);
     const showBackupReminder = pendingBackupChanges >= BACKUP_REMINDER_THRESHOLD;
@@ -326,6 +328,14 @@ export default function SettingsScreen() {
                         value={safeProtectedAlbums.length === 0 ? t('protected_albums_none') : t('protected_albums_count', { count: safeProtectedAlbums.length })}
                         onPress={() => setShowProtectedAlbumSelector(true)}
                     />
+                    {safeMissingProtectedAlbumIds.length > 0 && (
+                        <View testID="protected-albums-missing-warning" style={styles.errorRow}>
+                            <Ionicons name="warning-outline" size={16} color={colors.warning} />
+                            <Text accessibilityRole="alert" style={[styles.hintText, { flex: 1, color: colors.warning }]}>
+                                {t('protected_albums_missing_warning', { count: safeMissingProtectedAlbumIds.length })}
+                            </Text>
+                        </View>
+                    )}
                     <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
                     <SettingsRow label={t('settings_display_order')} value={t(`display_order_${displayOrder}`)} onPress={() => setChoice('order')} />
                 </GlassContainer>
@@ -567,6 +577,7 @@ export default function SettingsScreen() {
                 onClose={() => setShowProtectedAlbumSelector(false)}
                 onConfirm={handleProtectedAlbumsConfirm}
                 initialSelection={safeProtectedAlbums.map(album => album.albumId)}
+                unavailableSelectionItems={safeProtectedAlbums.map(album => ({ id: album.albumId, title: album.title }))}
                 titleKey="protected_albums_selector_title"
                 clearLabelKey="protected_albums_clear"
             />

@@ -5,7 +5,9 @@ import {
 import { recordBackupChanges } from './backup/changeTracker';
 
 export type { ProtectedAlbumRecord };
+export type { ProtectedAlbumsSnapshot } from './protectedAlbumsCore';
 export {
+    fetchProtectedAlbumsSnapshot,
     fetchProtectedAssetIdsForAlbums,
     isAssetProtected,
     resolveProtectedIdsBeforeDeletion,

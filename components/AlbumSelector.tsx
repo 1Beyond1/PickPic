@@ -19,6 +19,7 @@ interface AlbumSelectorProps {
     editableOnly?: boolean; // Hide read-only system albums such as iOS smart albums
     titleKey?: string; // Optional custom title key
     clearLabelKey?: string; // Optional custom clear-selection label key
+    unavailableSelectionItems?: readonly { id: string; title: string }[]; // Selected items no longer present in device albums
 }
 
 export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
@@ -30,6 +31,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     editableOnly = false,
     titleKey = 'album_selector_title',
     clearLabelKey = 'album_filter_all',
+    unavailableSelectionItems,
 }) => {
     const { albums, loadAlbums } = useMediaStore(useShallow(state => ({
         albums: state.albums,
@@ -104,6 +106,10 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     const visibleAlbums = editableOnly
         ? albums.filter(album => album.type !== 'smartAlbum')
         : albums;
+    const visibleAlbumIdSet = new Set(visibleAlbums.map(album => album.id));
+    const unavailableSelectedItems = (unavailableSelectionItems ?? []).filter(
+        item => selectedIds.includes(item.id) && !visibleAlbumIdSet.has(item.id),
+    );
 
     return (
         <BottomSheet visible={visible} title={t(titleKey as any)} onClose={onClose} footer={
@@ -151,7 +157,35 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
                     data={visibleAlbums}
                     keyExtractor={(item) => item.id}
                     contentContainerStyle={styles.listContent}
-                    ListEmptyComponent={<Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('album_selector_empty')}</Text>}
+                    ListHeaderComponent={unavailableSelectedItems.length > 0 ? (
+                        <View style={styles.unavailableSection}>
+                            {unavailableSelectedItems.map(item => (
+                                <Pressable
+                                    key={item.id}
+                                    testID={`album-unavailable-${item.id}`}
+                                    style={({ pressed }) => [
+                                        styles.item,
+                                        { backgroundColor: pressed ? colors.surfaceHover : colors.selectionBackground },
+                                    ]}
+                                    onPress={() => toggleSelection(item.id)}
+                                    accessibilityRole="checkbox"
+                                    accessibilityLabel={t('protected_album_remove_action' as any, { title: item.title })}
+                                    accessibilityState={{ checked: true }}
+                                >
+                                    <Text style={[styles.itemText, { color: colors.text, fontWeight: '500' }]}>
+                                        {item.title}
+                                    </Text>
+                                    <View style={[styles.unavailableTag, { backgroundColor: colors.surface }]}>
+                                        <Text style={[styles.unavailableTagText, { color: colors.danger }]}>
+                                            {t('protected_album_unavailable_tag' as any)}
+                                        </Text>
+                                    </View>
+                                    <Ionicons name="close-circle-outline" size={20} color={colors.danger} />
+                                </Pressable>
+                            ))}
+                        </View>
+                    ) : null}
+                    ListEmptyComponent={unavailableSelectedItems.length === 0 ? <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('album_selector_empty')}</Text> : null}
                     renderItem={({ item }) => {
                         const isSelected = selectedIds.includes(item.id);
                         const isDisabled = !!(maxSelection && selectedIds.length >= maxSelection && !isSelected);
@@ -196,6 +230,16 @@ const styles = StyleSheet.create({
     },
     list: { flexGrow: 0, flexShrink: 1 },
     listContent: { paddingBottom: 4 },
+    unavailableSection: { gap: 6, marginBottom: 8 },
+    unavailableTag: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+    },
+    unavailableTagText: {
+        ...TYPOGRAPHY.caption,
+        fontWeight: '600',
+    },
     emptyText: { ...TYPOGRAPHY.body, paddingVertical: 24, paddingHorizontal: 12 },
     accessState: {
         alignItems: 'center',

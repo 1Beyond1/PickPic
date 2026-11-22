@@ -121,6 +121,7 @@ export default function PhotosScreen() {
                 router.replace('/');
                 return;
             }
+            await useMediaStore.getState().loadProtectedAlbums?.();
             await Promise.all([
                 loadPhotos(groupSize, displayOrder, selectedAlbumIds),
                 loadAlbums(),

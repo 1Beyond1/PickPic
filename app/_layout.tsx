@@ -120,6 +120,7 @@ export default function RootLayout() {
       if (currentScope !== 'none') {
         const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
         void mediaStore.loadAlbums();
+        void mediaStore.loadProtectedAlbums?.();
         void mediaStore.refreshTotalCounts();
         // A saved session is recovered by the photo page's generation-aware
         // refresh. Do not also sample a replacement batch here.
@@ -211,6 +212,7 @@ export default function RootLayout() {
         mediaStore.pruneUnavailableQueuedAssets(scope, 'photo');
         if (mediaPermissionGrantedRef.current && !isScanning()) {
           void mediaStore.loadAlbums();
+          void mediaStore.loadProtectedAlbums?.();
           void mediaStore.refreshTotalCounts();
         }
         mediaStore.notifyMediaLibraryRefresh();
@@ -241,6 +243,7 @@ export default function RootLayout() {
         if (mediaPermissionGrantedRef.current) {
           const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
           void mediaStore.loadAlbums();
+          void mediaStore.loadProtectedAlbums?.();
           void mediaStore.refreshTotalCounts();
           if (!mediaStore.organizingSessions.photo) {
             void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
@@ -307,7 +310,9 @@ export default function RootLayout() {
       try {
         await clearLegacyMediaCache();
         await getDatabase(); // Migrate/validate the protected scanner index before showing the app.
-        void useMediaStore.getState().loadProtectedAlbums?.();
+        // Ensure protected album rules and asset membership are loaded BEFORE
+        // routes mount and trigger cold-start card loading.
+        await useMediaStore.getState().loadProtectedAlbums?.();
         void loadBackupChangeState().catch(() => undefined);
         // Refresh media counts on app start
         await useMediaStore.getState().refreshTotalCounts();
