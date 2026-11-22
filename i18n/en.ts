@@ -272,12 +272,13 @@ export default {
     recent_result_failed: 'Could not read or save records. Please retry.', recent_result_nothing: 'No decision available to undo. Deleted files cannot be restored.',
     // Version history
     announcement_update_title: "What's New",
-    update_v030_1: 'AI scanning: Analyze blurry and similar photos. Turn on “Enable AI Classification” under Settings → Intelligent analysis (Beta, on-device processing).',
-    update_v030_2: 'Interface update: consistent light and dark themes, grouped settings, and bottom sheets for clearer organizing and review actions.',
-    update_v030_3: 'Photo review: tap a photo to keep only that photo, leaving it organized and staying in review. Keeping every photo shows batch completion; choose Continue for the next batch.',
+    announcement_update_ai: 'AI scanning: Analyze blurry and similar photos. Turn on “Enable AI Classification” under Settings → Intelligent analysis (Beta, on-device processing).',
+    announcement_update_ui: 'Interface update: consistent light and dark themes, grouped settings, and bottom sheets for clearer organizing and review actions.',
+    announcement_update_review: 'Photo review: tap a photo to keep only that photo, leaving it organized and staying in review. Keeping every photo shows batch completion; choose Continue for the next batch.',
     announcement_update_recovery: 'Read recovery: photo, video, and similar-group read failures show feedback. Full photo and review previews support retry. Reading or previewing does not change organizing decisions.',
     announcement_update_video: 'Video organizing: simply opening or leaving the page does not mark a video organized. You can revisit organized videos, and the final video has an end notice.',
     announcement_update_deletion: 'Deletion compatibility: large pending lists on Android 16 and later use separate system confirmations. Successful batches leave the list; if a later batch is cancelled or fails, unfinished items remain for review and retry.',
+    announcement_update_privacy: 'Privacy & encrypted backup: organizing records and scan indexes are encrypted offline on this device, with password-protected export and restore.',
 
     // Developer options
     settings_dev_options: 'Developer Options',

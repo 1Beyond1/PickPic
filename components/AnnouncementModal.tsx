@@ -54,12 +54,13 @@ export function AnnouncementModal({ visible, onDismissOnce, onDismissForVersion 
                 </View>
                 <View style={[styles.section, styles.divided, { borderColor: colors.divider }]}>
                     <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>{t('announcement_update_title')}</Text>
-                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('update_v030_1')}</Text>
-                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('update_v030_2')}</Text>
-                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('update_v030_3')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_ai')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_ui')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_review')}</Text>
                     <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_recovery')}</Text>
                     <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_video')}</Text>
                     <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_deletion')}</Text>
+                    <Text style={[styles.body, { color: colors.textSecondary }]}>{t('announcement_update_privacy')}</Text>
                 </View>
                 <View style={[styles.section, styles.divided, { borderColor: colors.divider }]}>
                     <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.text }]}>{t('announcement_author_title')}</Text>

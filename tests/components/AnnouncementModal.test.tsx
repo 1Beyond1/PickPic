@@ -48,21 +48,29 @@ it('preserves the deletion warning and keeps closing actions outside the long sc
 });
 
 it('points classification instructions to the actual settings group, not obsolete developer options', () => {
-  expect(zh.update_v030_1).toContain(zh.settings_intelligent_analysis);
-  expect(zh.update_v030_1).toContain(zh.settings_enable_ai_classification);
-  expect(zh.update_v030_1).not.toMatch(/开发者选项/);
+  expect(zh.announcement_update_ai).toContain(zh.settings_intelligent_analysis);
+  expect(zh.announcement_update_ai).toContain(zh.settings_enable_ai_classification);
+  expect(zh.announcement_update_ai).not.toMatch(/开发者选项/);
 });
 
-it('renders the updated review, recovery and video notes without calling dismissal actions', () => {
+it('renders the updated review, recovery, video and privacy notes without calling dismissal actions', () => {
   const once = jest.fn();
   const version = jest.fn();
   const view = render(<AnnouncementModal visible onDismissOnce={once} onDismissForVersion={version} />);
-  for (const key of ['update_v030_1', 'update_v030_2', 'update_v030_3', 'announcement_update_recovery', 'announcement_update_video', 'announcement_update_deletion'] as const) {
+  for (const key of [
+    'announcement_update_ai',
+    'announcement_update_ui',
+    'announcement_update_review',
+    'announcement_update_recovery',
+    'announcement_update_video',
+    'announcement_update_deletion',
+    'announcement_update_privacy',
+  ] as const) {
     expect(view.getByText(zh[key])).toBeTruthy();
     expect(en[key]).toBeTruthy();
   }
-  expect(zh.update_v030_3).toContain('仍算已整理');
-  expect(en.update_v030_3).toContain('staying in review');
+  expect(zh.announcement_update_review).toContain('仍算已整理');
+  expect(en.announcement_update_review).toContain('staying in review');
   expect(zh.announcement_update_deletion).toContain('未完成项仍保留');
   expect(en.announcement_update_deletion).toContain('unfinished items remain');
   expect(once).not.toHaveBeenCalled();

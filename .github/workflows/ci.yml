@@ -32,6 +32,9 @@ jobs:
       - name: Verify SDK privacy patches
         run: node scripts/apply-privacy-patches.js --check
 
+      - name: Verify static privacy configuration
+        run: node scripts/check-privacy-config.mjs
+
       - name: Typecheck
         run: npm run typecheck
 
