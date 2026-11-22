@@ -30,11 +30,7 @@ export default function Index() {
         }
 
         if (permissionResponse.granted) {
-            // Small delay for smooth transition
-            const timer = setTimeout(() => {
-                router.replace('/(tabs)/photos');
-            }, 500);
-            return () => clearTimeout(timer);
+            router.replace('/(tabs)/photos');
         } else {
             setChecking(false);
         }

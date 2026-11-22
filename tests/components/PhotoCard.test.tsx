@@ -246,4 +246,40 @@ describe('PhotoCard decisions and fitting', () => {
     expect(Number.isFinite(cardStyle().height)).toBe(true);
     expect(cardStyle().height).toBeLessThanOrEqual(360);
   });
+
+  it('uses photo.width and photo.height synchronously without flashing 1:1 or calling Image.getSize', () => {
+    const view = render(
+      <PhotoCard
+        {...props}
+        photo={{ ...props.photo, width: 1600, height: 400 }}
+      />,
+    );
+    expect(cardStyle().width).toBe(280);
+    expect(cardStyle().height).toBe(70);
+    expect(mockSizes).toHaveLength(0);
+
+    // Switching directly to a portrait photo refits on the same render frame with zero square flash.
+    view.rerender(
+      <PhotoCard
+        {...props}
+        photo={{ ...props.photo, id: 'portrait', uri: 'file:///portrait.jpg', width: 1080, height: 2424 }}
+      />,
+    );
+    expect(cardStyle().height).toBeCloseTo(360);
+    expect(cardStyle().width).toBeCloseTo(360 * 1080 / 2424);
+    expect(mockSizes).toHaveLength(0);
+  });
+
+  it('falls back to Image.getSize when photo metadata dimensions are invalid or zero', () => {
+    render(
+      <PhotoCard
+        {...props}
+        photo={{ ...props.photo, width: 0, height: Number.NaN }}
+      />,
+    );
+    expect(mockSizes).toHaveLength(1);
+    act(() => mockSizes[0](1600, 400));
+    expect(cardStyle().width).toBe(280);
+    expect(cardStyle().height).toBe(70);
+  });
 });

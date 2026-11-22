@@ -19,6 +19,21 @@ import { PhotoAsset } from '../stores/useMediaStore';
 
 const SWIPE_THRESHOLD = 120;
 
+function getKnownPhotoAspectRatio(photo: PhotoAsset): number | null {
+    if (
+        typeof photo.width === 'number'
+        && typeof photo.height === 'number'
+        && photo.width > 0
+        && photo.height > 0
+    ) {
+        const ratio = photo.width / photo.height;
+        if (Number.isFinite(ratio) && ratio > 0) {
+            return ratio;
+        }
+    }
+    return null;
+}
+
 interface DropZone {
     id: string;
     minX: number;
@@ -56,31 +71,33 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     const { t } = useI18n();
     const reducedMotion = useReducedMotion();
     const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = useWindowDimensions();
-    const [aspectRatio, setAspectRatio] = useState(1);
+    const knownAspectRatio = getKnownPhotoAspectRatio(photo);
+    const [probedAspect, setProbedAspect] = useState<{ uri: string; ratio: number } | null>(null);
+    const aspectRatio = knownAspectRatio
+        ?? (probedAspect?.uri === photo.uri ? probedAspect.ratio : 1);
     const cardWidth = Math.min(maxWidth, maxHeight * aspectRatio);
     const cardHeight = cardWidth / aspectRatio;
 
     // The parent measures space left by the header, hints and Dock. Derive the
-    // fit on every resize; do not retain a window-sized card inside that space.
+    // fit on every resize; prefer photo.width / photo.height synchronously so
+    // switching cards never flashes to a 1:1 square before Image.getSize resolves.
     useEffect(() => {
+        if (knownAspectRatio !== null || !photo.uri) return;
         let active = true;
-        setAspectRatio(1);
-        if (photo.uri) {
-            RNImage.getSize(
-                photo.uri,
-                (imgWidth, imgHeight) => {
-                    if (active && imgWidth > 0 && imgHeight > 0 && Number.isFinite(imgWidth / imgHeight)) {
-                        setAspectRatio(imgWidth / imgHeight);
-                    }
-                },
-                () => {
-                    console.log('Failed to get image size.');
-                    if (active) setAspectRatio(1);
+        RNImage.getSize(
+            photo.uri,
+            (imgWidth, imgHeight) => {
+                if (active && imgWidth > 0 && imgHeight > 0 && Number.isFinite(imgWidth / imgHeight)) {
+                    setProbedAspect({ uri: photo.uri, ratio: imgWidth / imgHeight });
                 }
-            );
-        }
+            },
+            () => {
+                console.log('Failed to get image size.');
+                if (active) setProbedAspect({ uri: photo.uri, ratio: 1 });
+            }
+        );
         return () => { active = false; };
-    }, [photo.uri]);
+    }, [knownAspectRatio, photo.uri]);
 
     const translateX = useSharedValue(0);
     const translateY = useSharedValue(0);
