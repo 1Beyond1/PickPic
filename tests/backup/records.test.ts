@@ -11,8 +11,10 @@ import { Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { decryptBackup, encryptBackup } from '../../services/backup/crypto';
-import { mediaFingerprint } from '../../services/backup/payload';
+import { buildContentFingerprint, mediaFingerprint } from '../../services/backup/payload';
 import { createEncryptedRecords, openEncryptedRecords, restoreEncryptedRecords } from '../../services/backup/records';
+import * as protectedAlbumsService from '../../services/protectedAlbums';
+import * as reviewIgnoresService from '../../services/reviewIgnores';
 import { acquireRecordOperation } from '../../services/recordOperationLock';
 Object.assign(globalThis, { TextEncoder });
 const photo = { id: 'one', filename: 'private.jpg', uri: 'file:///private.jpg', mediaType: 'photo', width: 100, height: 100,
@@ -21,9 +23,12 @@ const file = () => ({ version: 1 as const, platform: 'android' as const,
     records: [{ id: 'one', kind: 'photo' as const, decision: 'delete' as const, fingerprint: mediaFingerprint(photo) }] });
 let state: any;
 beforeEach(() => {
+    (protectedAlbumsService as any).__resetMockProtectedAlbums?.();
+    (reviewIgnoresService as any).__resetMockReviewIgnores?.();
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
     state = { hasHydrated: true, isConfirmingDeletion: false, isConfirmingVideoTrash: false,
         photoProcessedIds: [], videoProcessedIds: [], deleteQueue: [], collectionQueue: [], videoTrashBin: [],
+        loadProtectedAlbums: jest.fn().mockResolvedValue(undefined),
         clearLoadedMedia: jest.fn(), refreshTotalCounts: jest.fn().mockResolvedValue(undefined), notifyMediaLibraryRefresh: jest.fn() };
     jest.mocked(useMediaStore.getState).mockImplementation(() => state);
     jest.mocked(useMediaStore.setState).mockImplementation((next: any) => { Object.assign(state, next); });
@@ -108,15 +113,68 @@ it('rechecks edited metadata on confirmation and skips it without restoring a pe
     expect(state.deleteQueue).toEqual([]);
     expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
 });
-it('exports only bounded decision metadata inside the encrypted payload', async () => {
+it('exports v2 bounded decision metadata, protected albums, review ignores, and hashed content fingerprints without leaking filenames', async () => {
     state.photoProcessedIds = ['one', 'hidden'];
     state.recentDecisions = [{ eventId: 'local-only-journal' }];
+    await protectedAlbumsService.saveProtectedAlbums([{ albumId: 'alb-docs', title: 'Docs', createdAt: 50 }]);
+    await reviewIgnoresService.addReviewIgnore('similar_group', 'snap-key-1', 60);
+
     const result = await createEncryptedRecords('secret');
-    expect(result).toMatchObject({ saved: 1, skipped: 1 });
+    expect(result).toMatchObject({ saved: 1, skipped: 1, protectedAlbums: 1, reviewIgnores: 1 });
     const value = jest.mocked(encryptBackup).mock.calls[0][0];
-    expect(value).toEqual({ version: 1, platform: 'android', records: [{ id: 'one', kind: 'photo', decision: 'keep', fingerprint: mediaFingerprint(photo) }] });
+    expect(value).toEqual({
+        version: 2,
+        platform: 'android',
+        records: [{
+            id: 'one',
+            kind: 'photo',
+            decision: 'keep',
+            fingerprint: mediaFingerprint(photo),
+            contentFingerprint: buildContentFingerprint(photo, null),
+        }],
+        protectedAlbums: [{ albumId: 'alb-docs', title: 'Docs', createdAt: 50 }],
+        reviewIgnores: [{ ignoreType: 'similar_group', targetKey: 'snap-key-1', createdAt: 60 }],
+    });
     expect(JSON.stringify(value)).not.toContain('private.jpg');
     expect(JSON.stringify(value)).not.toContain('local-only-journal');
+});
+
+it('restores v2 backups across devices via unique contentFingerprint and merges protectedAlbums and reviewIgnores', async () => {
+    const exportedPhoto = { ...photo, id: 'old-device-id' };
+    const v2Payload = {
+        version: 2 as const,
+        platform: 'ios' as const,
+        records: [{
+            id: 'old-device-id',
+            kind: 'photo' as const,
+            decision: 'keep' as const,
+            fingerprint: mediaFingerprint(exportedPhoto),
+            contentFingerprint: buildContentFingerprint(exportedPhoto, null),
+        }],
+        protectedAlbums: [{ albumId: 'alb-docs', title: 'Docs', createdAt: 50 }],
+        reviewIgnores: [{ ignoreType: 'similar_group' as const, targetKey: 'snap-v2', createdAt: 60 }],
+    };
+    const localRenamedIdPhoto = { ...photo, id: 'new-device-id', creationTime: 150 };
+    jest.mocked(MediaLibrary.getAssetsAsync).mockResolvedValue({
+        assets: [localRenamedIdPhoto],
+        hasNextPage: false,
+    } as any);
+
+    const preview = await restoreEncryptedRecords(v2Payload, false);
+
+    expect(preview).toMatchObject({
+        kept: 1,
+        rebound: 1,
+        ambiguousSkipped: 0,
+        protectedAlbums: 1,
+        reviewIgnores: 1,
+    });
+    expect(state.photoProcessedIds).toEqual(['new-device-id']);
+    expect(await protectedAlbumsService.loadProtectedAlbums()).toEqual([
+        { albumId: 'alb-docs', title: 'Docs', createdAt: 50 },
+    ]);
+    expect(await reviewIgnoresService.getIgnoredReviewKeys('similar_group')).toEqual(new Set(['snap-v2']));
+    expect(state.loadProtectedAlbums).toHaveBeenCalledTimes(1);
 });
 it('does not import or fabricate undo history from a version-1 backup', async () => {
     state.recentDecisions = [{ eventId: 'stale-local-operation' }];
