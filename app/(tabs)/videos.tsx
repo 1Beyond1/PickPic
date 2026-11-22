@@ -2,8 +2,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { useFocusEffect } from 'expo-router';
 import * as MediaLibrary from 'expo-media-library';
-// import { BlurView } from 'expo-blur'; // Removed to fix crash
-// import { Image } from 'expo-image'; // Removed to fix crash
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, AppState, BackHandler, FlatList, Linking, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

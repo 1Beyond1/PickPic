@@ -11,6 +11,9 @@ const FORBIDDEN_PERMISSION_PATTERNS = [
   /RECORD_AUDIO/i,
   /CAPTURE_AUDIO_OUTPUT/i,
   /MODIFY_AUDIO_SETTINGS/i,
+  /READ_MEDIA_AUDIO/i,
+  /SYSTEM_ALERT_WINDOW/i,
+  /MANAGE_EXTERNAL_STORAGE/i,
   /\bCAMERA\b/i,
   /READ_CONTACTS/i,
   /READ_PHONE_STATE/i,
@@ -18,6 +21,7 @@ const FORBIDDEN_PERMISSION_PATTERNS = [
   /READ_CALL_LOG/i,
 ];
 
+const EXACT_SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const REQUIRED_BUILD_FROM_SOURCE = ['expo-image', 'expo-media-library'];
 const ALLOWED_TFLITE_MODELS = new Set(['efficientnet-lite4.tflite']);
 const FORBIDDEN_IMAGE_PATTERNS = [
@@ -133,7 +137,7 @@ export function checkPrivacyConfig(rootDir) {
     }
   }
 
-  // 2. Native backup-exclusion config plugin guard
+  // 2. Native backup-exclusion config plugin guard & generated AndroidManifest audit
   const backupPluginFile = path.join(rootDir, 'plugins', 'withPrivateRecordsBackup.js');
   if (!fs.existsSync(backupPluginFile)) {
     errors.push('Missing plugins/withPrivateRecordsBackup.js');
@@ -147,8 +151,49 @@ export function checkPrivacyConfig(rootDir) {
     }
   }
 
-  // 3. package.json buildFromSource & exact pinning of privacy-patched SDKs
+  const generatedManifestPath = path.join(rootDir, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+  if (fs.existsSync(generatedManifestPath)) {
+    const manifestSource = fs.readFileSync(generatedManifestPath, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+    const permissionTagRegex = /<uses-permission(?:-sdk-23)?\b[^>]*>/gi;
+    for (const match of manifestSource.matchAll(permissionTagRegex)) {
+      const tag = match[0];
+      if (/\btools:node\s*=\s*["']remove["']/i.test(tag)) continue;
+      const nameMatch = tag.match(/\bandroid:name\s*=\s*["']([^"']+)["']/i);
+      if (!nameMatch) continue;
+      const permission = nameMatch[1];
+      for (const pattern of FORBIDDEN_PERMISSION_PATTERNS) {
+        if (pattern.test(permission)) {
+          errors.push(`Forbidden Android permission in android/app/src/main/AndroidManifest.xml: ${permission}`);
+          break;
+        }
+      }
+    }
+
+    const applicationMatch = manifestSource.match(/<application\b[^>]*>/i);
+    if (!applicationMatch) {
+      errors.push('android/app/src/main/AndroidManifest.xml is missing an <application> tag');
+    } else {
+      const appTag = applicationMatch[0];
+      const allowBackupMatch = appTag.match(/\bandroid:allowBackup\s*=\s*["']([^"']+)["']/i);
+      if (!allowBackupMatch || allowBackupMatch[1].toLowerCase() !== 'false') {
+        errors.push(
+          `android/app/src/main/AndroidManifest.xml must set android:allowBackup="false" (found ${JSON.stringify(allowBackupMatch?.[1] ?? null)})`
+        );
+      }
+      if (!/\bandroid:fullBackupContent\s*=\s*["']@xml\/pickpic_backup_rules["']/i.test(appTag)) {
+        errors.push('android/app/src/main/AndroidManifest.xml must set android:fullBackupContent="@xml/pickpic_backup_rules"');
+      }
+      if (!/\bandroid:dataExtractionRules\s*=\s*["']@xml\/pickpic_data_extraction_rules["']/i.test(appTag)) {
+        errors.push('android/app/src/main/AndroidManifest.xml must set android:dataExtractionRules="@xml/pickpic_data_extraction_rules"');
+      }
+    }
+  }
+
+  // 3. package.json buildFromSource & exact pinning of privacy-patched / source-built SDKs
   if (pkgJson) {
+    const deps = pkgJson.dependencies ?? {};
+    const lockPackages = lockJson?.packages && typeof lockJson.packages === 'object' ? lockJson.packages : null;
+    const lockRootDeps = lockPackages?.['']?.dependencies ?? null;
     const buildFromSource = pkgJson.expo?.autolinking?.android?.buildFromSource;
     if (!Array.isArray(buildFromSource)) {
       errors.push('package.json must set expo.autolinking.android.buildFromSource');
@@ -157,12 +202,28 @@ export function checkPrivacyConfig(rootDir) {
         if (!buildFromSource.includes(requiredModule)) {
           errors.push(`package.json buildFromSource must include "${requiredModule}"`);
         }
+        const declared = deps[requiredModule];
+        if (typeof declared !== 'string' || !EXACT_SEMVER_PATTERN.test(declared)) {
+          errors.push(
+            `Source-built dependency "${requiredModule}" must be pinned to an exact version in package.json (found ${JSON.stringify(declared)})`
+          );
+        } else if (lockPackages) {
+          const resolvedVersion = lockPackages[`node_modules/${requiredModule}`]?.version;
+          if (resolvedVersion !== declared) {
+            errors.push(
+              `Source-built dependency "${requiredModule}" must resolve to "${declared}" in package-lock.json (found ${JSON.stringify(resolvedVersion)})`
+            );
+          }
+          if (lockRootDeps && lockRootDeps[requiredModule] !== declared) {
+            errors.push(
+              `Source-built dependency "${requiredModule}" root lock entry must match "${declared}" in package-lock.json (found ${JSON.stringify(lockRootDeps[requiredModule])})`
+            );
+          }
+        }
       }
     }
 
     if (patchedVersions) {
-      const deps = pkgJson.dependencies ?? {};
-      const lockDeps = lockJson?.packages?.['']?.dependencies ?? null;
       for (const [depName, expectedVersion] of Object.entries(patchedVersions)) {
         const declared = deps[depName];
         if (declared !== expectedVersion) {
@@ -170,10 +231,18 @@ export function checkPrivacyConfig(rootDir) {
             `Privacy-patched dependency "${depName}" must be pinned exactly to "${expectedVersion}" in package.json (found ${JSON.stringify(declared)})`
           );
         }
-        if (lockDeps && lockDeps[depName] !== expectedVersion) {
-          errors.push(
-            `Privacy-patched dependency "${depName}" must match "${expectedVersion}" in package-lock.json (found ${JSON.stringify(lockDeps[depName])})`
-          );
+        if (lockPackages) {
+          const resolvedVersion = lockPackages[`node_modules/${depName}`]?.version;
+          if (resolvedVersion !== expectedVersion) {
+            errors.push(
+              `Privacy-patched dependency "${depName}" must resolve to "${expectedVersion}" in package-lock.json (found ${JSON.stringify(resolvedVersion)})`
+            );
+          }
+          if (lockRootDeps && lockRootDeps[depName] !== expectedVersion) {
+            errors.push(
+              `Privacy-patched dependency "${depName}" root lock entry must match "${expectedVersion}" in package-lock.json (found ${JSON.stringify(lockRootDeps[depName])})`
+            );
+          }
         }
       }
     }

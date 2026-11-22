@@ -29,6 +29,18 @@ it('excludes private data from both Android cloud backup and device transfer wit
         'android:fullBackupContent': '@xml/pickpic_backup_rules',
         'android:dataExtractionRules': '@xml/pickpic_data_extraction_rules',
     }));
+
+    const permissions = [
+        { $: { 'android:name': 'android.permission.READ_EXTERNAL_STORAGE' } },
+        { $: { 'android:name': 'android.permission.WRITE_EXTERNAL_STORAGE' } },
+        { $: { 'android:name': 'android.permission.READ_MEDIA_IMAGES' } },
+        { $: { 'android:name': 'android.permission.READ_MEDIA_VIDEO' } },
+    ];
+    config.manifestMod({ modResults: { manifest: { application: [{ $: { ...application } }], 'uses-permission': permissions } } });
+    expect(permissions[0].$).toEqual({ 'android:name': 'android.permission.READ_EXTERNAL_STORAGE', 'android:maxSdkVersion': '32' });
+    expect(permissions[1].$).toEqual({ 'android:name': 'android.permission.WRITE_EXTERNAL_STORAGE', 'android:maxSdkVersion': '32' });
+    expect(permissions[2].$).toEqual({ 'android:name': 'android.permission.READ_MEDIA_IMAGES' });
+    expect(permissions[3].$).toEqual({ 'android:name': 'android.permission.READ_MEDIA_VIDEO' });
     await config.filesMod({ modRequest: { platformProjectRoot: '/isolated/android' } });
     const outputs = jest.mocked(fs.writeFile).mock.calls;
     expect(outputs).toHaveLength(2);

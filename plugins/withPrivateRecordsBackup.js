@@ -21,6 +21,21 @@ module.exports = function withPrivateRecordsBackup(config) {
         application['android:allowBackup'] = 'false';
         application['android:fullBackupContent'] = '@xml/pickpic_backup_rules';
         application['android:dataExtractionRules'] = '@xml/pickpic_data_extraction_rules';
+
+        // Restrict legacy external storage permissions to Android 12L (API 32)
+        // and below; Android 13+ uses granular READ_MEDIA_IMAGES / VIDEO.
+        const permissions = mod.modResults.manifest['uses-permission'];
+        if (Array.isArray(permissions)) {
+            for (const entry of permissions) {
+                const name = entry?.$?.['android:name'];
+                if (
+                    name === 'android.permission.READ_EXTERNAL_STORAGE'
+                    || name === 'android.permission.WRITE_EXTERNAL_STORAGE'
+                ) {
+                    entry.$['android:maxSdkVersion'] = '32';
+                }
+            }
+        }
         return mod;
     });
     config = withDangerousMod(config, ['android', async mod => {

@@ -130,4 +130,113 @@ describe('static privacy configuration gate', () => {
     expect(result.output).toContain('labels.txt.placeholder');
     expect(result.output).toContain('react-logo.png');
   });
+
+  it('rejects READ_MEDIA_AUDIO, SYSTEM_ALERT_WINDOW, and MANAGE_EXTERNAL_STORAGE in app.json', () => {
+    const dir = makeFixture();
+    const appJsonPath = path.join(dir, 'app.json');
+    const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'));
+    appJson.expo.android.permissions.push(
+      'android.permission.READ_MEDIA_AUDIO',
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.MANAGE_EXTERNAL_STORAGE',
+    );
+    fs.writeFileSync(appJsonPath, JSON.stringify(appJson, null, 2));
+
+    const result = runGate(dir);
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain('READ_MEDIA_AUDIO');
+    expect(result.output).toContain('SYSTEM_ALERT_WINDOW');
+    expect(result.output).toContain('MANAGE_EXTERNAL_STORAGE');
+  });
+
+  it('audits generated android/app/src/main/AndroidManifest.xml for forbidden permissions and backup rules', () => {
+    const dir = makeFixture();
+    const manifestDir = path.join(dir, 'android', 'app', 'src', 'main');
+    fs.mkdirSync(manifestDir, { recursive: true });
+    const manifestPath = path.join(manifestDir, 'AndroidManifest.xml');
+
+    // Stale prebuild manifest carrying forbidden permissions and allowBackup="true" must fail.
+    fs.writeFileSync(
+      manifestPath,
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+        <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+        <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+        <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+        <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+        <application android:name=".MainApplication" android:allowBackup="true" />
+      </manifest>`,
+    );
+
+    const failed = runGate(dir);
+    expect(failed.status).not.toBe(0);
+    expect(failed.output).toContain('ACCESS_FINE_LOCATION');
+    expect(failed.output).toContain('READ_MEDIA_AUDIO');
+    expect(failed.output).toContain('SYSTEM_ALERT_WINDOW');
+    expect(failed.output).toContain('MANAGE_EXTERNAL_STORAGE');
+    expect(failed.output).toContain('allowBackup="false"');
+    expect(failed.output).toContain('pickpic_backup_rules');
+    expect(failed.output).toContain('pickpic_data_extraction_rules');
+
+    // A clean prebuild manifest with tools:node="remove" and explicit backup exclusions passes.
+    fs.writeFileSync(
+      manifestPath,
+      `<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+        <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
+        <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove" />
+        <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+        <application
+          android:name=".MainApplication"
+          android:allowBackup="false"
+          android:fullBackupContent="@xml/pickpic_backup_rules"
+          android:dataExtractionRules="@xml/pickpic_data_extraction_rules"
+        />
+      </manifest>`,
+    );
+
+    const passed = runGate(dir);
+    expect(passed.status).toBe(0);
+  });
+
+  it('verifies resolved node_modules lockfile entries and exact expo-image pinning', () => {
+    const dir = makeFixture();
+    const pkgJsonPath = path.join(dir, 'package.json');
+    const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'));
+    const lockPath = path.join(dir, 'package-lock.json');
+
+    // Spoof root dependencies to match expected versions while resolved node_modules differ.
+    const lockJson = {
+      lockfileVersion: 3,
+      packages: {
+        '': {
+          dependencies: {
+            ...pkgJson.dependencies,
+          },
+        },
+        'node_modules/@infinitered/react-native-mlkit-core': { version: '5.0.0' },
+        'node_modules/@infinitered/react-native-mlkit-image-labeling': { version: '5.0.0' },
+        'node_modules/@infinitered/react-native-mlkit-face-detection': { version: '5.0.0' },
+        'node_modules/expo-media-library': { version: '18.2.9' },
+        'node_modules/expo-image': { version: '3.0.99' },
+      },
+    };
+    fs.writeFileSync(lockPath, JSON.stringify(lockJson, null, 2));
+
+    const mismatchedLock = runGate(dir);
+    expect(mismatchedLock.status).not.toBe(0);
+    expect(mismatchedLock.output).toContain('expo-media-library');
+    expect(mismatchedLock.output).toContain('18.2.9');
+    expect(mismatchedLock.output).toContain('expo-image');
+    expect(mismatchedLock.output).toContain('3.0.99');
+
+    // Unpinned range on source-built expo-image must fail even if lockfile matches.
+    pkgJson.dependencies['expo-image'] = '~3.0.11';
+    fs.writeFileSync(pkgJsonPath, JSON.stringify(pkgJson, null, 2));
+    lockJson.packages['node_modules/expo-media-library'].version = '18.2.1';
+    lockJson.packages['node_modules/expo-image'].version = '3.0.11';
+    fs.writeFileSync(lockPath, JSON.stringify(lockJson, null, 2));
+
+    const unpinnedImage = runGate(dir);
+    expect(unpinnedImage.status).not.toBe(0);
+    expect(unpinnedImage.output).toContain('expo-image');
+  });
 });

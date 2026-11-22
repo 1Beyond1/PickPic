@@ -19,7 +19,6 @@ jest.mock('expo-image', () => ({
     ...props, testID: 'detail-image',
   }),
 }));
-jest.mock('expo-blur', () => ({ BlurView: ({ children }: { children: React.ReactNode }) => children }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => mockInsets }));
 jest.mock('../components/ScalablePressable', () => ({
