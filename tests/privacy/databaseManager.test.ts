@@ -36,3 +36,34 @@ it('runs application transactions through the keyed helper instead of an unkeyed
     expect(withEncryptedTransaction).toHaveBeenCalledTimes(1);
     expect(db.execAsync).not.toHaveBeenCalledWith('BEGIN TRANSACTION;');
 });
+it('waits for in-flight initialization and queued transactions before closing the connection', async () => {
+    Platform.OS = 'android';
+    let releaseInit!: (value: any) => void;
+    let releaseTx!: () => void;
+    const db = { execAsync: jest.fn().mockResolvedValue(undefined), closeAsync: jest.fn().mockResolvedValue(undefined) } as any;
+    jest.mocked(openEncryptedDatabase).mockReturnValueOnce(new Promise(resolve => { releaseInit = resolve; }));
+    jest.mocked(withEncryptedTransaction).mockImplementationOnce(async fn => fn(db));
+
+    const events: string[] = [];
+    const txPromise = withTransaction(async () => {
+        events.push('tx-start');
+        await new Promise<void>(resolve => { releaseTx = resolve; });
+        events.push('tx-end');
+        return 'done';
+    });
+
+    const closePromise = closeDatabase().then(() => { events.push('closed'); });
+    await Promise.resolve();
+    expect(db.closeAsync).not.toHaveBeenCalled();
+
+    releaseInit(db);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(events).toEqual(['tx-start']);
+    expect(db.closeAsync).not.toHaveBeenCalled();
+
+    releaseTx();
+    expect(await txPromise).toBe('done');
+    await closePromise;
+    expect(events).toEqual(['tx-start', 'tx-end', 'closed']);
+    expect(db.closeAsync).toHaveBeenCalledTimes(1);
+});

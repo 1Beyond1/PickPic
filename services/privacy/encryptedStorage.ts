@@ -90,7 +90,11 @@ async function unseal(name: string, value: string, scope: DeviceKeyScope): Promi
 
 /** A failed read never enables writes of default state. Migration reads back
  * and authenticates the new copy before removing the legacy AsyncStorage key. */
-export function createEncryptedStorage(scope: DeviceKeyScope): StateStorage {
+export function createEncryptedStorage(
+    scope: DeviceKeyScope,
+    options: { clearOnWrite?: boolean } = {}
+): StateStorage {
+    const clearOnWrite = options.clearOnWrite ?? true;
     const ready = new Set<string>();
     readyNames.set(scope, ready);
     return {
@@ -123,7 +127,9 @@ export function createEncryptedStorage(scope: DeviceKeyScope): StateStorage {
                 if (!ready.has(name)) throw new LocalPrivacyError();
                 const exists = await AsyncStorage.getItem(name + suffix) !== null;
                 await AsyncStorage.setItem(name + suffix, await seal(name, value, scope, exists));
-                usePrivacyStore.getState().clear(scope);
+                if (clearOnWrite) {
+                    usePrivacyStore.getState().clear(scope);
+                }
             } catch {
                 usePrivacyStore.getState().block(scope, 'write');
                 throw new LocalPrivacyError();
@@ -137,5 +143,8 @@ export function createEncryptedStorage(scope: DeviceKeyScope): StateStorage {
         },
     };
 }
-export const encryptedRecordStorage = createEncryptedStorage('records');
+// Records span both AsyncStorage metadata and SQLCipher collections; let
+// mediaProgressStorage clear the 'records' write gate only once both stores
+// are clean, eliminating microtask flicker when SQLCipher writes have failed.
+export const encryptedRecordStorage = createEncryptedStorage('records', { clearOnWrite: false });
 export const encryptedSettingsStorage = createEncryptedStorage('settings');

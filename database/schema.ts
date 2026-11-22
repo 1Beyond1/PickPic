@@ -78,11 +78,15 @@ export const SQL_CREATE_ASSETS = `
   );
 `;
 
+export const SQL_INDEX_ASSETS_STATUS_BLUR =
+  'CREATE INDEX IF NOT EXISTS idx_assets_status_blur ON assets(status, blur_score, asset_id);';
+
 export const SQL_CREATE_ASSETS_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);',
   'CREATE INDEX IF NOT EXISTS idx_assets_taken_at ON assets(taken_at);',
   'CREATE INDEX IF NOT EXISTS idx_assets_algo_version ON assets(algo_version);',
   'CREATE INDEX IF NOT EXISTS idx_assets_status_taken_at ON assets(status, taken_at, asset_id);',
+  SQL_INDEX_ASSETS_STATUS_BLUR,
 ];
 
 export const SQL_CREATE_DUP_GROUPS = `
@@ -93,6 +97,13 @@ export const SQL_CREATE_DUP_GROUPS = `
     created_at INTEGER
   );
 `;
+
+export const SQL_INDEX_DUP_GROUPS_CREATED =
+  'CREATE INDEX IF NOT EXISTS idx_dup_groups_created ON dup_groups(created_at DESC, group_id ASC);';
+
+export const SQL_CREATE_DUP_GROUPS_INDEXES = [
+  SQL_INDEX_DUP_GROUPS_CREATED,
+];
 
 export const SQL_CREATE_DUP_MEMBERS = `
   CREATE TABLE IF NOT EXISTS dup_members (
@@ -157,6 +168,8 @@ export const SQL_CREATE_MEDIA_PENDING_QUEUE = `
     asset_id TEXT NOT NULL,
     seq INTEGER NOT NULL,
     asset_json TEXT NOT NULL,
+    source TEXT,
+    added_at INTEGER,
     PRIMARY KEY (queue_type, asset_id)
   );
 `;

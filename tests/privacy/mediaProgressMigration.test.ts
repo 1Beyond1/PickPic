@@ -7,6 +7,8 @@ let mockDb: import('../helpers/testDatabase').TestDatabase | null = null;
 let mockDbUnavailable = false;
 let mockFailCollectionReadOnce = false;
 let mockTamperVerifyOnce = false;
+let mockTxHook: (() => Promise<void>) | null = null;
+let mockTxCount = 0;
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(async (name: string) => mockDisk.get(name) ?? null),
@@ -36,6 +38,8 @@ jest.mock('../../database/db', () => ({
     return mockDb;
   }),
   withTransaction: jest.fn(async (callback: (db: any) => Promise<any>) => {
+    mockTxCount++;
+    if (mockTxHook) await mockTxHook();
     if (mockDbUnavailable) throw new Error('SQLCipher locked');
     let result: unknown;
     await mockDb!.withTransactionAsync(async () => {
@@ -52,7 +56,7 @@ jest.mock('../../database/db', () => ({
 const STORAGE_KEY = 'photoapp-media-progress';
 const ENCRYPTED_KEY = `${STORAGE_KEY}.encrypted-v1`;
 
-describe('SQLCipher migration and fail-closed privacy gate for large media collections', () => {
+describe('SQLCipher V7 migration, coalescing, split-brain & privacy gate protection', () => {
   beforeEach(() => {
     jest.resetModules();
     const { TestDatabase } = require('../helpers/testDatabase');
@@ -62,6 +66,8 @@ describe('SQLCipher migration and fail-closed privacy gate for large media colle
     mockDbUnavailable = false;
     mockFailCollectionReadOnce = false;
     mockTamperVerifyOnce = false;
+    mockTxHook = null;
+    mockTxCount = 0;
   });
 
   afterEach(async () => {
@@ -71,7 +77,7 @@ describe('SQLCipher migration and fail-closed privacy gate for large media colle
     }
   });
 
-  it('migrates legacy AsyncStorage large fields to SQLCipher, verifies readback, and strips them from AsyncStorage', async () => {
+  it('migrates all 6 unbounded AsyncStorage fields (including collectionQueue & pendingDeletionInfo) to SQLCipher, verifies readback, and strips them', async () => {
     const legacyPayload = JSON.stringify({
       state: {
         photoProcessedIds: ['p-1', 'p-2'],
@@ -101,25 +107,94 @@ describe('SQLCipher migration and fail-closed privacy gate for large media colle
     expect(hydrated.state.videoProcessedIds).toEqual(['v-1']);
     expect(hydrated.state.deleteQueue).toEqual([{ id: 'p-2', mediaType: 'photo', uri: 'file:///p-2.jpg' }]);
     expect(hydrated.state.videoTrashBin).toEqual([{ id: 'v-1', mediaType: 'video', uri: 'file:///v-1.mp4' }]);
-    expect(hydrated.state.deletedCounts).toEqual({ photos: 3, videos: 1 });
     expect(hydrated.state.collectionQueue).toEqual([{ id: 'c-1', mediaType: 'photo' }]);
+    expect(hydrated.state.pendingDeletionInfo).toEqual({
+      'p-2': { source: 'photos', addedAt: 100 },
+      'v-1': { source: 'videos', addedAt: 200 },
+    });
+    expect(hydrated.state.deletedCounts).toEqual({ photos: 3, videos: 1 });
 
-    // Legacy plaintext key is gone, and encrypted AsyncStorage no longer holds the 4 big fields.
+    // Legacy plaintext key is gone, and encrypted AsyncStorage holds ONLY small bounded metadata.
     expect(mockDisk.has(STORAGE_KEY)).toBe(false);
     const decryptedSmall = JSON.parse((await encryptedRecordStorage.getItem(STORAGE_KEY))!);
     expect(decryptedSmall.state).not.toHaveProperty('photoProcessedIds');
     expect(decryptedSmall.state).not.toHaveProperty('videoProcessedIds');
     expect(decryptedSmall.state).not.toHaveProperty('deleteQueue');
     expect(decryptedSmall.state).not.toHaveProperty('videoTrashBin');
+    expect(decryptedSmall.state).not.toHaveProperty('collectionQueue');
+    expect(decryptedSmall.state).not.toHaveProperty('pendingDeletionInfo');
     expect(decryptedSmall.state.deletedCounts).toEqual({ photos: 3, videos: 1 });
-    expect(decryptedSmall.state.collectionQueue).toEqual([{ id: 'c-1', mediaType: 'photo' }]);
 
-    // SQLCipher tables hold the exact migrated rows.
+    // SQLCipher tables hold all 6 migrated collections losslessly.
     expect(await MediaProgressRepository.loadAll()).toEqual({
       photoProcessedIds: ['p-1', 'p-2'],
       videoProcessedIds: ['v-1'],
       deleteQueue: [{ id: 'p-2', mediaType: 'photo', uri: 'file:///p-2.jpg' }],
       videoTrashBin: [{ id: 'v-1', mediaType: 'video', uri: 'file:///v-1.mp4' }],
+      collectionQueue: [{ id: 'c-1', mediaType: 'photo' }],
+      pendingDeletionInfo: {
+        'p-2': { source: 'photos', addedAt: 100 },
+        'v-1': { source: 'videos', addedAt: 200 },
+      },
+    });
+  });
+
+  it('losslessly upgrades a V6 installation where 4 collections are already in SQLCipher and only collectionQueue/pendingDeletionInfo remain in AsyncStorage', async () => {
+    const { MediaProgressRepository } = require('../../database/repositories/MediaProgressRepository');
+    const { encryptedRecordStorage } = require('../../services/privacy/encryptedStorage');
+
+    // Seed V6 state: 4 collections already in SQLCipher, only collectionQueue & pendingDeletionInfo in AsyncStorage.
+    await MediaProgressRepository.replaceAll({
+      photoProcessedIds: ['v6-p1', 'v6-p2'],
+      videoProcessedIds: ['v6-v1'],
+      deleteQueue: [{ id: 'v6-p2', mediaType: 'photo', uri: 'file:///v6-p2.jpg' }],
+      videoTrashBin: [{ id: 'v6-v1', mediaType: 'video', uri: 'file:///v6-v1.mp4' }],
+      collectionQueue: [],
+      pendingDeletionInfo: {},
+    });
+    const v6AsyncPayload = JSON.stringify({
+      state: {
+        collectionQueue: [{ id: 'v6-c1', mediaType: 'photo' }],
+        pendingDeletionInfo: {
+          'v6-p2': { source: 'blur', addedAt: 42 },
+          'v6-v1': { source: 'videos', addedAt: 99 },
+        },
+        deletedCounts: { photos: 7, videos: 2 },
+        organizingSessions: { photo: null, video: null },
+        recentDecisions: [],
+      },
+      version: 0,
+    });
+    await encryptedRecordStorage.getItem(STORAGE_KEY);
+    await encryptedRecordStorage.setItem(STORAGE_KEY, v6AsyncPayload);
+
+    const { createMediaProgressPersistStorage } = require('../../services/mediaProgressStorage');
+    const storage = createMediaProgressPersistStorage();
+    const hydrated = await storage.getItem(STORAGE_KEY);
+
+    expect(hydrated?.state).toMatchObject({
+      photoProcessedIds: ['v6-p1', 'v6-p2'],
+      videoProcessedIds: ['v6-v1'],
+      deleteQueue: [{ id: 'v6-p2', mediaType: 'photo', uri: 'file:///v6-p2.jpg' }],
+      videoTrashBin: [{ id: 'v6-v1', mediaType: 'video', uri: 'file:///v6-v1.mp4' }],
+      collectionQueue: [{ id: 'v6-c1', mediaType: 'photo' }],
+      pendingDeletionInfo: {
+        'v6-p2': { source: 'blur', addedAt: 42 },
+        'v6-v1': { source: 'videos', addedAt: 99 },
+      },
+      deletedCounts: { photos: 7, videos: 2 },
+    });
+
+    const smallAfter = JSON.parse((await encryptedRecordStorage.getItem(STORAGE_KEY))!);
+    expect(smallAfter.state).not.toHaveProperty('collectionQueue');
+    expect(smallAfter.state).not.toHaveProperty('pendingDeletionInfo');
+    expect(await MediaProgressRepository.loadAll()).toMatchObject({
+      photoProcessedIds: ['v6-p1', 'v6-p2'],
+      collectionQueue: [{ id: 'v6-c1', mediaType: 'photo' }],
+      pendingDeletionInfo: {
+        'v6-p2': { source: 'blur', addedAt: 42 },
+        'v6-v1': { source: 'videos', addedAt: 99 },
+      },
     });
   });
 
@@ -142,12 +217,10 @@ describe('SQLCipher migration and fail-closed privacy gate for large media colle
     await expect(mediaProgressStorage.getItem(STORAGE_KEY)).rejects.toThrow('original data was preserved');
     expect(usePrivacyStore.getState().failures.records).toBe('read');
 
-    // Old large fields must STILL be intact inside AsyncStorage so retry can recover losslessly!
     const preserved = JSON.parse((await encryptedRecordStorage.getItem(STORAGE_KEY))!);
     expect(preserved.state.photoProcessedIds).toEqual(['p-1', 'p-2']);
     expect(preserved.state.deleteQueue).toEqual([{ id: 'p-2', mediaType: 'photo' }]);
 
-    // Explicit retry after transient failure succeeds losslessly and strips AsyncStorage only now.
     const retried = JSON.parse((await mediaProgressStorage.getItem(STORAGE_KEY))!);
     expect(retried.state.photoProcessedIds).toEqual(['p-1', 'p-2']);
     const afterRetrySmall = JSON.parse((await encryptedRecordStorage.getItem(STORAGE_KEY))!);
@@ -173,27 +246,58 @@ describe('SQLCipher migration and fail-closed privacy gate for large media colle
     expect(mockDisk.get(ENCRYPTED_KEY)).toBe(cipherBefore);
   });
 
-  it('blocks writes when SQLCipher incremental sync fails and recovers cleanly on flushMediaProgress retry', async () => {
-    const { mediaProgressStorage, scheduleMediaCollectionsPersist, flushMediaProgress } = require('../../services/mediaProgressStorage');
-    const { markEncryptedStorageHydrated } = require('../../services/privacy/encryptedStorage');
+  it('prevents split-brain and privacy-gate microtask flicker when SQLCipher fails while AsyncStorage writes keep arriving', async () => {
+    const {
+      mediaProgressStorage,
+      scheduleMediaCollectionsPersist,
+      flushMediaProgress,
+    } = require('../../services/mediaProgressStorage');
+    const { markEncryptedStorageHydrated, encryptedRecordStorage } = require('../../services/privacy/encryptedStorage');
     const { MediaProgressRepository } = require('../../database/repositories/MediaProgressRepository');
     const { usePrivacyStore } = require('../../stores/usePrivacyStore');
 
     await mediaProgressStorage.getItem(STORAGE_KEY);
     markEncryptedStorageHydrated('records', STORAGE_KEY);
 
+    // Persist an initial clean baseline.
+    const initialMeta = JSON.stringify({ state: { deletedCounts: { photos: 0, videos: 0 } }, version: 0 });
+    mediaProgressStorage.setItem(STORAGE_KEY, initialMeta);
+    await flushMediaProgress();
+    const cipherBeforeFailure = mockDisk.get(ENCRYPTED_KEY);
+
+    // Now break SQLCipher and simulate a decision writing both metadata & collections.
     mockDbUnavailable = true;
+    const failedMeta = JSON.stringify({ state: { deletedCounts: { photos: 1, videos: 0 } }, version: 0 });
+    mediaProgressStorage.setItem(STORAGE_KEY, failedMeta);
     scheduleMediaCollectionsPersist({
       photoProcessedIds: ['new-1'],
       videoProcessedIds: [],
       deleteQueue: [{ id: 'new-1', mediaType: 'photo' } as any],
       videoTrashBin: [],
+      collectionQueue: [],
+      pendingDeletionInfo: { 'new-1': { source: 'photos', addedAt: 500 } },
     });
 
     await expect(flushMediaProgress()).rejects.toThrow('Could not persist organizing records');
     expect(usePrivacyStore.getState().failures.records).toBe('write');
+    // Split-brain check: AsyncStorage metadata MUST NOT have advanced while SQLCipher failed!
+    expect(mockDisk.get(ENCRYPTED_KEY)).toBe(cipherBeforeFailure);
 
-    // Recover SQLCipher and retry flush -> persists the unsaved incremental state and clears gate.
+    // Subscribe to usePrivacyStore to guarantee ZERO microtask flicker when background setItem fires!
+    const observedRecordStates: (string | undefined)[] = [];
+    const unsub = usePrivacyStore.subscribe((state: any) => {
+      observedRecordStates.push(state.failures.records);
+    });
+    const bgMeta = JSON.stringify({ state: { deletedCounts: { photos: 2, videos: 0 } }, version: 0 });
+    mediaProgressStorage.setItem(STORAGE_KEY, bgMeta);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    unsub();
+
+    expect(observedRecordStates.every(status => status === 'write')).toBe(true);
+    expect(usePrivacyStore.getState().failures.records).toBe('write');
+    expect(mockDisk.get(ENCRYPTED_KEY)).toBe(cipherBeforeFailure);
+
+    // Recover SQLCipher and retry flush -> persists BOTH collections and latest metadata atomically.
     mockDbUnavailable = false;
     await expect(flushMediaProgress()).resolves.toBeUndefined();
     expect(usePrivacyStore.getState().failures).toEqual({});
@@ -202,6 +306,91 @@ describe('SQLCipher migration and fail-closed privacy gate for large media colle
       videoProcessedIds: [],
       deleteQueue: [{ id: 'new-1', mediaType: 'photo' }],
       videoTrashBin: [],
+      collectionQueue: [],
+      pendingDeletionInfo: { 'new-1': { source: 'photos', addedAt: 500 } },
     });
+    const finalSmall = JSON.parse((await encryptedRecordStorage.getItem(STORAGE_KEY))!);
+    expect(finalSmall.state.deletedCounts).toEqual({ photos: 2, videos: 0 });
+  });
+
+  it('coalesces 20 rapid swipes so superseded intermediate snapshots skip redundant SQLCipher transactions', async () => {
+    const {
+      mediaProgressStorage,
+      scheduleMediaCollectionsPersist,
+      flushMediaProgress,
+    } = require('../../services/mediaProgressStorage');
+    const { markEncryptedStorageHydrated } = require('../../services/privacy/encryptedStorage');
+    const { MediaProgressRepository } = require('../../database/repositories/MediaProgressRepository');
+
+    await mediaProgressStorage.getItem(STORAGE_KEY);
+    markEncryptedStorageHydrated('records', STORAGE_KEY);
+
+    let releaseFirstTx!: () => void;
+    let blockedOnce = false;
+    mockTxHook = async () => {
+      if (!blockedOnce) {
+        blockedOnce = true;
+        await new Promise<void>(resolve => { releaseFirstTx = resolve; });
+      }
+    };
+    mockTxCount = 0;
+
+    // Trigger swipe 1 and let its transaction start and block.
+    scheduleMediaCollectionsPersist({
+      photoProcessedIds: ['p-1'],
+      videoProcessedIds: [],
+      deleteQueue: [],
+      videoTrashBin: [],
+      collectionQueue: [],
+      pendingDeletionInfo: {},
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockTxCount).toBe(1);
+
+    // Fire 19 more rapid swipes while swipe 1 is still in flight.
+    for (let i = 2; i <= 20; i++) {
+      scheduleMediaCollectionsPersist({
+        photoProcessedIds: Array.from({ length: i }, (_, idx) => `p-${idx + 1}`),
+        videoProcessedIds: [],
+        deleteQueue: [],
+        videoTrashBin: [],
+        collectionQueue: [],
+        pendingDeletionInfo: {},
+      });
+    }
+
+    releaseFirstTx();
+    await flushMediaProgress();
+
+    // Only 2 SQLCipher transactions total (swipe 1 + final coalesced swipe 20), NOT 20!
+    expect(mockTxCount).toBe(2);
+    const loaded = await MediaProgressRepository.loadAll();
+    expect(loaded.photoProcessedIds).toHaveLength(20);
+    expect(loaded.photoProcessedIds[19]).toBe('p-20');
+  });
+
+  it('eliminates cold-start JSON.stringify -> JSON.parse double serialization via createMediaProgressPersistStorage', async () => {
+    const { MediaProgressRepository } = require('../../database/repositories/MediaProgressRepository');
+    const { createMediaProgressPersistStorage } = require('../../services/mediaProgressStorage');
+
+    const ids = Array.from({ length: 1000 }, (_, idx) => `cold-photo-${idx}`);
+    await MediaProgressRepository.replaceAll({
+      photoProcessedIds: ids,
+      videoProcessedIds: [],
+      deleteQueue: [],
+      videoTrashBin: [],
+      collectionQueue: [],
+      pendingDeletionInfo: {},
+    });
+
+    const stringifySpy = jest.spyOn(JSON, 'stringify');
+    const storage = createMediaProgressPersistStorage();
+    const hydrated = await storage.getItem(STORAGE_KEY);
+
+    expect(hydrated?.state.photoProcessedIds).toHaveLength(1000);
+    // Cold-start direct object hydration must NOT stringify the 1,000 SQLCipher rows!
+    expect(stringifySpy).not.toHaveBeenCalled();
+    stringifySpy.mockRestore();
   });
 });

@@ -31,6 +31,8 @@ jest.mock('../services/privacy/mediaCollectionsStorage', () => {
     videoProcessedIds: [] as string[],
     deleteQueue: [] as any[],
     videoTrashBin: [] as any[],
+    collectionQueue: [] as any[],
+    pendingDeletionInfo: {} as Record<string, any>,
   };
   return {
     loadPersistedMediaCollections: jest.fn(async () => ({
@@ -38,6 +40,8 @@ jest.mock('../services/privacy/mediaCollectionsStorage', () => {
       videoProcessedIds: [...stored.videoProcessedIds],
       deleteQueue: [...stored.deleteQueue],
       videoTrashBin: [...stored.videoTrashBin],
+      collectionQueue: [...stored.collectionQueue],
+      pendingDeletionInfo: { ...stored.pendingDeletionInfo },
     })),
     replacePersistedMediaCollections: jest.fn(async (next: typeof stored) => {
       stored = {
@@ -45,6 +49,8 @@ jest.mock('../services/privacy/mediaCollectionsStorage', () => {
         videoProcessedIds: [...next.videoProcessedIds],
         deleteQueue: [...next.deleteQueue],
         videoTrashBin: [...next.videoTrashBin],
+        collectionQueue: [...(next.collectionQueue ?? [])],
+        pendingDeletionInfo: { ...(next.pendingDeletionInfo ?? {}) },
       };
     }),
     syncPersistedMediaCollections: jest.fn(async (_prev: typeof stored, next: typeof stored) => {
@@ -53,6 +59,8 @@ jest.mock('../services/privacy/mediaCollectionsStorage', () => {
         videoProcessedIds: [...next.videoProcessedIds],
         deleteQueue: [...next.deleteQueue],
         videoTrashBin: [...next.videoTrashBin],
+        collectionQueue: [...(next.collectionQueue ?? [])],
+        pendingDeletionInfo: { ...(next.pendingDeletionInfo ?? {}) },
       };
     }),
   };

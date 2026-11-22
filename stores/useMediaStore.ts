@@ -1,7 +1,7 @@
 import * as MediaLibrary from 'expo-media-library';
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
-import { flushMediaProgress, mediaProgressStorage, scheduleMediaCollectionsPersist } from '../services/mediaProgressStorage';
+import { persist } from 'zustand/middleware';
+import { createMediaProgressPersistStorage, flushMediaProgress, scheduleMediaCollectionsPersist } from '../services/mediaProgressStorage';
 import { markEncryptedStorageHydrated } from '../services/privacy/encryptedStorage';
 import { mergeProtectedState } from '../services/privacy/mergeState';
 import { usePrivacyStore } from './usePrivacyStore';
@@ -1626,15 +1626,14 @@ export const useMediaStore = create<MediaState>()(
         }),
         {
             name: 'photoapp-media-progress',
-            storage: createJSONStorage(() => mediaProgressStorage),
+            storage: createMediaProgressPersistStorage(),
             merge: mergeProtectedState,
             partialize: (state) => ({
-                // Large unbounded collections (photoProcessedIds, videoProcessedIds,
-                // deleteQueue, videoTrashBin) are persisted row-by-row inside the
-                // encrypted SQLCipher database via MediaProgressRepository so
-                // AsyncStorage never hits Android's 2 MB CursorWindow limit.
-                collectionQueue: state.collectionQueue,
-                pendingDeletionInfo: retainPendingDeletionInfo(state),
+                // All unbounded collections (photoProcessedIds, videoProcessedIds,
+                // deleteQueue, videoTrashBin, collectionQueue, pendingDeletionInfo)
+                // are persisted row-by-row inside encrypted SQLCipher via
+                // MediaProgressRepository so AsyncStorage never hits Android's
+                // 2 MB CursorWindow limit.
                 deletedCounts: state.deletedCounts,
                 organizingSessions: state.organizingSessions,
                 recentDecisions: state.recentDecisions,
@@ -1656,6 +1655,8 @@ useMediaStore.subscribe((state, prevState) => {
         && state.videoProcessedIds === prevState.videoProcessedIds
         && state.deleteQueue === prevState.deleteQueue
         && state.videoTrashBin === prevState.videoTrashBin
+        && state.collectionQueue === prevState.collectionQueue
+        && state.pendingDeletionInfo === prevState.pendingDeletionInfo
     ) {
         return;
     }
@@ -1664,5 +1665,7 @@ useMediaStore.subscribe((state, prevState) => {
         videoProcessedIds: state.videoProcessedIds,
         deleteQueue: state.deleteQueue,
         videoTrashBin: state.videoTrashBin,
+        collectionQueue: state.collectionQueue,
+        pendingDeletionInfo: state.pendingDeletionInfo,
     });
 });

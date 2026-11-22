@@ -76,12 +76,26 @@ async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
 }
 
 /**
- * Close the database connection
+ * Close the database connection after waiting for any in-flight
+ * initialization or queued transactions to settle.
  */
 export async function closeDatabase(): Promise<void> {
-    if (dbInstance) {
-        await dbInstance.closeAsync();
-        dbInstance = null;
+    while (true) {
+        const pendingInit = initPromise;
+        const pendingTx = transactionQueue;
+        if (pendingInit) {
+            await pendingInit.catch(() => undefined);
+        }
+        await pendingTx.catch(() => undefined);
+        if (initPromise === null && transactionQueue === pendingTx) {
+            break;
+        }
+    }
+
+    const current = dbInstance;
+    dbInstance = null;
+    if (current) {
+        await current.closeAsync();
     }
 }
 
