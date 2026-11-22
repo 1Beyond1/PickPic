@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
@@ -39,6 +39,10 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     })));
     const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
     const [albumAccess, setAlbumAccess] = useState<'checking' | 'available' | 'unavailable'>('checking');
+    const initialSelectionRef = useRef(initialSelection);
+    initialSelectionRef.current = initialSelection;
+    const loadAlbumsRef = useRef(loadAlbums);
+    loadAlbumsRef.current = loadAlbums;
     const { t } = useI18n();
     const { colors } = useThemeColor();
     const { height } = useWindowDimensions();
@@ -47,7 +51,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
         if (!visible) return;
 
         let active = true;
-        setSelectedIds(initialSelection);
+        setSelectedIds(initialSelectionRef.current);
 
         const checkAlbumAccess = async () => {
             setAlbumAccess('checking');
@@ -60,7 +64,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
             }
 
             setAlbumAccess('available');
-            await loadAlbums();
+            await loadAlbumsRef.current();
         };
 
         void checkAlbumAccess();
@@ -77,7 +81,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
             active = false;
             subscription?.remove();
         };
-    }, [visible, initialSelection, loadAlbums]);
+    }, [visible]);
 
     const handleOpenSettings = async () => {
         try {

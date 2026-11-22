@@ -1,6 +1,6 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
@@ -89,9 +89,17 @@ export default function SettingsScreen() {
         missingProtectedAlbumIds: state.missingProtectedAlbumIds,
         setProtectedAlbums: state.setProtectedAlbums,
     })));
-    const safeProtectedAlbums = protectedAlbums ?? [];
+    const safeProtectedAlbums = useMemo(() => protectedAlbums ?? [], [protectedAlbums]);
     const safeMissingProtectedAlbumIds = missingProtectedAlbumIds ?? [];
     const safeAlbums = albums ?? [];
+    const protectedAlbumIds = useMemo(
+        () => safeProtectedAlbums.map(album => album.albumId),
+        [safeProtectedAlbums],
+    );
+    const unavailableProtectedItems = useMemo(
+        () => safeProtectedAlbums.map(album => ({ id: album.albumId, title: album.title })),
+        [safeProtectedAlbums],
+    );
     const pendingBackupChanges = useBackupReminderStore(state => state.pendingChanges);
     const showBackupReminder = pendingBackupChanges >= BACKUP_REMINDER_THRESHOLD;
 
@@ -576,8 +584,8 @@ export default function SettingsScreen() {
                 visible={showProtectedAlbumSelector}
                 onClose={() => setShowProtectedAlbumSelector(false)}
                 onConfirm={handleProtectedAlbumsConfirm}
-                initialSelection={safeProtectedAlbums.map(album => album.albumId)}
-                unavailableSelectionItems={safeProtectedAlbums.map(album => ({ id: album.albumId, title: album.title }))}
+                initialSelection={protectedAlbumIds}
+                unavailableSelectionItems={unavailableProtectedItems}
                 titleKey="protected_albums_selector_title"
                 clearLabelKey="protected_albums_clear"
             />
