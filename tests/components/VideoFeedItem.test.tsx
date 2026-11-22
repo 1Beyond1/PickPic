@@ -257,4 +257,63 @@ describe('VideoFeedItem with expo-video', () => {
     expect(screen.getByRole('button', { name: 'video_share' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'video_queue_delete' })).toBeTruthy();
   });
+
+  it('releases the native video source and skips media lookup when outside the active decoder window', () => {
+    const { useVideoPlayer } = require('expo-video');
+    const MediaLibrary = require('expo-media-library');
+    (useVideoPlayer as jest.Mock).mockClear();
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockClear();
+
+    const phVideo = { ...video, id: 'video-far', uri: 'ph://video-far' };
+    const view = renderVideo({
+      video: phVideo,
+      isActive: false,
+      shouldPlay: false,
+      shouldLoadSource: false,
+    });
+
+    expect(useVideoPlayer).toHaveBeenCalledWith(null, expect.any(Function));
+    expect(view.queryByTestId('video-view')).toBeNull();
+    expect(MediaLibrary.getAssetInfoAsync).not.toHaveBeenCalled();
+    expect(mockPlayer.play).not.toHaveBeenCalled();
+
+    // Entering the decoder window binds the source; leaving releases it back to null.
+    view.rerender(
+      <VideoFeedItem
+        video={video}
+        isActive
+        isScreenFocused
+        shouldPlay
+        shouldLoadSource
+        isMuted={false}
+        toggleMute={jest.fn()}
+        onDelete={jest.fn()}
+        onFavorite={jest.fn()}
+        t={(key: string) => key}
+        colors={{}}
+        itemHeight={500}
+      />,
+    );
+    expect(useVideoPlayer).toHaveBeenLastCalledWith(video.uri, expect.any(Function));
+    expect(view.getByTestId('video-view')).toBeTruthy();
+
+    view.rerender(
+      <VideoFeedItem
+        video={video}
+        isActive={false}
+        isScreenFocused
+        shouldPlay={false}
+        shouldLoadSource={false}
+        isMuted={false}
+        toggleMute={jest.fn()}
+        onDelete={jest.fn()}
+        onFavorite={jest.fn()}
+        t={(key: string) => key}
+        colors={{}}
+        itemHeight={500}
+      />,
+    );
+    expect(useVideoPlayer).toHaveBeenLastCalledWith(null, expect.any(Function));
+    expect(view.queryByTestId('video-view')).toBeNull();
+  });
 });

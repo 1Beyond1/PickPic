@@ -1,7 +1,7 @@
 import React from 'react';
 import { act, fireEvent, fireEventAsync, renderAsync, screen, waitFor } from '@testing-library/react-native';
 import * as MediaLibrary from 'expo-media-library';
-import { FlatList, Platform } from 'react-native';
+import { FlatList, Platform, ScrollView } from 'react-native';
 
 jest.mock('expo-media-library', () => ({ getPermissionsAsync: jest.fn(), getAssetsAsync: jest.fn(), getAlbumsAsync: jest.fn(),
     getAssetInfoAsync: jest.fn(), deleteAssetsAsync: jest.fn(), SortBy: { creationTime: 'creationTime' }, presentPermissionsPickerAsync: jest.fn() }));
@@ -56,13 +56,24 @@ async function mount() {
     await waitFor(() => expect(useMediaStore.getState().isLoading).toBe(false));
     fireEvent(screen.getByTestId('video-feed-viewport'), 'layout', { nativeEvent: { layout: { width: 390, height: 600 } } });
     const list = await waitFor(() => screen.UNSAFE_getByType(FlatList));
+    const scrollView = list.findByType(ScrollView);
+    fireEvent(scrollView, 'layout', { nativeEvent: { layout: { width: 390, height: 600 } } });
+    fireEvent(scrollView, 'contentSizeChange', 390, list.props.data.length * 600);
     act(() => list.props.onViewableItemsChanged({ viewableItems: [{ key: list.props.data[list.props.initialScrollIndex].id }] }));
     return view;
 }
 function swipe(index: number) {
     const list = screen.UNSAFE_getByType(FlatList);
+    const scrollView = list.findByType(ScrollView);
     act(() => {
         list.props.onScrollBeginDrag();
+        fireEvent.scroll(scrollView, {
+            nativeEvent: {
+                contentOffset: { x: 0, y: index * 600 },
+                contentSize: { width: 390, height: list.props.data.length * 600 },
+                layoutMeasurement: { width: 390, height: 600 },
+            },
+        });
         list.props.onViewableItemsChanged({ viewableItems: [{ key: list.props.data[index].id }] });
         list.props.onMomentumScrollEnd({ nativeEvent: { contentOffset: { y: index * 600 } } });
     });
@@ -168,7 +179,7 @@ it('skips without a decision, retains deferrals across next batch and restart, a
 
 it('queues the last video without deleting and leaves kept history available after restart', async () => {
     const view = await mount(); swipe(1); swipe(2);
-    await fireEventAsync.press(screen.getByRole('button', { name: 'queue:three' })); visible();
+    await fireEventAsync.press(await screen.findByRole('button', { name: 'queue:three' })); visible();
     expect(useMediaStore.getState().organizingSessions.video?.phase).toBe('review');
     expect(useMediaStore.getState().videoTrashBin.map(asset => asset.id)).toEqual(['three']);
     await view.unmountAsync(); useMediaStore.getState().clearLoadedMedia();

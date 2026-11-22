@@ -193,4 +193,38 @@ describe('AssetRepository', () => {
       status: AssetStatus.PENDING,
     });
   });
+
+  it('paginates blurry assets deterministically across full and >500-ID scoped queries', async () => {
+    const seeded = Array.from({ length: 65 }, (_, index) => ({
+      asset_id: `blur-${String(index).padStart(3, '0')}`,
+      taken_at: 1000 + index,
+      width: 1000,
+      height: 800,
+      blur_score: index + 1,
+      mean_luma: 90,
+      status: AssetStatus.DONE,
+    }));
+    await AssetRepository.upsertBatch(seeded);
+
+    const page1 = await AssetRepository.getBlurryAssets(undefined, 25, 0);
+    const page2 = await AssetRepository.getBlurryAssets(undefined, 25, 25);
+    const page3 = await AssetRepository.getBlurryAssets(undefined, 25, 50);
+
+    expect(page1).toHaveLength(25);
+    expect(page2).toHaveLength(25);
+    expect(page3).toHaveLength(15);
+    expect([...page1, ...page2, ...page3].map(item => item.asset_id)).toEqual(
+      seeded.map(item => item.asset_id),
+    );
+
+    // Multi-chunk limited scope (>500 IDs) must still return exact global page slices.
+    const wideScope = [
+      ...Array.from({ length: 510 }, (_, idx) => `missing-${idx}`),
+      ...seeded.map(item => item.asset_id),
+    ];
+    const scopedPage2 = await AssetRepository.getBlurryAssets(wideScope, 10, 50);
+    expect(scopedPage2.map(item => item.asset_id)).toEqual(
+      seeded.slice(50, 60).map(item => item.asset_id),
+    );
+  });
 });

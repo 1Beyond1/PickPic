@@ -83,6 +83,7 @@ const AndroidFullscreenVideo: React.FC<AndroidFullscreenVideoProps> = ({
 interface VideoFeedItemProps {
     video: PhotoAsset;
     isActive: boolean;
+    shouldLoadSource?: boolean;
     isScreenFocused: boolean;
     shouldPlay: boolean;
     isMuted: boolean;
@@ -98,6 +99,7 @@ interface VideoFeedItemProps {
 export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     video,
     isActive,
+    shouldLoadSource = true,
     isScreenFocused,
     shouldPlay,
     isMuted,
@@ -112,10 +114,13 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     const { fontScale } = useWindowDimensions();
     const videoRef = useRef<VideoView>(null);
     const needsLocalUri = /^(ph|assets-library):\/\//.test(video.uri);
-    const [playbackSource, setPlaybackSource] = useState<{ assetId: string; uri: string } | null>(() => (
-        needsLocalUri ? null : { assetId: video.id, uri: video.uri }
-    ));
     const [isFullscreen, setIsFullscreen] = useState(false);
+    // Only keep a native decoder/source bound for the active item and its
+    // immediate neighbors while the feed is focused (or finishing fullscreen exit).
+    const retainPlaybackSource = shouldLoadSource && (isScreenFocused || isFullscreen);
+    const [playbackSource, setPlaybackSource] = useState<{ assetId: string; uri: string } | null>(() => (
+        retainPlaybackSource && !needsLocalUri ? { assetId: video.id, uri: video.uri } : null
+    ));
     const [isPaused, setIsPaused] = useState(false);
     const [isScrubbing, setIsScrubbing] = useState(false);
     const handleScrubbing = useCallback((scrubbing: boolean) => {
@@ -125,7 +130,8 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     useEffect(() => {
         setIsPaused(false);
     }, [video.id]);
-    const player = useVideoPlayer(playbackSource?.uri ?? null, (videoPlayer) => {
+    const playbackUri = retainPlaybackSource && playbackSource?.assetId === video.id ? playbackSource.uri : null;
+    const player = useVideoPlayer(playbackUri, (videoPlayer) => {
         videoPlayer.loop = true;
         videoPlayer.muted = isMuted;
     });
@@ -139,6 +145,13 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
 
     useEffect(() => {
         let mounted = true;
+        if (!retainPlaybackSource) {
+            setPlaybackSource(null);
+            return () => {
+                mounted = false;
+            };
+        }
+
         setPlaybackSource(needsLocalUri ? null : { assetId: video.id, uri: video.uri });
 
         if (!needsLocalUri) {
@@ -153,7 +166,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                     setPlaybackSource({ assetId: video.id, uri });
                 }
             })
-            .catch((error) => {
+            .catch(() => {
                 // Keep the original URI as a last-resort fallback. If the
                 // asset is unavailable, expo-video will report the native error
                 // instead of allowing the async lookup to become unhandled.
@@ -166,13 +179,12 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
         return () => {
             mounted = false;
         };
-    }, [needsLocalUri, resolvePlaybackUri, video.id, video.uri]);
+    }, [needsLocalUri, resolvePlaybackUri, retainPlaybackSource, video.id, video.uri]);
 
-    const playbackUri = playbackSource?.assetId === video.id ? playbackSource.uri : null;
     // Android uses a second player inside the custom fullscreen modal, so the
     // feed player must pause there. iOS and Web fullscreen reuse this player;
     // keep it playing while the native/browser fullscreen surface is visible.
-    const baseShouldPlay = shouldPlay && isActive && !isPaused && !isScrubbing && !(Platform.OS === 'android' && isFullscreen);
+    const baseShouldPlay = shouldPlay && isActive && retainPlaybackSource && !isPaused && !isScrubbing && !(Platform.OS === 'android' && isFullscreen);
 
     useEffect(() => {
         player.muted = isMuted;
@@ -197,6 +209,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
     }, [isFullscreen, isScreenFocused]);
 
     useEffect(() => {
+        if (!playbackUri) return;
         try {
             if (baseShouldPlay) {
                 player.play();
@@ -293,7 +306,7 @@ export const VideoFeedItem: React.FC<VideoFeedItemProps> = ({
                     />
                 ) : (
                     <View style={styles.videoPlaceholder}>
-                        <ActivityIndicator size="large" color={COLORS.white} />
+                        {retainPlaybackSource && <ActivityIndicator size="large" color={COLORS.white} />}
                     </View>
                 )}
                 {isPaused && <View pointerEvents="none" style={styles.pauseOverlay}>

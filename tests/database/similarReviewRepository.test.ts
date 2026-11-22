@@ -171,11 +171,11 @@ it('upgrades V4 without touching existing data, and rejects future schemas', asy
     await db.execAsync('DROP TABLE similar_reviews');
     await db.runAsync("INSERT INTO meta (key, value) VALUES ('schema_version', '4')");
     await runMigrations(db as any);
-    expect(await db.getFirstAsync('SELECT value FROM meta WHERE key = ?', ['schema_version'])).toEqual({ value: '5' });
+    expect(await db.getFirstAsync('SELECT value FROM meta WHERE key = ?', ['schema_version'])).toEqual({ value: '6' });
     expect(await db.getAllAsync('SELECT * FROM assets ORDER BY asset_id')).toEqual(before);
     await runMigrations(db as any);
     expect(await db.getAllAsync('SELECT * FROM similar_reviews')).toEqual([]);
-    await db.runAsync("UPDATE meta SET value = '6' WHERE key = 'schema_version'");
+    await db.runAsync("UPDATE meta SET value = '7' WHERE key = 'schema_version'");
     await expect(runMigrations(db as any)).rejects.toThrow('newer than supported');
 });
 
@@ -188,5 +188,25 @@ it('does not advance the migration version when its commit cannot be recorded', 
     expect(await db.getFirstAsync("SELECT name FROM sqlite_master WHERE name = 'similar_reviews'")).toBeNull();
     db.setFailurePredicate(null);
     await runMigrations(db as any);
-    expect(await db.getFirstAsync("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: '5' });
+    expect(await db.getFirstAsync("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: '6' });
+});
+
+it('batch-loads snapshots and reviews for multiple groups in O(1) SQL queries', async () => {
+    const first = await seedGroup('grp-1', ['a1', 'a2']);
+    const second = await seedGroup('grp-2', ['b1', 'b2', 'b3']);
+    await reviews.save('grp-1', first.key, ['a1'], ['a2']);
+    await reviews.save('grp-2', second.key, ['b1', 'b2'], ['b3']);
+
+    const querySpy = jest.spyOn(db, 'getAllAsync');
+    const snapshots = await reviews.getSnapshotsBatch(['grp-1', 'grp-2', 'missing']);
+    expect(querySpy).toHaveBeenCalledTimes(1);
+    expect(snapshots.size).toBe(2);
+    expect(snapshots.get('grp-1')?.key).toBe(first.key);
+    expect(snapshots.get('grp-2')?.key).toBe(second.key);
+
+    querySpy.mockClear();
+    const reviewMap = await reviews.getReviewsBatch(Array.from(snapshots.values()));
+    expect(querySpy).toHaveBeenCalledTimes(1);
+    expect(reviewMap.get(first.key)).toMatchObject({ keptIds: ['a1'], pendingIds: ['a2'] });
+    expect(reviewMap.get(second.key)).toMatchObject({ keptIds: ['b1', 'b2'], pendingIds: ['b3'] });
 });

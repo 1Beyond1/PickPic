@@ -9,11 +9,14 @@ const mockMediaState = {
   deleteQueue: [], videoTrashBin: [], pendingDeletionInfo: {}, enqueuePendingDeletion: jest.fn(() => 1),
   photoProcessedIds: [] as string[], hasHydrated: true,
 };
-const mockGetSimilarSnapshot = jest.fn(async (..._args: any[]): Promise<any> => null);
-const mockGetSimilarReview = jest.fn(async (..._args: any[]): Promise<any> => null);
+const mockGetSimilarSnapshotsBatch = jest.fn(async (..._args: any[]): Promise<Map<string, any>> => new Map());
+const mockGetSimilarReviewsBatch = jest.fn(async (..._args: any[]): Promise<Map<string, any>> => new Map());
 jest.mock('../database/db', () => ({ getDatabase: jest.fn(), withTransaction: jest.fn() }));
 jest.mock('../database/repositories/SimilarReviewRepository', () => ({
-  SimilarReviewRepository: { getSnapshot: (...args: any[]) => mockGetSimilarSnapshot(...args), getReview: (...args: any[]) => mockGetSimilarReview(...args) },
+  SimilarReviewRepository: {
+    getSnapshotsBatch: (...args: any[]) => mockGetSimilarSnapshotsBatch(...args),
+    getReviewsBatch: (...args: any[]) => mockGetSimilarReviewsBatch(...args),
+  },
   isSimilarReviewCurrent: jest.requireActual('../database/repositories/SimilarReviewRepository').isSimilarReviewCurrent,
 }));
 const mockRefreshAI = jest.fn().mockResolvedValue(undefined);
@@ -61,7 +64,10 @@ jest.mock('../stores/useMediaStore', () => ({
 }));
 jest.mock('../database', () => ({
   AssetRepository: { getBlurryAssets: jest.fn(), getStatusCounts: jest.fn().mockResolvedValue({ pending: 0, done: 1, error: 0 }), removeAssetAndDerivedData: jest.fn() },
-  DupGroupRepository: { getAllGroups: jest.fn().mockResolvedValue([]), getGroupMembers: jest.fn() },
+  DupGroupRepository: {
+    getGroupsPage: jest.fn().mockResolvedValue([]),
+    getGroupMembersBatch: jest.fn().mockResolvedValue(new Map()),
+  },
 }));
 
 import ScanResultsScreen from '../app/(tabs)/scanResults';
@@ -131,7 +137,7 @@ describe('empty results and read failures', () => {
     await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_results_not_ready');
     expect(AssetRepository.getStatusCounts).toHaveBeenCalledWith(['visible']);
-    expect(AssetRepository.getBlurryAssets).toHaveBeenCalledWith(['visible'], 50);
+    expect(AssetRepository.getBlurryAssets).toHaveBeenCalledWith(['visible'], 50, 0);
     expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
   });
 
@@ -261,8 +267,8 @@ describe('result navigation preserves media decisions', () => {
   });
 
   it('hides the covered result controls from accessibility until the similar detail closes', async () => {
-    (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([{ group_id: 'group', representative_asset_id: 'first', best_asset_id: 'first' }]);
-    (DupGroupRepository.getGroupMembers as jest.Mock).mockResolvedValue([{ asset_id: 'first' }, { asset_id: 'second' }]);
+    (DupGroupRepository.getGroupsPage as jest.Mock).mockResolvedValue([{ group_id: 'group', representative_asset_id: 'first', best_asset_id: 'first' }]);
+    (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockResolvedValue(new Map([['group', [{ group_id: 'group', asset_id: 'first', distance: 0 }, { group_id: 'group', asset_id: 'second', distance: 1 }]]]));
     const view = await renderAsync(<ScanResultsScreen />);
     try {
       await screen.findByText('scan_no_blurry');
@@ -276,7 +282,8 @@ describe('result navigation preserves media decisions', () => {
       expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
     } finally {
       await view.unmountAsync();
-      (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([]);
+      (DupGroupRepository.getGroupsPage as jest.Mock).mockResolvedValue([]);
+      (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockResolvedValue(new Map());
     }
   });
 });
@@ -380,7 +387,10 @@ describe('category photo viewing', () => {
   beforeEach(() => {
     mockClassificationEnabled = true;
     mockMediaState.mediaLibraryRefreshVersion = 0;
-    (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+    (AssetRepository.getBlurryAssets as jest.Mock).mockReset().mockResolvedValue([]);
+    (DupGroupRepository.getGroupsPage as jest.Mock).mockReset().mockResolvedValue([]);
+    (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockReset().mockResolvedValue(new Map());
     (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` }));
   });
 
@@ -527,12 +537,12 @@ describe('category photo viewing', () => {
         { asset_id: 'blur-1', blur_score: 10, mean_luma: 80 },
         { asset_id: 'blur-2', blur_score: 20, mean_luma: 90 },
       ]);
-      (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([
+      (DupGroupRepository.getGroupsPage as jest.Mock).mockResolvedValue([
         { group_id: 'group-1', representative_asset_id: 'sim-1', best_asset_id: 'sim-1' },
       ]);
-      (DupGroupRepository.getGroupMembers as jest.Mock).mockResolvedValue([
-        { asset_id: 'sim-1' }, { asset_id: 'sim-2' },
-      ]);
+      (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockResolvedValue(new Map([
+        ['group-1', [{ group_id: 'group-1', asset_id: 'sim-1', distance: 0 }, { group_id: 'group-1', asset_id: 'sim-2', distance: 1 }]],
+      ]));
       (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValue(new Error('Missing ACCESS_MEDIA_LOCATION permission'));
       (MediaLibrary.getAssetsAsync as jest.Mock).mockClear();
       (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({
@@ -545,7 +555,119 @@ describe('category photo viewing', () => {
       expect(MediaLibrary.getAssetsAsync).toHaveBeenCalledTimes(1);
     } finally {
       Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOS });
-      (DupGroupRepository.getAllGroups as jest.Mock).mockResolvedValue([]);
+      (DupGroupRepository.getGroupsPage as jest.Mock).mockResolvedValue([]);
+      (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockResolvedValue(new Map());
+    }
+  });
+
+  it('paginates blurry photos beyond 50 items via onEndReached without dropping earlier rows', async () => {
+    const page1 = Array.from({ length: 50 }, (_, idx) => ({ asset_id: `blur-${idx}`, blur_score: idx + 1, mean_luma: 80 }));
+    const page2 = Array.from({ length: 12 }, (_, idx) => ({ asset_id: `blur-${50 + idx}`, blur_score: 51 + idx, mean_luma: 85 }));
+    (AssetRepository.getBlurryAssets as jest.Mock)
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2);
+    (DupGroupRepository.getGroupsPage as jest.Mock).mockResolvedValue([]);
+    (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockResolvedValue(new Map());
+
+    await renderAsync(<ScanResultsScreen />);
+    const blurryList = await screen.findByTestId('blurry-results-list');
+    expect(blurryList.props.data).toHaveLength(50);
+    expect(AssetRepository.getBlurryAssets).toHaveBeenCalledWith(undefined, 50, 0);
+
+    await act(async () => { blurryList.props.onEndReached(); });
+    await waitFor(() => expect(screen.getByTestId('blurry-results-list').props.data).toHaveLength(62));
+    expect(AssetRepository.getBlurryAssets).toHaveBeenNthCalledWith(2, undefined, 50, 50);
+  });
+
+  it('loads similar groups with batched SQL queries and paginates subsequent pages on scroll', async () => {
+    const makePage = (start: number, count: number) => Array.from({ length: count }, (_, idx) => ({
+      group_id: `grp-${start + idx}`,
+      representative_asset_id: `a-${start + idx}`,
+      best_asset_id: `a-${start + idx}`,
+      created_at: 1000 - (start + idx),
+    }));
+    const page1 = makePage(0, 30);
+    const page2 = makePage(30, 5);
+    const membersFor = (groups: typeof page1) => new Map(
+      groups.map(group => [
+        group.group_id,
+        [
+          { group_id: group.group_id, asset_id: `a-${group.group_id}`, distance: 0 },
+          { group_id: group.group_id, asset_id: `b-${group.group_id}`, distance: 1 },
+        ],
+      ]),
+    );
+    (AssetRepository.getBlurryAssets as jest.Mock).mockResolvedValue([]);
+    (DupGroupRepository.getGroupsPage as jest.Mock)
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2);
+    (DupGroupRepository.getGroupMembersBatch as jest.Mock)
+      .mockResolvedValueOnce(membersFor(page1))
+      .mockResolvedValueOnce(membersFor(page2));
+    mockGetSimilarSnapshotsBatch.mockClear();
+    mockGetSimilarReviewsBatch.mockClear();
+
+    try {
+      await renderAsync(<ScanResultsScreen />);
+      await screen.findByText('scan_no_blurry');
+      await act(async () => { fireEvent.press(screen.getByText('scan_tab_similar')); });
+
+      const similarList = await screen.findByTestId('similar-results-list');
+      expect(similarList.props.data).toHaveLength(30);
+      // 30 groups resolved with O(1) batch calls instead of 2N/3N per-group SQL queries.
+      expect(DupGroupRepository.getGroupMembersBatch).toHaveBeenCalledTimes(1);
+      expect(mockGetSimilarSnapshotsBatch).toHaveBeenCalledTimes(1);
+      expect(mockGetSimilarReviewsBatch).toHaveBeenCalledTimes(1);
+
+      await act(async () => { similarList.props.onEndReached(); });
+      await waitFor(() => expect(screen.getByTestId('similar-results-list').props.data).toHaveLength(35));
+      expect(DupGroupRepository.getGroupsPage).toHaveBeenNthCalledWith(2, { limit: 30, offset: 30, repair: false });
+      expect(DupGroupRepository.getGroupMembersBatch).toHaveBeenCalledTimes(2);
+      expect(mockGetSimilarSnapshotsBatch).toHaveBeenCalledTimes(2);
+      expect(mockGetSimilarReviewsBatch).toHaveBeenCalledTimes(2);
+    } finally {
+      (DupGroupRepository.getGroupsPage as jest.Mock).mockResolvedValue([]);
+      (DupGroupRepository.getGroupMembersBatch as jest.Mock).mockResolvedValue(new Map());
+    }
+  });
+
+  it('virtualizes the category photo grid and caches prefetched thumbnail URIs in memory per refresh version', async () => {
+    const manyAssets = Array.from({ length: 85 }, (_, idx) => ({ asset_id: `cat-photo-${idx}` }));
+    const originalAssets = mockCategory.assets;
+    const originalCount = mockCategory.count;
+    mockCategory.assets = manyAssets;
+    mockCategory.count = manyAssets.length;
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockClear();
+
+    try {
+      await renderAsync(<ScanResultsScreen />);
+      await screen.findByText('scan_no_blurry');
+      await act(async () => { fireEvent.press(screen.getByText('scan_tab_ai')); });
+      await act(async () => { fireEvent.press(screen.getByText('Cat')); });
+
+      const grid = await screen.findByTestId('category-detail-grid');
+      expect(grid.props.windowSize).toBe(5);
+      expect(grid.props.initialNumToRender).toBe(18);
+      expect(grid.props.maxToRenderPerBatch).toBe(15);
+      expect(grid.props.removeClippedSubviews).toBe(true);
+
+      // Initial window prefetches only the first 60 thumbnails, not all 85 upfront.
+      await waitFor(() => expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledWith('cat-photo-59', { shouldDownloadFromNetwork: false }));
+      expect(MediaLibrary.getAssetInfoAsync).not.toHaveBeenCalledWith('cat-photo-60', { shouldDownloadFromNetwork: false });
+
+      // Closing and reopening within the same refresh version hits the in-memory URI cache.
+      fireEvent.press(screen.getByRole('button', { name: 'scan_close_category' }));
+      (MediaLibrary.getAssetInfoAsync as jest.Mock).mockClear();
+      await act(async () => { fireEvent.press(screen.getByText('Cat')); });
+      await screen.findByTestId('category-detail-grid');
+      expect(MediaLibrary.getAssetInfoAsync).not.toHaveBeenCalled();
+
+      // Scrolling to the end loads the remaining 25 thumbnails.
+      await act(async () => { screen.getByTestId('category-detail-grid').props.onEndReached(); });
+      await waitFor(() => expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledWith('cat-photo-84', { shouldDownloadFromNetwork: false }));
+    } finally {
+      mockCategory.assets = originalAssets;
+      mockCategory.count = originalCount;
     }
   });
 });

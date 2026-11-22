@@ -468,6 +468,10 @@ export default function VideosScreen() {
         count: scope.albumIds.length, order: t(`session_order_${scope.order}`),
     }) + (scope.date !== undefined ? ` · ${scope.date === 'unknown' ? t('scope_unknown_date') : t('scope_month_value', { year: scope.date.year, month: scope.date.month })}` : '') : null;
     const activeIsProcessed = !!activeId && videoProcessedIds.includes(activeId);
+    const resolvedActiveIndex = activeId ? videos.findIndex(video => video.id === activeId) : -1;
+    const activeIndex = resolvedActiveIndex >= 0
+        ? resolvedActiveIndex
+        : Math.max(0, Math.min(videoCurrentIndex ?? 0, Math.max(0, videos.length - 1)));
 
     if (!videoPermissionChecked) {
         return (
@@ -561,11 +565,17 @@ export default function VideosScreen() {
                     key={`video-feed-${feedHeight}`}
                     ref={feedRef}
                     data={videos}
+                    extraData={activeIndex}
                     keyExtractor={item => item.id}
-                    renderItem={({ item }) => (
+                    windowSize={3}
+                    maxToRenderPerBatch={2}
+                    initialNumToRender={2}
+                    removeClippedSubviews
+                    renderItem={({ item, index }) => (
                         <VideoFeedItem
                             video={item}
                             isActive={item.id === activeId}
+                            shouldLoadSource={Math.abs(index - activeIndex) <= 1}
                             isScreenFocused={isScreenFocused}
                             shouldPlay={item.id === activeId && isScreenFocused && !showTrash && !showAlbumSelector}
                             isMuted={isMuted}

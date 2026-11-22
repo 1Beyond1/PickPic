@@ -1116,19 +1116,36 @@ export const AssetRepository = {
 
     /**
      * Get the lowest-scoring completed assets, optionally restricted to a
-     * permission-visible set. Apply the scope before LIMIT so hidden local
-     * index rows cannot crowd visible results out of the result window.
+     * permission-visible set. Apply the scope before LIMIT/OFFSET so hidden
+     * local index rows cannot crowd visible results out of the result window.
      */
     async getBlurryAssets(
         assetIds?: readonly string[],
-        limit: number = 50
+        limit: number = 50,
+        offset: number = 0
     ): Promise<BlurryAsset[]> {
-        if (limit <= 0) return [];
+        if (limit <= 0 || offset < 0) return [];
 
         const db = await getDatabase();
-        const blurryAssets: BlurryAsset[] = [];
+        const batches = splitAssetIds(assetIds);
+        if (batches.length === 0) return [];
 
-        for (const assetIdBatch of splitAssetIds(assetIds)) {
+        if (batches.length === 1) {
+            const batch = batches[0];
+            if (batch !== undefined && batch.length === 0) return [];
+            const scope = createAssetScope(batch);
+            return db.getAllAsync<BlurryAsset>(
+                `SELECT asset_id, blur_score, mean_luma FROM assets
+                 WHERE status = ? AND blur_score < ?${scope.clause}
+                 ORDER BY blur_score ASC, asset_id ASC
+                 LIMIT ? OFFSET ?`,
+                [AssetStatus.DONE, 100, ...scope.params, limit, offset]
+            );
+        }
+
+        const blurryAssets: BlurryAsset[] = [];
+        const windowLimit = offset + limit;
+        for (const assetIdBatch of batches) {
             if (assetIdBatch !== undefined && assetIdBatch.length === 0) continue;
 
             const scope = createAssetScope(assetIdBatch);
@@ -1137,17 +1154,15 @@ export const AssetRepository = {
                  WHERE status = ? AND blur_score < ?${scope.clause}
                  ORDER BY blur_score ASC, asset_id ASC
                  LIMIT ?`,
-                [AssetStatus.DONE, 100, ...scope.params, limit]
+                [AssetStatus.DONE, 100, ...scope.params, windowLimit]
             ));
         }
-
-        if (assetIds === undefined) return blurryAssets;
 
         blurryAssets.sort((a, b) => {
             if (a.blur_score !== b.blur_score) return a.blur_score - b.blur_score;
             return a.asset_id.localeCompare(b.asset_id);
         });
-        return blurryAssets.slice(0, limit);
+        return blurryAssets.slice(offset, offset + limit);
     },
 
     /**

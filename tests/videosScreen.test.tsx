@@ -454,4 +454,40 @@ describe('VideosScreen processing behavior', () => {
     expect(mockMarkVideoAsProcessed).not.toHaveBeenCalled();
     expect(mockMediaState.confirmPendingDeletion).not.toHaveBeenCalled();
   });
+
+  it('bounds FlatList virtualization and limits active video playback sources to current and adjacent items', async () => {
+    const fiveVideos = Array.from({ length: 5 }, (_, index) => ({
+      ...videoOne,
+      id: `video-${index}`,
+      uri: `file:///video-${index}.mp4`,
+      creationTime: index + 1,
+    }));
+    mockMediaState.videos = fiveVideos;
+    const screen = await renderScreen();
+    const list = screen.UNSAFE_getByType(ReactNative.FlatList);
+
+    expect(list.props.windowSize).toBe(3);
+    expect(list.props.maxToRenderPerBatch).toBe(2);
+    expect(list.props.initialNumToRender).toBe(2);
+    expect(list.props.removeClippedSubviews).toBe(true);
+
+    act(() => {
+      list.props.onViewableItemsChanged({ viewableItems: [{ key: 'video-2' }] });
+    });
+
+    const updatedList = screen.UNSAFE_getByType(ReactNative.FlatList);
+    const renderedProps = fiveVideos.map((item, index) => {
+      const element = updatedList.props.renderItem({ item, index, separators: {} });
+      return { id: item.id, shouldLoadSource: element.props.shouldLoadSource, isActive: element.props.isActive };
+    });
+
+    expect(renderedProps).toEqual([
+      { id: 'video-0', shouldLoadSource: false, isActive: false },
+      { id: 'video-1', shouldLoadSource: true, isActive: false },
+      { id: 'video-2', shouldLoadSource: true, isActive: true },
+      { id: 'video-3', shouldLoadSource: true, isActive: false },
+      { id: 'video-4', shouldLoadSource: false, isActive: false },
+    ]);
+    await screen.unmountAsync();
+  });
 });

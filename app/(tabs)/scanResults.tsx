@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useReducedMotion } from 'react-native-reanimated';
@@ -18,6 +18,7 @@ import { PendingDeletionButton } from '../../components/PendingDeletionReview';
 import { getPendingDeletionEntries } from '../../services/pendingDeletion';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { AssetRepository, DupGroupRepository } from '../../database';
+import type { DupGroup, DupMember } from '../../database';
 import { SimilarReviewRepository, isSimilarReviewCurrent } from '../../database/repositories/SimilarReviewRepository';
 import type { SimilarReview } from '../../database/repositories/SimilarReviewRepository';
 import { CategoryGroup, useAICategories } from '../../hooks/useAICategories';
@@ -45,6 +46,89 @@ interface SimilarGroup {
 }
 
 const RESULTS_MEDIA_PAGE_SIZE = 100;
+const BLURRY_PAGE_SIZE = 50;
+const SIMILAR_PAGE_SIZE = 30;
+const CATEGORY_URI_PAGE_SIZE = 60;
+const CATEGORY_URI_CACHE_MAX = 600;
+
+function writeBoundedUriCache(cache: Map<string, string>, assetId: string, uri: string): void {
+    if (cache.has(assetId)) {
+        cache.delete(assetId);
+    }
+    cache.set(assetId, uri);
+    while (cache.size > CATEGORY_URI_CACHE_MAX) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey === undefined) break;
+        cache.delete(oldestKey);
+    }
+}
+
+async function hydrateSimilarGroupPage(
+    groups: readonly DupGroup[],
+    membersByGroupId: ReadonlyMap<string, DupMember[]>,
+    visiblePhotoIds: ReadonlySet<string> | undefined,
+    readableInfos: ReadonlyMap<string, { localUri?: string; uri?: string }>,
+): Promise<SimilarGroup[]> {
+    const candidates: {
+        group: DupGroup;
+        availableMembers: { member: DupMember; uri: string }[];
+    }[] = [];
+
+    for (const group of groups) {
+        const members = membersByGroupId.get(group.group_id) ?? [];
+        const visibleMembers = visiblePhotoIds === undefined
+            ? members
+            : members.filter(member => visiblePhotoIds.has(member.asset_id));
+
+        const availableMembers = visibleMembers
+            .map(member => {
+                const info = readableInfos.get(member.asset_id);
+                const uri = info?.localUri || info?.uri;
+                return uri ? { member, uri } : null;
+            })
+            .filter((entry): entry is { member: DupMember; uri: string } => entry !== null);
+
+        // A group with a deleted/inaccessible member should not remain
+        // actionable in the results screen.
+        if (availableMembers.length < 2) continue;
+        candidates.push({ group, availableMembers });
+    }
+
+    if (candidates.length === 0) return [];
+
+    // Batch-load snapshots and reviews in two O(1) SQL queries instead of 2N per-group queries.
+    const snapshotsByGroupId = await SimilarReviewRepository.getSnapshotsBatch(
+        candidates.map(candidate => candidate.group.group_id),
+    );
+    const reviewsBySnapshotKey = await SimilarReviewRepository.getReviewsBatch(
+        Array.from(snapshotsByGroupId.values()),
+    );
+
+    return candidates.map(({ group, availableMembers }) => {
+        const representative = availableMembers.find(
+            item => item.member.asset_id === group.representative_asset_id,
+        ) ?? availableMembers[0];
+        const bestAssetId = availableMembers.some(
+            item => item.member.asset_id === group.best_asset_id,
+        )
+            ? group.best_asset_id
+            : null;
+        const snapshot = snapshotsByGroupId.get(group.group_id) ?? null;
+        const review = snapshot ? (reviewsBySnapshotKey.get(snapshot.key) ?? null) : null;
+
+        return {
+            groupId: group.group_id,
+            memberCount: availableMembers.length,
+            memberAssetIds: availableMembers.map(item => item.member.asset_id),
+            bestAssetId,
+            representativeUri: representative.uri,
+            previewUris: availableMembers.slice(0, 2).map(item => item.uri),
+            review,
+            allAccessible: !!snapshot && snapshot.assets.length === availableMembers.length
+                && snapshot.assets.every(asset => availableMembers.some(item => item.member.asset_id === asset.asset_id)),
+        };
+    });
+}
 
 /**
  * Resolve photo IDs visible to the current permission scope. A missing set
@@ -96,10 +180,19 @@ export default function ScanResultsScreen() {
     const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'ai'>('blur');
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
     const [similarGroups, setSimilarGroups] = useState<SimilarGroup[]>([]);
+    const [hasMoreBlurry, setHasMoreBlurry] = useState(false);
+    const [loadingMoreBlurry, setLoadingMoreBlurry] = useState(false);
+    const [hasMoreSimilar, setHasMoreSimilar] = useState(false);
+    const [loadingMoreSimilar, setLoadingMoreSimilar] = useState(false);
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState(false);
     const [completedCount, setCompletedCount] = useState<number | null>(null);
     const loadRequestIdRef = useRef(0);
+    const visiblePhotoIdsRef = useRef<ReadonlySet<string> | undefined>(undefined);
+    const blurryOffsetRef = useRef(0);
+    const similarOffsetRef = useRef(0);
+    const loadingMoreBlurryRef = useRef(false);
+    const loadingMoreSimilarRef = useRef(false);
     const [isDeletingBlurry, setIsDeletingBlurry] = useState(false);
     const isDeletingBlurryRef = useRef(false);
     const [queueFeedback, setQueueFeedback] = useState<string | null>(null);
@@ -126,36 +219,46 @@ export default function ScanResultsScreen() {
 
     const loadResults = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
-        // ... (existing loadResults code) ...
+        blurryOffsetRef.current = 0;
+        similarOffsetRef.current = 0;
+        loadingMoreBlurryRef.current = false;
+        loadingMoreSimilarRef.current = false;
+        setLoadingMoreBlurry(false);
+        setLoadingMoreSimilar(false);
+        setHasMoreBlurry(false);
+        setHasMoreSimilar(false);
         setLoading(true);
         setLoadError(false);
         setCompletedCount(null);
         try {
-            // Load blurry photos (blur_score < 100)
+            // Load first pages of blurry photos and similar groups using batched SQL queries.
             const visiblePhotoIds = await getVisiblePhotoIdsForResults();
-            const statusCounts = await AssetRepository.getStatusCounts(
-                visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds),
-            );
-            const blurryAssets = await AssetRepository.getBlurryAssets(
-                visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds),
-                50,
-            );
-            const groups = await DupGroupRepository.getAllGroups();
-            const groupMembersList = await Promise.all(
-                groups.map(async group => {
-                    const members = await DupGroupRepository.getGroupMembers(group.group_id);
-                    const visibleMembers = members.filter(
-                        member => visiblePhotoIds === undefined || visiblePhotoIds.has(member.asset_id),
-                    );
-                    return { group, visibleMembers };
-                }),
+            visiblePhotoIdsRef.current = visiblePhotoIds;
+            const visibleIdsArray = visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds);
+
+            const [statusCounts, blurryAssets, groups] = await Promise.all([
+                AssetRepository.getStatusCounts(visibleIdsArray),
+                AssetRepository.getBlurryAssets(visibleIdsArray, BLURRY_PAGE_SIZE, 0),
+                DupGroupRepository.getGroupsPage({ limit: SIMILAR_PAGE_SIZE, offset: 0, repair: true }),
+            ]);
+            const membersByGroupId = await DupGroupRepository.getGroupMembersBatch(
+                groups.map(group => group.group_id),
             );
 
             // Resolve all blurry and similar-group asset URIs in one batched call
             // so Android EXIF fallback scans the library at most once.
+            const similarVisibleAssetIds: string[] = [];
+            for (const group of groups) {
+                const members = membersByGroupId.get(group.group_id) ?? [];
+                for (const member of members) {
+                    if (visiblePhotoIds === undefined || visiblePhotoIds.has(member.asset_id)) {
+                        similarVisibleAssetIds.push(member.asset_id);
+                    }
+                }
+            }
             const allAssetIds = [
                 ...blurryAssets.map(asset => asset.asset_id),
-                ...groupMembersList.flatMap(entry => entry.visibleMembers.map(member => member.asset_id)),
+                ...similarVisibleAssetIds,
             ];
             const readableInfos = await getReadableMediaInfos(allAssetIds, 'photo', {
                 shouldDownloadFromNetwork: false,
@@ -175,53 +278,22 @@ export default function ScanResultsScreen() {
                     uri,
                 });
             }
-            setBlurryPhotos(blurryWithUris);
 
-            // Load similar groups
-            const groupsWithCount = await Promise.all(
-                groupMembersList.map(async ({ group, visibleMembers }) => {
-                    const availableMembers = visibleMembers
-                        .map(member => {
-                            const info = readableInfos.get(member.asset_id);
-                            const uri = info?.localUri || info?.uri;
-                            return uri ? { member, uri } : null;
-                        })
-                        .filter((member): member is { member: typeof visibleMembers[number]; uri: string } => member !== null);
-
-                    // A group with a deleted/inaccessible member should not
-                    // remain actionable in the results screen.
-                    if (availableMembers.length < 2) return null;
-
-                    const representative = availableMembers.find(
-                        item => item.member.asset_id === group.representative_asset_id
-                    ) ?? availableMembers[0];
-                    const bestAssetId = availableMembers.some(
-                        item => item.member.asset_id === group.best_asset_id
-                    )
-                        ? group.best_asset_id
-                        : null;
-                    const snapshot = await SimilarReviewRepository.getSnapshot(group.group_id);
-                    const review = snapshot ? await SimilarReviewRepository.getReview(snapshot) : null;
-
-                    return {
-                        groupId: group.group_id,
-                        memberCount: availableMembers.length,
-                        memberAssetIds: availableMembers.map(item => item.member.asset_id),
-                        bestAssetId,
-                        representativeUri: representative.uri,
-                        previewUris: availableMembers.slice(0, 2).map(item => item.uri),
-                        review,
-                        allAccessible: !!snapshot && snapshot.assets.length === availableMembers.length
-                            && snapshot.assets.every(asset => availableMembers.some(item => item.member.asset_id === asset.asset_id)),
-                    };
-                })
+            const hydratedGroups = await hydrateSimilarGroupPage(
+                groups,
+                membersByGroupId,
+                visiblePhotoIds,
+                readableInfos,
             );
 
             if (requestId !== loadRequestIdRef.current) return;
+            blurryOffsetRef.current = blurryAssets.length;
+            similarOffsetRef.current = groups.length;
+            setHasMoreBlurry(blurryAssets.length === BLURRY_PAGE_SIZE);
+            setHasMoreSimilar(groups.length === SIMILAR_PAGE_SIZE);
+            setBlurryPhotos(blurryWithUris);
             setCompletedCount(statusCounts.done);
-            setSimilarGroups(groupsWithCount.filter((group): group is NonNullable<typeof group> => (
-                group !== null && group.memberCount > 1
-            )));
+            setSimilarGroups(hydratedGroups);
         } catch {
             console.error('[ScanResults] Results could not be loaded.');
             if (requestId === loadRequestIdRef.current) {
@@ -230,6 +302,8 @@ export default function ScanResultsScreen() {
                 // permission, or database error fails closed.
                 setBlurryPhotos([]);
                 setSimilarGroups([]);
+                setHasMoreBlurry(false);
+                setHasMoreSimilar(false);
                 setSelectedSimilarGroup(null);
                 setLoadError(true);
             }
@@ -240,13 +314,134 @@ export default function ScanResultsScreen() {
         }
     }, []);
 
+    const loadMoreBlurry = useCallback(async () => {
+        if (loading || loadingMoreBlurryRef.current || !hasMoreBlurry) return;
+        const requestId = loadRequestIdRef.current;
+        loadingMoreBlurryRef.current = true;
+        setLoadingMoreBlurry(true);
+        try {
+            const visiblePhotoIds = visiblePhotoIdsRef.current;
+            const visibleIdsArray = visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds);
+            const nextAssets = await AssetRepository.getBlurryAssets(
+                visibleIdsArray,
+                BLURRY_PAGE_SIZE,
+                blurryOffsetRef.current,
+            );
+            if (requestId !== loadRequestIdRef.current) return;
+
+            const readableInfos = nextAssets.length > 0
+                ? await getReadableMediaInfos(nextAssets.map(asset => asset.asset_id), 'photo', {
+                    shouldDownloadFromNetwork: false,
+                })
+                : new Map();
+            if (requestId !== loadRequestIdRef.current) return;
+
+            const nextItems: BlurryPhoto[] = [];
+            for (const asset of nextAssets) {
+                const info = readableInfos.get(asset.asset_id);
+                const uri = info?.localUri || info?.uri;
+                if (!uri) continue;
+                nextItems.push({
+                    assetId: asset.asset_id,
+                    blurScore: asset.blur_score,
+                    meanLuma: asset.mean_luma,
+                    uri,
+                });
+            }
+
+            blurryOffsetRef.current += nextAssets.length;
+            setHasMoreBlurry(nextAssets.length === BLURRY_PAGE_SIZE);
+            if (nextItems.length > 0) {
+                setBlurryPhotos(previous => {
+                    const seen = new Set(previous.map(item => item.assetId));
+                    const appended = nextItems.filter(item => !seen.has(item.assetId));
+                    return appended.length > 0 ? [...previous, ...appended] : previous;
+                });
+            }
+        } catch {
+            console.error('[ScanResults] Additional blurry results could not be loaded.');
+        } finally {
+            if (requestId === loadRequestIdRef.current) {
+                loadingMoreBlurryRef.current = false;
+                setLoadingMoreBlurry(false);
+            }
+        }
+    }, [hasMoreBlurry, loading]);
+
+    const loadMoreSimilar = useCallback(async () => {
+        if (loading || loadingMoreSimilarRef.current || !hasMoreSimilar) return;
+        const requestId = loadRequestIdRef.current;
+        loadingMoreSimilarRef.current = true;
+        setLoadingMoreSimilar(true);
+        try {
+            const visiblePhotoIds = visiblePhotoIdsRef.current;
+            const nextGroups = await DupGroupRepository.getGroupsPage({
+                limit: SIMILAR_PAGE_SIZE,
+                offset: similarOffsetRef.current,
+                repair: false,
+            });
+            if (requestId !== loadRequestIdRef.current) return;
+
+            const membersByGroupId = await DupGroupRepository.getGroupMembersBatch(
+                nextGroups.map(group => group.group_id),
+            );
+            if (requestId !== loadRequestIdRef.current) return;
+
+            const visibleMemberIds: string[] = [];
+            for (const group of nextGroups) {
+                const members = membersByGroupId.get(group.group_id) ?? [];
+                for (const member of members) {
+                    if (visiblePhotoIds === undefined || visiblePhotoIds.has(member.asset_id)) {
+                        visibleMemberIds.push(member.asset_id);
+                    }
+                }
+            }
+            const readableInfos = visibleMemberIds.length > 0
+                ? await getReadableMediaInfos(visibleMemberIds, 'photo', {
+                    shouldDownloadFromNetwork: false,
+                })
+                : new Map();
+            if (requestId !== loadRequestIdRef.current) return;
+
+            const hydrated = await hydrateSimilarGroupPage(
+                nextGroups,
+                membersByGroupId,
+                visiblePhotoIds,
+                readableInfos,
+            );
+            if (requestId !== loadRequestIdRef.current) return;
+
+            similarOffsetRef.current += nextGroups.length;
+            setHasMoreSimilar(nextGroups.length === SIMILAR_PAGE_SIZE);
+            if (hydrated.length > 0) {
+                setSimilarGroups(previous => {
+                    const seen = new Set(previous.map(item => item.groupId));
+                    const appended = hydrated.filter(item => !seen.has(item.groupId));
+                    return appended.length > 0 ? [...previous, ...appended] : previous;
+                });
+            }
+        } catch {
+            console.error('[ScanResults] Additional similar groups could not be loaded.');
+        } finally {
+            if (requestId === loadRequestIdRef.current) {
+                loadingMoreSimilarRef.current = false;
+                setLoadingMoreSimilar(false);
+            }
+        }
+    }, [hasMoreSimilar, loading]);
+
     useFocusEffect(
         useCallback(() => {
             void loadResults();
+        }, [loadResults])
+    );
+
+    useFocusEffect(
+        useCallback(() => {
             if (activeTab === 'ai' && enableAIClassification) {
                 void refreshAI();
             }
-        }, [activeTab, enableAIClassification, loadResults, refreshAI])
+        }, [activeTab, enableAIClassification, refreshAI])
     );
 
     const queueFromAI = async (assetId: string, source: 'blur' | 'classification') => {
@@ -301,15 +496,16 @@ export default function ScanResultsScreen() {
         </View>
     );
 
-    const isGroupProcessed = (group: SimilarGroup) => hasHydrated && group.allAccessible
-        && isSimilarReviewCurrent(group.review, photoProcessedIds, deleteQueue.map(asset => asset.id));
+    const pendingDeleteIds = useMemo(() => deleteQueue.map(asset => asset.id), [deleteQueue]);
+    const isGroupProcessed = useCallback((group: SimilarGroup) => hasHydrated && group.allAccessible
+        && isSimilarReviewCurrent(group.review, photoProcessedIds, pendingDeleteIds), [hasHydrated, pendingDeleteIds, photoProcessedIds]);
 
     // Sort similar groups: unprocessed first, processed at end
-    const sortedSimilarGroups = [...similarGroups].sort((a, b) => {
+    const sortedSimilarGroups = useMemo(() => [...similarGroups].sort((a, b) => {
         const aProcessed = isGroupProcessed(a) ? 1 : 0;
         const bProcessed = isGroupProcessed(b) ? 1 : 0;
         return aProcessed - bProcessed;
-    });
+    }), [isGroupProcessed, similarGroups]);
 
     const renderSimilarItem = ({ item }: { item: SimilarGroup }) => (
         <SimilarGroupCard
@@ -335,6 +531,12 @@ export default function ScanResultsScreen() {
     // Category Detail State
     const [selectedCategory, setSelectedCategory] = useState<CategoryGroup | null>(null);
     const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+    const categoryUriCacheRef = useRef<{ version: number; entries: Map<string, string> }>({
+        version: -1,
+        entries: new Map(),
+    });
+    const categoryThumbnailWindowRef = useRef(0);
+    const loadingCategoryThumbnailsRef = useRef(false);
     const [categoryCoverUris, setCategoryCoverUris] = useState<{ version: number; map: Record<string, string> }>({
         version: -1,
         map: {},
@@ -348,6 +550,13 @@ export default function ScanResultsScreen() {
         categoryId: '',
         map: {},
     });
+
+    const getScopedUriCache = useCallback((version: number): Map<string, string> => {
+        if (categoryUriCacheRef.current.version !== version) {
+            categoryUriCacheRef.current = { version, entries: new Map() };
+        }
+        return categoryUriCacheRef.current.entries;
+    }, []);
 
     const categoryCoverIds = useMemo(() => {
         if (!shouldLoadAICategories) return [] as string[];
@@ -371,21 +580,41 @@ export default function ScanResultsScreen() {
             setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map: {} });
             return () => { active = false; };
         }
-        void getReadableMediaInfos(categoryCoverIds, 'photo', {
+        const cache = getScopedUriCache(mediaLibraryRefreshVersion);
+        const initialMap: Record<string, string> = {};
+        const missingIds: string[] = [];
+        for (const assetId of categoryCoverIds) {
+            const cachedUri = cache.get(assetId);
+            if (cachedUri) {
+                initialMap[assetId] = cachedUri;
+            } else {
+                missingIds.push(assetId);
+            }
+        }
+        if (Object.keys(initialMap).length > 0 || missingIds.length === 0) {
+            setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map: initialMap });
+        }
+        if (missingIds.length === 0) {
+            return () => { active = false; };
+        }
+        void getReadableMediaInfos(missingIds, 'photo', {
             shouldDownloadFromNetwork: false,
         }).then(infos => {
             if (!active) return;
-            const map: Record<string, string> = {};
+            const nextMap: Record<string, string> = { ...initialMap };
             for (const [assetId, info] of infos) {
                 const uri = info.localUri || info.uri;
-                if (uri) map[assetId] = uri;
+                if (uri) {
+                    writeBoundedUriCache(cache, assetId, uri);
+                    nextMap[assetId] = uri;
+                }
             }
-            setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map });
+            setCategoryCoverUris({ version: mediaLibraryRefreshVersion, map: nextMap });
         });
         return () => { active = false; };
         // categoryCoverIdsKey encodes the exact cover ID list.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [categoryCoverIdsKey, mediaLibraryRefreshVersion]);
+    }, [categoryCoverIdsKey, getScopedUriCache, mediaLibraryRefreshVersion]);
 
     const selectedCategoryAssetIds = useMemo(
         () => selectedCategory ? selectedCategory.assets.map(asset => asset.asset_id) : [],
@@ -395,28 +624,108 @@ export default function ScanResultsScreen() {
         ? `${selectedCategory.id}:${JSON.stringify(selectedCategoryAssetIds)}`
         : '';
 
+    const fetchCategoryThumbnailWindow = useCallback(async (
+        categoryId: string,
+        assetIds: readonly string[],
+        startIndex: number,
+        version: number,
+        isActive: () => boolean,
+    ) => {
+        const endIndex = Math.min(assetIds.length, startIndex + CATEGORY_URI_PAGE_SIZE);
+        const slice = assetIds.slice(startIndex, endIndex);
+        if (slice.length === 0) return;
+
+        const cache = getScopedUriCache(version);
+        const missingIds: string[] = [];
+        const cachedPatch: Record<string, string> = {};
+        for (const assetId of slice) {
+            const cachedUri = cache.get(assetId);
+            if (cachedUri) {
+                cachedPatch[assetId] = cachedUri;
+            } else {
+                missingIds.push(assetId);
+            }
+        }
+        categoryThumbnailWindowRef.current = Math.max(categoryThumbnailWindowRef.current, endIndex);
+
+        if (Object.keys(cachedPatch).length > 0 && isActive()) {
+            setCategoryDetailUris(previous => {
+                const base = previous.version === version && previous.categoryId === categoryId ? previous.map : {};
+                return { version, categoryId, map: { ...base, ...cachedPatch } };
+            });
+        }
+
+        if (missingIds.length === 0) return;
+        const infos = await getReadableMediaInfos(missingIds, 'photo', {
+            shouldDownloadFromNetwork: false,
+        });
+        if (!isActive()) return;
+        const resolvedPatch: Record<string, string> = {};
+        for (const [assetId, info] of infos) {
+            const uri = info.localUri || info.uri;
+            if (uri) {
+                writeBoundedUriCache(cache, assetId, uri);
+                resolvedPatch[assetId] = uri;
+            }
+        }
+        setCategoryDetailUris(previous => {
+            const base = previous.version === version && previous.categoryId === categoryId ? previous.map : {};
+            return { version, categoryId, map: { ...base, ...cachedPatch, ...resolvedPatch } };
+        });
+    }, [getScopedUriCache]);
+
+    const selectedCategoryRef = useRef<{ key: string; version: number; categoryId: string; assetIds: string[] }>({
+        key: '',
+        version: -1,
+        categoryId: '',
+        assetIds: [],
+    });
+
     useEffect(() => {
         let active = true;
+        categoryThumbnailWindowRef.current = 0;
+        loadingCategoryThumbnailsRef.current = false;
         if (!selectedCategory || selectedCategoryAssetIds.length === 0) {
+            selectedCategoryRef.current = { key: '', version: mediaLibraryRefreshVersion, categoryId: '', assetIds: [] };
             setCategoryDetailUris({ version: mediaLibraryRefreshVersion, categoryId: '', map: {} });
             return () => { active = false; };
         }
         const categoryId = selectedCategory.id;
-        void getReadableMediaInfos(selectedCategoryAssetIds, 'photo', {
-            shouldDownloadFromNetwork: false,
-        }).then(infos => {
-            if (!active) return;
-            const map: Record<string, string> = {};
-            for (const [assetId, info] of infos) {
-                const uri = info.localUri || info.uri;
-                if (uri) map[assetId] = uri;
-            }
-            setCategoryDetailUris({ version: mediaLibraryRefreshVersion, categoryId, map });
-        });
+        selectedCategoryRef.current = {
+            key: selectedCategoryKey,
+            version: mediaLibraryRefreshVersion,
+            categoryId,
+            assetIds: selectedCategoryAssetIds,
+        };
+        setCategoryDetailUris({ version: mediaLibraryRefreshVersion, categoryId, map: {} });
+        void fetchCategoryThumbnailWindow(
+            categoryId,
+            selectedCategoryAssetIds,
+            0,
+            mediaLibraryRefreshVersion,
+            () => active,
+        );
         return () => { active = false; };
         // selectedCategoryKey encodes the active category ID and asset list.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedCategoryKey, mediaLibraryRefreshVersion]);
+    }, [fetchCategoryThumbnailWindow, selectedCategoryKey, mediaLibraryRefreshVersion]);
+
+    const loadMoreCategoryThumbnails = useCallback(() => {
+        if (loadingCategoryThumbnailsRef.current) return;
+        const current = selectedCategoryRef.current;
+        if (!current.categoryId || categoryThumbnailWindowRef.current >= current.assetIds.length) return;
+        loadingCategoryThumbnailsRef.current = true;
+        const start = categoryThumbnailWindowRef.current;
+        void fetchCategoryThumbnailWindow(
+            current.categoryId,
+            current.assetIds,
+            start,
+            current.version,
+            () => selectedCategoryRef.current.key === current.key && selectedCategoryRef.current.version === current.version,
+        ).finally(() => {
+            loadingCategoryThumbnailsRef.current = false;
+        });
+    }, [fetchCategoryThumbnailWindow]);
 
     useEffect(() => {
         if (mediaLibraryRefreshVersion === previousMediaLibraryRefreshVersionRef.current) return;
@@ -426,8 +735,20 @@ export default function ScanResultsScreen() {
         // full-access snapshot can remain visible while the new permission
         // scope is still being loaded.
         loadRequestIdRef.current += 1;
+        visiblePhotoIdsRef.current = undefined;
+        blurryOffsetRef.current = 0;
+        similarOffsetRef.current = 0;
+        loadingMoreBlurryRef.current = false;
+        loadingMoreSimilarRef.current = false;
+        categoryUriCacheRef.current = { version: -1, entries: new Map() };
+        categoryThumbnailWindowRef.current = 0;
+        loadingCategoryThumbnailsRef.current = false;
         setBlurryPhotos([]);
         setSimilarGroups([]);
+        setHasMoreBlurry(false);
+        setHasMoreSimilar(false);
+        setLoadingMoreBlurry(false);
+        setLoadingMoreSimilar(false);
         setSelectedSimilarGroup(null);
         setSelectedCategory(null);
         setSelectedPhoto(null);
@@ -476,6 +797,7 @@ export default function ScanResultsScreen() {
             >
                 <View style={[styles.categoryMedia, { backgroundColor: colors.surfaceHover }]}>
                     <CategoryThumbnail
+                        assetId={coverAssetId}
                         uri={coverAssetId ? currentCategoryCoverMap[coverAssetId] : undefined}
                     />
                 </View>
@@ -674,20 +996,44 @@ export default function ScanResultsScreen() {
                     </View>
                 ) : loadError ? renderResultState(true) : completedCount === 0 && blurryPhotos.length === 0 && similarGroups.length === 0 ? renderResultState(false) : activeTab === 'blur' ? (
                     <FlatList<BlurryPhoto>
+                        testID="blurry-results-list"
                         data={blurryPhotos}
                         renderItem={renderBlurryItem}
                         keyExtractor={(item) => item.assetId}
                         contentContainerStyle={styles.listContent}
+                        windowSize={5}
+                        initialNumToRender={12}
+                        maxToRenderPerBatch={10}
+                        removeClippedSubviews
+                        onEndReached={() => { void loadMoreBlurry(); }}
+                        onEndReachedThreshold={0.5}
+                        ListFooterComponent={loadingMoreBlurry ? (
+                            <View style={styles.listFooterLoading}>
+                                <ActivityIndicator size="small" color={colors.primary} />
+                            </View>
+                        ) : null}
                         ListEmptyComponent={
                             renderResultState(false, 'scan_no_blurry')
                         }
                     />
                 ) : (
                     <FlatList<SimilarGroup>
+                        testID="similar-results-list"
                         data={sortedSimilarGroups}
                         renderItem={renderSimilarItem}
                         keyExtractor={(item) => item.groupId}
                         contentContainerStyle={styles.listContent}
+                        windowSize={5}
+                        initialNumToRender={8}
+                        maxToRenderPerBatch={8}
+                        removeClippedSubviews
+                        onEndReached={() => { void loadMoreSimilar(); }}
+                        onEndReachedThreshold={0.5}
+                        ListFooterComponent={loadingMoreSimilar ? (
+                            <View style={styles.listFooterLoading}>
+                                <ActivityIndicator size="small" color={colors.primary} />
+                            </View>
+                        ) : null}
                         ListEmptyComponent={
                             renderResultState(false, 'scan_no_similar')
                         }
@@ -753,11 +1099,20 @@ export default function ScanResultsScreen() {
                     {/* Photo Grid */}
                     {selectedCategory && (
                         <FlatList
+                            testID="category-detail-grid"
                             data={selectedCategory.assets}
+                            extraData={currentCategoryDetailMap}
                             keyExtractor={(item) => item.asset_id}
                             numColumns={3}
                             style={styles.grid}
                             contentContainerStyle={styles.gridContent}
+                            windowSize={5}
+                            initialNumToRender={18}
+                            maxToRenderPerBatch={15}
+                            updateCellsBatchingPeriod={50}
+                            removeClippedSubviews
+                            onEndReached={loadMoreCategoryThumbnails}
+                            onEndReachedThreshold={0.5}
                             renderItem={({ item, index }) => (
                                 <Pressable
                                     accessibilityRole="button"
@@ -765,7 +1120,10 @@ export default function ScanResultsScreen() {
                                     style={styles.gridItem}
                                     onPress={() => { setQueueFeedback(null); setSelectedPhoto(item.asset_id); }}
                                 >
-                                    <CategoryThumbnail uri={currentCategoryDetailMap[item.asset_id]} />
+                                    <CategoryThumbnail
+                                        assetId={item.asset_id}
+                                        uri={currentCategoryDetailMap[item.asset_id]}
+                                    />
                                 </Pressable>
                             )}
                         />
@@ -813,12 +1171,21 @@ export default function ScanResultsScreen() {
     );
 }
 
-// Helper component to render a batch-prefetched category thumbnail
-function CategoryThumbnail({ uri }: { uri?: string | null }) {
+// Helper component to render a batch-prefetched category thumbnail using memory-only caching
+const CategoryThumbnail = memo(function CategoryThumbnail({ assetId, uri }: { assetId?: string; uri?: string | null }) {
     const { colors } = useThemeColor();
     if (!uri) return <View style={[styles.categoryThumbnail, { backgroundColor: colors.surfaceHover }]} />;
-    return <Image source={{ uri }} cachePolicy="memory" contentFit="cover" style={styles.categoryThumbnail} />;
-}
+    return (
+        <Image
+            source={{ uri }}
+            recyclingKey={assetId ?? uri}
+            cachePolicy="memory"
+            contentFit="cover"
+            transition={0}
+            style={styles.categoryThumbnail}
+        />
+    );
+});
 
 // Full Screen Viewer Helper
 function FullPhotoViewer({ assetId }: { assetId: string }) {
@@ -1027,6 +1394,11 @@ const styles = StyleSheet.create({
     },
     loadingContainer: {
         flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    listFooterLoading: {
+        paddingVertical: 16,
         alignItems: 'center',
         justifyContent: 'center',
     },
