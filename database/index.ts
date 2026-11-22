@@ -4,7 +4,14 @@
 
 export { closeDatabase, getDatabase, withTransaction } from './db';
 export { AssetRepository } from './repositories/AssetRepository';
-export type { AssetRecord, BlurryAsset, PendingAsset } from './repositories/AssetRepository';
+export type {
+    AssetRecord,
+    BlurryAsset,
+    LibraryAssetSyncInput,
+    LibraryMetadataSyncBatchOptions,
+    LibraryMetadataSyncBatchResult,
+    PendingAsset,
+} from './repositories/AssetRepository';
 export { DupGroupRepository } from './repositories/DupGroupRepository';
 export type { DupGroup, DupMember } from './repositories/DupGroupRepository';
 export { SimilarReviewRepository, isSimilarReviewCurrent } from './repositories/SimilarReviewRepository';

@@ -5,6 +5,7 @@ jest.mock('../../database/db', () => ({
 
 jest.mock('../../database/repositories/DupGroupRepository', () => ({
   addAssetToMatchingGroupsInDatabase: jest.fn(),
+  removeAssetsFromGroupsInDatabase: jest.fn().mockResolvedValue(undefined),
   repairDuplicateGroupsInDatabase: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -121,5 +122,75 @@ describe('AssetRepository', () => {
     const candidates = await AssetRepository.getScanCandidateBatch(4, 20, ['inside']);
 
     expect(candidates.map(asset => asset.asset_id)).toEqual(['inside']);
+  });
+
+  it('batch-reads assets by ID across SQLite-safe chunks without opening transactions', async () => {
+    await expect(AssetRepository.getByIds([])).resolves.toEqual(new Map());
+
+    const ids: string[] = [];
+    for (let i = 0; i < 450; i++) {
+      const id = `chunk-asset-${i}`;
+      ids.push(id);
+      await database.runAsync(
+        'INSERT INTO assets (asset_id, taken_at, width, height, file_signature, status) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, 1000 + i, 1200, 900, `1700000000_${1000 + i}`, AssetStatus.DONE],
+      );
+    }
+
+    (withTransaction as jest.Mock).mockClear();
+    const getAllSpy = jest.spyOn(database, 'getAllAsync');
+
+    const map = await AssetRepository.getByIds([...ids, 'chunk-asset-0', 'missing-id']);
+
+    expect(withTransaction).not.toHaveBeenCalled();
+    expect(getAllSpy).toHaveBeenCalledTimes(2);
+    expect(map.size).toBe(450);
+    expect(map.get('chunk-asset-0')?.file_signature).toBe('1700000000_1000');
+    expect(map.get('chunk-asset-449')?.taken_at).toBe(1449);
+    expect(map.has('missing-id')).toBe(false);
+  });
+
+  it('upserts multiple assets in a single transaction while preserving omitted vs null semantics', async () => {
+    (withTransaction as jest.Mock).mockClear();
+    await AssetRepository.upsertBatch([]);
+    expect(withTransaction).not.toHaveBeenCalled();
+
+    await AssetRepository.upsertBatch([
+      {
+        asset_id: 'batch-1',
+        taken_at: 100,
+        width: 1000,
+        height: 800,
+        file_signature: 'sig-1',
+        status: AssetStatus.DONE,
+        labels_json: '["cat"]',
+      },
+      {
+        asset_id: 'batch-2',
+        taken_at: 200,
+        width: 1200,
+        height: 900,
+        file_signature: 'sig-2',
+        status: AssetStatus.PENDING,
+      },
+    ]);
+
+    expect(withTransaction).toHaveBeenCalledTimes(1);
+
+    await AssetRepository.upsertBatch([
+      { asset_id: 'batch-1', width: 1024, labels_json: null },
+    ]);
+
+    expect(withTransaction).toHaveBeenCalledTimes(2);
+    expect(await AssetRepository.getById('batch-1')).toMatchObject({
+      width: 1024,
+      height: 800,
+      status: AssetStatus.DONE,
+      labels_json: null,
+    });
+    expect(await AssetRepository.getById('batch-2')).toMatchObject({
+      taken_at: 200,
+      status: AssetStatus.PENDING,
+    });
   });
 });

@@ -129,7 +129,7 @@ export async function repairDuplicateGroupsInDatabase(
     }
 }
 
-async function removeAssetsFromGroupsInDatabase(
+export async function removeAssetsFromGroupsInDatabase(
     db: SQLite.SQLiteDatabase,
     assetIds: readonly string[],
     preserveSingletonGroups: boolean,

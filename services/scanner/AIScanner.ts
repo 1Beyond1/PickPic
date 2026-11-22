@@ -14,10 +14,12 @@ import * as MediaLibrary from 'expo-media-library';
 import { InteractionManager, Platform } from 'react-native';
 
 import {
+    AssetRecord,
     AssetRepository,
     AssetStatus,
     DupGroupRepository,
     GLOBAL_ALGO_VERSION,
+    LibraryAssetSyncInput,
     MetaRepository,
 } from '../../database';
 import { getImageOps, GrayImageRef } from '../imageOps';
@@ -69,6 +71,8 @@ let mlCircuitBreakerTripped = false;
 let scannerRunGeneration = 0;
 
 const BATCH_SIZE = 20;
+const SYNC_PAGE_SIZE = 100;
+const SYNC_STAT_CONCURRENCY = 16;
 const FACE_DETECTION_MAX_DIMENSION = 1024;
 
 // ============================================================================
@@ -127,6 +131,95 @@ function getMediaLibrarySignature(asset: MediaLibrary.Asset): string | null {
 
 async function getAssetSignature(asset: MediaLibrary.Asset): Promise<string | null> {
     return await getFileSignature(asset.uri) ?? getMediaLibrarySignature(asset);
+}
+
+/**
+ * Check whether an existing file-backed signature (`<modTime>_<size>`) already
+ * has a positive byte size and matches the current MediaStore modification time.
+ */
+function isMatchingFileSignature(
+    fileSignature: string,
+    assetModificationTime: number
+): boolean {
+    if (!Number.isFinite(assetModificationTime) || assetModificationTime <= 0) {
+        return false;
+    }
+
+    const match = /^(\d+(?:\.\d+)?)_(\d+)$/.exec(fileSignature);
+    if (!match) return false;
+
+    const sigModTime = Number(match[1]);
+    const sigSize = Number(match[2]);
+    if (!Number.isFinite(sigModTime) || sigModTime <= 0 || !Number.isFinite(sigSize) || sigSize <= 0) {
+        return false;
+    }
+
+    // Expo FileSystem reports modificationTime in seconds while MediaLibrary
+    // reports milliseconds on native platforms (and fixtures may use matching units).
+    if (Math.trunc(sigModTime) === Math.trunc(assetModificationTime)) {
+        return true;
+    }
+    if (assetModificationTime >= 1e11 && sigModTime < 1e11) {
+        return Math.trunc(sigModTime) === Math.trunc(assetModificationTime / 1000);
+    }
+
+    return false;
+}
+
+/**
+ * Determine whether an already-indexed asset can skip FileSystem.getInfoAsync
+ * and database mutation because its stored metadata and signature are still
+ * valid and unchanged.
+ */
+function canSkipAssetSync(
+    existing: AssetRecord | undefined,
+    asset: MediaLibrary.Asset
+): boolean {
+    if (!existing) return false;
+    if (
+        existing.taken_at !== asset.creationTime
+        || existing.width !== asset.width
+        || existing.height !== asset.height
+        || existing.file_signature === null
+    ) {
+        return false;
+    }
+
+    const librarySignature = getMediaLibrarySignature(asset);
+    if (librarySignature !== null && existing.file_signature === librarySignature) {
+        return true;
+    }
+
+    return isMatchingFileSignature(existing.file_signature, asset.modificationTime);
+}
+
+/**
+ * Run an async worker across items with bounded concurrency and cooperative
+ * cancellation so stop() can halt pending FileSystem reads promptly.
+ */
+async function mapWithConcurrency<T, R>(
+    items: readonly T[],
+    concurrency: number,
+    worker: (item: T) => Promise<R>,
+    shouldCancel?: () => boolean
+): Promise<R[]> {
+    if (items.length === 0) return [];
+
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(Math.max(1, concurrency), items.length);
+
+    await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+            while (nextIndex < items.length) {
+                if (shouldCancel?.()) return;
+                const currentIndex = nextIndex++;
+                results[currentIndex] = await worker(items[currentIndex]);
+            }
+        })
+    );
+
+    return results;
 }
 
 /** Android full-detail reads may demand location permission even though pixel
@@ -235,6 +328,7 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
     let hasMore = true;
     let cursor: string | undefined;
     let synced = 0;
+    let pagesProcessed = 0;
     let shouldResetCursor = false;
     const seenAssetIds = new Set<string>();
 
@@ -243,60 +337,60 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
 
         const result = await MediaLibrary.getAssetsAsync({
             mediaType: 'photo',
-            first: 100,
+            first: SYNC_PAGE_SIZE,
             after: cursor,
             sortBy: [['creationTime', true]], // Ascending by creation time
         });
 
+        if (shouldStop) return null;
+
+        // Deduplicate within the page while recording every visible ID.
+        const pageById = new Map<string, MediaLibrary.Asset>();
         for (const asset of result.assets) {
-            if (shouldStop) return null;
             seenAssetIds.add(asset.id);
+            pageById.set(asset.id, asset);
+        }
+        const pageAssets = Array.from(pageById.values());
 
-            // Check if asset exists and signature changed
-            const signature = await getAssetSignature(asset);
-            const existing = await AssetRepository.getById(asset.id);
+        if (pageAssets.length > 0) {
+            const existingById = await AssetRepository.getByIds(
+                pageAssets.map(asset => asset.id)
+            );
+            if (shouldStop) return null;
 
-            if (existing) {
-                // Refresh library metadata and check for signature changes.
-                // taken_at is also the incremental scan's sort key. If it
-                // moves across the persisted cursor, restart from the
-                // beginning so a still-pending asset cannot be skipped.
-                const scanOrderChanged = existing.taken_at !== asset.creationTime;
-                const signatureChanged = await AssetRepository.refreshLibraryMetadata(asset.id, {
-                    takenAt: asset.creationTime,
-                    width: asset.width,
-                    height: asset.height,
-                    fileSignature: signature,
+            // Only query FileSystem for new assets, records missing a valid
+            // signature/size, or assets whose MediaStore metadata changed.
+            const assetsToSync = pageAssets.filter(
+                asset => !canSkipAssetSync(existingById.get(asset.id), asset)
+            );
+
+            if (assetsToSync.length > 0) {
+                const syncInputs = await mapWithConcurrency(
+                    assetsToSync,
+                    SYNC_STAT_CONCURRENCY,
+                    async (asset): Promise<LibraryAssetSyncInput> => ({
+                        assetId: asset.id,
+                        takenAt: asset.creationTime,
+                        width: asset.width,
+                        height: asset.height,
+                        fileSignature: await getAssetSignature(asset),
+                    }),
+                    () => shouldStop
+                );
+
+                if (shouldStop) return null;
+
+                // Commit the entire page's inserts, metadata refreshes, and
+                // derived-data invalidations in one SQLCipher transaction.
+                const batchResult = await AssetRepository.syncLibraryMetadataBatch(syncInputs, {
+                    preserveSingletonGroups: startedWithLimitedPhotoAccess,
+                    markForWiderDuplicateScan: startedWithLimitedPhotoAccess,
                 });
-                if (scanOrderChanged || signatureChanged) {
-                    // A changed asset may be older than the persisted cursor.
-                    // Rewind so resetting it to PENDING cannot make it
-                    // permanently unreachable in the next incremental pass.
+
+                synced += batchResult.insertedCount;
+                if (batchResult.shouldResetCursor) {
                     shouldResetCursor = true;
                 }
-                if (scanOrderChanged || signatureChanged) {
-                    // Similarity matching is constrained by taken_at. Remove
-                    // the old membership whenever the scan-order metadata
-                    // changes, then reprocess the asset so it can join groups
-                    // in its new time window.
-                    await DupGroupRepository.removeAssetFromGroups(
-                        asset.id,
-                        startedWithLimitedPhotoAccess,
-                        startedWithLimitedPhotoAccess
-                    );
-                }
-            } else {
-                // Insert new asset
-                await AssetRepository.upsert({
-                    asset_id: asset.id,
-                    taken_at: asset.creationTime,
-                    width: asset.width,
-                    height: asset.height,
-                    file_signature: signature,
-                    status: AssetStatus.PENDING,
-                });
-                synced++;
-                shouldResetCursor = true;
             }
         }
 
@@ -312,8 +406,9 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
             cursor = nextCursor;
         }
 
-        // Yield periodically
-        if (synced > 0 && synced % 500 === 0) {
+        // Yield periodically between pages so UI interactions and stop signals stay responsive.
+        pagesProcessed++;
+        if (pagesProcessed % 5 === 0) {
             await yieldToMainThread();
         }
     }

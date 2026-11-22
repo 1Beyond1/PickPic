@@ -27,7 +27,7 @@ import { usePrivacyStore } from '../../stores/usePrivacyStore';
 import { InteractionManager, Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 import * as FileSystem from 'expo-file-system/legacy';
-import { AssetRepository, AssetStatus, AssetStatusType, DupGroupRepository, GLOBAL_ALGO_VERSION, MetaRepository } from '../../database';
+import { AssetRepository, AssetStatus, AssetStatusType, DupGroupRepository, GLOBAL_ALGO_VERSION, MetaRepository, SimilarReviewRepository } from '../../database';
 import { getDatabase, withTransaction } from '../../database/db';
 import { getImageOps } from '../../services/imageOps';
 import { MLKitService } from '../../services/ml/MLKitService';
@@ -521,5 +521,272 @@ describe('AIScanner engine safety', () => {
     // Previously each of the 3 assets added 2 more full-library scans (+6 = 11+).
     expect(media.getAssetsAsync.mock.calls.length).toBeLessThanOrEqual(6);
     expect(await getClassificationStatus()).toEqual({ done: 3, pending: 0, error: 0 });
+  });
+
+  it('skips FileSystem stat for valid unchanged assets while refreshing missing-size, edited, and error-isolated assets', async () => {
+    await AssetRepository.upsertBatch([
+      {
+        asset_id: 'valid-file',
+        taken_at: 100,
+        width: 1000,
+        height: 800,
+        file_signature: '1700000000_204800',
+        status: AssetStatus.DONE,
+        algo_version: GLOBAL_ALGO_VERSION,
+        blur_score: 120,
+        mean_luma: 140,
+        phash: 'aaaaaaaaaaaaaaaa',
+      },
+      {
+        asset_id: 'missing-size',
+        taken_at: 200,
+        width: 1000,
+        height: 800,
+        file_signature: '1700000000_0',
+        status: AssetStatus.DONE,
+        algo_version: GLOBAL_ALGO_VERSION,
+        blur_score: 120,
+        mean_luma: 140,
+        phash: 'bbbbbbbbbbbbbbbb',
+      },
+      {
+        asset_id: 'edited-file',
+        taken_at: 300,
+        width: 1000,
+        height: 800,
+        file_signature: '1700000000_409600',
+        status: AssetStatus.DONE,
+        algo_version: GLOBAL_ALGO_VERSION,
+        blur_score: 120,
+        mean_luma: 140,
+        phash: 'cccccccccccccccc',
+      },
+      {
+        asset_id: 'group-peer',
+        taken_at: 305,
+        width: 1000,
+        height: 800,
+        file_signature: '1700000000_409601',
+        status: AssetStatus.DONE,
+        algo_version: GLOBAL_ALGO_VERSION,
+        blur_score: 120,
+        mean_luma: 140,
+        phash: 'dddddddddddddddd',
+      },
+    ]);
+    await DupGroupRepository.createGroup('grp-edit', 'edited-file');
+    await DupGroupRepository.addMember('grp-edit', 'edited-file', 0);
+    await DupGroupRepository.addMember('grp-edit', 'group-peer', 2);
+    await MetaRepository.setScanCursor(500, 'cursor-anchor');
+
+    const assets: MediaLibrary.Asset[] = [
+      { ...photo('valid-file', 100), modificationTime: 1700000000000 },
+      { ...photo('missing-size', 200), modificationTime: 1700000000000 },
+      { ...photo('edited-file', 300), modificationTime: 1700000500000 },
+      { ...photo('group-peer', 305), modificationTime: 1700000000000 },
+      { ...photo('stat-throws', 400), modificationTime: 1700000600000 },
+    ];
+    media.getAssetsAsync.mockResolvedValue(page(assets));
+    fs.getInfoAsync.mockImplementation(async (uri: string) => {
+      if (uri.includes('missing-size')) return { exists: true, uri, isDirectory: false, modificationTime: 1700000000, size: 512000 } as any;
+      if (uri.includes('edited-file')) return { exists: true, uri, isDirectory: false, modificationTime: 1700000500, size: 614400 } as any;
+      if (uri.includes('stat-throws')) throw new Error('Simulated stat failure');
+      return { exists: true, uri, isDirectory: false, modificationTime: 1700000000, size: 204800 } as any;
+    });
+
+    // Stop right after sync finishes (when processBatch waits for interactions)
+    // so we isolate sync effects cleanly.
+    jest.mocked(InteractionManager.runAfterInteractions).mockImplementationOnce((task: any) => {
+      stop();
+      task();
+      return { cancel: jest.fn(), then: jest.fn(), done: jest.fn() } as any;
+    });
+
+    fs.getInfoAsync.mockClear();
+    await start();
+
+    const checkedUris = fs.getInfoAsync.mock.calls.map(([uri]) => uri);
+    expect(checkedUris).not.toContain('file:///valid-file.jpg');
+    expect(checkedUris).not.toContain('file:///group-peer.jpg');
+    expect(checkedUris.sort()).toEqual([
+      'file:///edited-file.jpg',
+      'file:///missing-size.jpg',
+      'file:///stat-throws.jpg',
+    ]);
+
+    expect(await AssetRepository.getById('valid-file')).toMatchObject({ status: AssetStatus.DONE, file_signature: '1700000000_204800' });
+    expect(await AssetRepository.getById('missing-size')).toMatchObject({ status: AssetStatus.PENDING, file_signature: '1700000000_512000' });
+    expect(await AssetRepository.getById('edited-file')).toMatchObject({ status: AssetStatus.PENDING, file_signature: '1700000500_614400' });
+    expect(await AssetRepository.getById('stat-throws')).toMatchObject({
+      status: AssetStatus.PENDING,
+      file_signature: 'library_1700000600000_1000_800',
+    });
+    expect(await DupGroupRepository.getAllGroups()).toEqual([]);
+    expect((await MetaRepository.getScanCursor()).takenAt).toBeNull();
+  });
+
+  it('removes missing assets and their similar_reviews on complete full-access sync while keeping intact groups', async () => {
+    await seed('gone-a', AssetStatus.DONE, GLOBAL_ALGO_VERSION, 100);
+    await seed('stay-b', AssetStatus.DONE, GLOBAL_ALGO_VERSION, 101);
+    await seed('keep-c', AssetStatus.DONE, GLOBAL_ALGO_VERSION, 200);
+    await seed('keep-d', AssetStatus.DONE, GLOBAL_ALGO_VERSION, 201);
+
+    await DupGroupRepository.createGroup('grp-gone', 'gone-a');
+    await DupGroupRepository.addMember('grp-gone', 'gone-a', 0);
+    await DupGroupRepository.addMember('grp-gone', 'stay-b', 1);
+    await DupGroupRepository.updateBestAsset('grp-gone', 'stay-b');
+    const goneSnapshot = (await SimilarReviewRepository.getSnapshot('grp-gone'))!;
+    await SimilarReviewRepository.save('grp-gone', goneSnapshot.key, ['stay-b'], ['gone-a']);
+
+    await DupGroupRepository.createGroup('grp-intact', 'keep-c');
+    await DupGroupRepository.addMember('grp-intact', 'keep-c', 0);
+    await DupGroupRepository.addMember('grp-intact', 'keep-d', 1);
+    await DupGroupRepository.updateBestAsset('grp-intact', 'keep-c');
+    const intactSnapshot = (await SimilarReviewRepository.getSnapshot('grp-intact'))!;
+    await SimilarReviewRepository.save('grp-intact', intactSnapshot.key, ['keep-c', 'keep-d'], []);
+
+    // External deletion removed `gone-a`; the other three photos remain unchanged.
+    media.getAssetsAsync.mockResolvedValue(page([
+      photo('stay-b', 101),
+      photo('keep-c', 200),
+      photo('keep-d', 201),
+    ]));
+
+    await start();
+
+    expect(await AssetRepository.getById('gone-a')).toBeNull();
+    expect(await AssetRepository.getById('stay-b')).not.toBeNull();
+    expect(await SimilarReviewRepository.getReview(goneSnapshot)).toBeNull();
+    expect(await SimilarReviewRepository.getReview(intactSnapshot)).toMatchObject({
+      keptIds: ['keep-c', 'keep-d'],
+      pendingIds: [],
+    });
+    expect((await DupGroupRepository.getAllGroups()).map(g => g.group_id)).toEqual(['grp-intact']);
+  });
+
+  it('commits completed sync pages safely on mid-sync stop and skips them on resume without re-statting', async () => {
+    await seed('unseen-should-survive', AssetStatus.DONE, GLOBAL_ALGO_VERSION, 999);
+    const page1 = [photo('p1-a', 100), photo('p1-b', 101)];
+    const page2 = [photo('p2-a', 200), photo('p2-b', 201)];
+    const pendingPage2 = deferred<ReturnType<typeof page>>();
+
+    media.getAssetsAsync
+      .mockResolvedValueOnce(page(page1, true, 'cursor-1'))
+      .mockReturnValueOnce(pendingPage2.promise);
+
+    const run1 = start();
+    try {
+      await waitFor(() => expect(media.getAssetsAsync).toHaveBeenCalledTimes(2));
+      stop();
+    } finally {
+      pendingPage2.resolve(page(page2, false, 'cursor-2'));
+      await run1;
+    }
+
+    // Page 1 was persisted in its own transaction; page 2 and missing-asset pruning did not run.
+    expect(await AssetRepository.getById('p1-a')).not.toBeNull();
+    expect(await AssetRepository.getById('p1-b')).not.toBeNull();
+    expect(await AssetRepository.getById('p2-a')).toBeNull();
+    expect(await AssetRepository.getById('unseen-should-survive')).not.toBeNull();
+
+    // Resume sync: page 1 assets are already indexed and must not be re-statted.
+    fs.getInfoAsync.mockClear();
+    media.getAssetsAsync
+      .mockResolvedValueOnce(page(page1, true, 'cursor-1'))
+      .mockResolvedValueOnce(page(page2, false, 'cursor-2'));
+    jest.mocked(InteractionManager.runAfterInteractions).mockImplementationOnce((task: any) => {
+      stop();
+      task();
+      return { cancel: jest.fn(), then: jest.fn(), done: jest.fn() } as any;
+    });
+
+    await start();
+
+    const resumedCheckedUris = fs.getInfoAsync.mock.calls.map(([uri]) => uri).sort();
+    expect(resumedCheckedUris).toEqual(['file:///p2-a.jpg', 'file:///p2-b.jpg']);
+    expect(await AssetRepository.getById('p2-a')).not.toBeNull();
+    expect(await AssetRepository.getById('p2-b')).not.toBeNull();
+    expect(await AssetRepository.getById('unseen-should-survive')).toBeNull();
+  });
+
+  it('bounds concurrent FileSystem.getInfoAsync calls during sync and converges transactions to page count on 350+ assets', async () => {
+    const totalAssets = 350;
+    const allPhotos = Array.from({ length: totalAssets }, (_, index) => ({
+      ...photo(`bulk-${index}`, 1000 + index),
+      modificationTime: 1700000000000 + index * 1000,
+    }));
+
+    const pages = [
+      page(allPhotos.slice(0, 100), true, 'c-100'),
+      page(allPhotos.slice(100, 200), true, 'c-200'),
+      page(allPhotos.slice(200, 300), true, 'c-300'),
+      page(allPhotos.slice(300, 350), false, 'c-350'),
+    ];
+    let pageIdx = 0;
+    media.getAssetsAsync.mockImplementation(async () => pages[pageIdx++] ?? page([]));
+
+    let activeStats = 0;
+    let maxConcurrentStats = 0;
+    fs.getInfoAsync.mockImplementation(async (uri: string) => {
+      activeStats += 1;
+      maxConcurrentStats = Math.max(maxConcurrentStats, activeStats);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      activeStats -= 1;
+      const idx = Number(uri.match(/bulk-(\d+)/)?.[1] ?? 0);
+      return {
+        exists: true,
+        uri,
+        isDirectory: false,
+        modificationTime: 1700000000 + idx,
+        size: 10000 + idx,
+      } as any;
+    });
+
+    // Stop immediately after sync finishes to measure sync-only transaction count.
+    jest.mocked(InteractionManager.runAfterInteractions).mockImplementationOnce((task: any) => {
+      stop();
+      task();
+      return { cancel: jest.fn(), then: jest.fn(), done: jest.fn() } as any;
+    });
+
+    (withTransaction as jest.Mock).mockClear();
+    fs.getInfoAsync.mockClear();
+    const syncBatchSpy = jest.spyOn(AssetRepository, 'syncLibraryMetadataBatch');
+    const getByIdsSpy = jest.spyOn(AssetRepository, 'getByIds');
+
+    await start();
+
+    const firstSyncTransactions = (withTransaction as jest.Mock).mock.calls.length;
+    expect(maxConcurrentStats).toBeGreaterThan(1);
+    expect(maxConcurrentStats).toBeLessThanOrEqual(16);
+    expect(fs.getInfoAsync).toHaveBeenCalledTimes(totalAssets);
+    expect(getByIdsSpy).toHaveBeenCalledTimes(4);
+    expect(syncBatchSpy).toHaveBeenCalledTimes(4);
+    // 4 page sync transactions + O(1) setup transactions (cursor reset, algo version, recovery/outdated checks),
+    // down from 350+ per-asset transactions.
+    expect(firstSyncTransactions).toBeLessThanOrEqual(8);
+    expect(await AssetRepository.getStatusCounts()).toEqual({ pending: totalAssets, done: 0, error: 0 });
+
+    // Re-syncing the exact same 350 unchanged assets must skip FileSystem stat and open 0 sync write transactions.
+    pageIdx = 0;
+    (withTransaction as jest.Mock).mockClear();
+    fs.getInfoAsync.mockClear();
+    syncBatchSpy.mockClear();
+    getByIdsSpy.mockClear();
+    jest.mocked(InteractionManager.runAfterInteractions).mockImplementationOnce((task: any) => {
+      stop();
+      task();
+      return { cancel: jest.fn(), then: jest.fn(), done: jest.fn() } as any;
+    });
+
+    await start();
+
+    expect(getByIdsSpy).toHaveBeenCalledTimes(4);
+    expect(fs.getInfoAsync).not.toHaveBeenCalled();
+    expect(syncBatchSpy).not.toHaveBeenCalled();
+    // Only the O(1) recovery/outdated checks run after sync; zero sync transactions.
+    expect((withTransaction as jest.Mock).mock.calls.length).toBeLessThanOrEqual(2);
+    syncBatchSpy.mockRestore();
+    getByIdsSpy.mockRestore();
   });
 });
