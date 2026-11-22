@@ -440,6 +440,7 @@ export default {
     backup_restore_success: 'Restored {count} records. Existing decisions and original media were preserved.',
     backup_error_password: 'Use 12–128 characters. A long, unique passphrase is recommended.',
     backup_error_invalid: 'Incorrect password, damaged file or incompatible version. No records were restored.',
+    backup_error_size: 'The backup file or record count exceeds the maximum supported size.',
     backup_error_generic: 'The operation did not complete. Check storage and gallery access, then retry. Keep the app open if restoration has not succeeded.',
     backup_error_password_mismatch: 'The passwords do not match.',
 
@@ -510,6 +511,10 @@ export default {
     privacy_wizard_resetting: 'Rebuilding local privacy index…',
     privacy_wizard_reset_failed: 'Could not rebuild local privacy index. Check available storage and retry.',
     privacy_wizard_restore_failed: 'Could not complete backup restore. Verify your password and retry. Original media is unchanged.',
+    privacy_wizard_restore_no_permission: 'Photo library access is required to match backup records. Local data was left untouched; grant permission and retry.',
+    privacy_wizard_restore_done_title: 'Encrypted backup restored',
+    privacy_wizard_restore_done_summary: 'Restored keep {kept} · collect {collected} · pending {pending}\nProtected albums {protectedAlbums} · review ignores {reviewIgnores} · unmatched {skipped}',
+    privacy_wizard_enter_app: 'Continue to app',
 
     backup_scope_desc_v2: 'Includes organizing decisions, protected albums, and review ignores (no media or scan caches). Supports same-device and cross-device unique content-fingerprint rebinding; ambiguous matches are safely skipped.',
     backup_preview_summary_v2: 'Keep {kept} · Collect {collected}\nPending deletion {pending} · Cross-device rebound {rebound}\nProtected albums {protectedAlbums} · Review ignores {reviewIgnores}\nAlready decided {existing} · Ambiguous skipped {ambiguousSkipped} · Unmatched {skipped}',

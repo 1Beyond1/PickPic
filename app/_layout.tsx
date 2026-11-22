@@ -39,6 +39,7 @@ export default function RootLayout() {
   const pathname = usePathname();
   const privacyFailures = usePrivacyStore(state => state.failures);
   const privacyReasons = usePrivacyStore(state => state.reasons);
+  const privacyRecovering = usePrivacyStore(state => Boolean(state.recovering));
   const mediaHydrated = useMediaStore(state => state.hasHydrated);
   const [privacyRetrying, setPrivacyRetrying] = useState(false);
   const [mediaPermission, , getMediaPermission] = MediaLibrary.usePermissions({
@@ -59,7 +60,7 @@ export default function RootLayout() {
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
-  const privacyReady = appReady && settingsHydrated && mediaHydrated && Object.keys(privacyFailures).length === 0;
+  const privacyReady = appReady && settingsHydrated && mediaHydrated && Object.keys(privacyFailures).length === 0 && !privacyRecovering;
   const mediaPermissionGrantedRef = useRef(false);
   const mediaPermissionScopeRef = useRef<'none' | 'limited' | 'full' | null>(null);
   const previousMediaPermissionRef = useRef<typeof mediaPermission>(null);

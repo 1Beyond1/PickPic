@@ -49,22 +49,26 @@ interface SettingsState {
 
 }
 
+export const DEFAULT_SETTINGS_STATE = {
+    groupSize: 10 as 10 | 20 | 30,
+    enableCollections: false,
+    displayOrder: 'random' as DisplayOrder,
+    theme: 'light' as ThemeSetting,
+    language: 'zh' as 'zh' | 'en',
+    activeCollectionIds: [] as string[],
+    selectedAlbumIds: [] as string[],
+    hasHydrated: false,
+    dismissedAnnouncementVersion: null as string | null,
+    showDevOptions: false,
+    enableAIClassification: false,
+    aiGuideShownVersion: null as string | null,
+    aiScanPromptDismissedVersion: null as string | null,
+};
+
 export const useSettingsStore = create<SettingsState>()(
     persist(
         (set) => ({
-            groupSize: 10,
-            enableCollections: false,
-            displayOrder: 'random', // Default to random (was enableRandomDisplay: true)
-            theme: 'light',
-            language: 'zh',
-            activeCollectionIds: [],
-            selectedAlbumIds: [], // Empty = organize all albums
-            hasHydrated: false,
-            dismissedAnnouncementVersion: null,
-
-            // Developer options (default off)
-            showDevOptions: false,
-            enableAIClassification: false, // Default: OFF for faster scanning
+            ...DEFAULT_SETTINGS_STATE,
 
             setGroupSize: (size) => set({ groupSize: size }),
             toggleCollections: () => set((state) => ({ enableCollections: !state.enableCollections })),
@@ -78,9 +82,6 @@ export const useSettingsStore = create<SettingsState>()(
             toggleDevOptions: () => set((state) => ({ showDevOptions: !state.showDevOptions })),
             setEnableAIClassification: (enabled) => set({ enableAIClassification: enabled }),
 
-            // AI Guide and Prompts
-            aiGuideShownVersion: null,
-            aiScanPromptDismissedVersion: null,
             dismissAIGuide: (version) => set({ aiGuideShownVersion: version }),
             dismissAIScanPrompt: (version) => set({ aiScanPromptDismissedVersion: version }),
         }),
