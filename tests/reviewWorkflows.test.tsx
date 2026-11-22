@@ -117,7 +117,7 @@ jest.mock('react-native-gesture-handler', () => ({
   GestureDetector: ({ children }: any) => children,
   Gesture: {
     Pinch: () => { const g: any = { onStart: () => g, onUpdate: () => g, onEnd: () => g }; return g; },
-    Pan: () => { const g: any = { minPointers: () => g, maxPointers: () => g, manualActivation: () => g, onTouchesMove: () => g, onStart: () => g, onUpdate: () => g, onEnd: () => g }; return g; },
+    Pan: () => { const g: any = { minPointers: () => g, maxPointers: () => g, manualActivation: () => g, onTouchesDown: () => g, onTouchesMove: () => g, onStart: () => g, onUpdate: () => g, onEnd: () => g }; return g; },
     Tap: () => { const g: any = { numberOfTaps: () => g, maxDuration: () => g, onEnd: () => g }; return g; },
     Simultaneous: () => ({}),
   },
@@ -288,5 +288,43 @@ describe('Stage 4 P1 review workflows (Blur zoom/multi-select/ignore & Similar k
       new Set(['ignored-snap-key', 'visible-snap-key']),
     );
     await waitFor(() => expect(screen.getByText('未发现相似照片组')).toBeTruthy());
+  });
+
+  it('P1-6: blurry batch queue awaits flushMediaProgress and rejects without false success when record transfer lock is active', async () => {
+    const { acquireRecordOperation } = require('../services/recordOperationLock');
+    const { flushMediaProgress } = require('../services/mediaProgressStorage');
+    jest.mocked(AssetRepository.getBlurryAssets).mockResolvedValue([
+      { asset_id: 'blur-ok-1', blur_score: 12, mean_luma: 120, status: 'done' } as any,
+    ]);
+    mockEnqueueWithReport.mockReturnValue({
+      added: 1, alreadyQueued: 0, protectedSkipped: 0, protectedAssetIds: [],
+    });
+
+    await renderAsync(<ScanResultsScreen />);
+    await screen.findByTestId('blurry-ignore-blur-ok-1');
+
+    // Enter multi-select and select blur-ok-1.
+    fireEvent.press(screen.getByTestId('blur-multiselect-toggle'));
+    fireEvent.press(screen.getByRole('button', { name: '全选' }));
+
+    // Hold record transfer lock -> batch queue MUST report failure and keep selection mode open!
+    const release = acquireRecordOperation('backup')!;
+    try {
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('blur-batch-queue-delete'));
+      });
+      expect(mockEnqueueWithReport).not.toHaveBeenCalled();
+      expect(screen.getByText(/暂时无法加入，请检查权限或重试/)).toBeTruthy();
+      expect(screen.getByTestId('blur-batch-queue-delete')).toBeTruthy();
+    } finally {
+      release();
+    }
+
+    // Release lock -> batch queue succeeds and awaits flushMediaProgress!
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('blur-batch-queue-delete'));
+    });
+    expect(mockEnqueueWithReport).toHaveBeenCalledTimes(1);
+    expect(flushMediaProgress).toHaveBeenCalled();
   });
 });

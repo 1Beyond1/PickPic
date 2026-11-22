@@ -368,3 +368,32 @@ it('loads all group members with one shared Android metadata fallback pass', asy
     Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOS });
   }
 });
+
+it('P1-2: keepSelectedAndQueueRest excludes already confirmed-kept photos so explicit keep decisions are never overturned', async () => {
+  await renderAsync(<SimilarGroupDetailOverlay {...props} memberAssetIds={['first', 'second', 'third']} />);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(3));
+
+  // Step 1: Explicitly keep 'first'.
+  await keepPhoto(0);
+  expect(mockMediaState.photoProcessedIds).toContain('first');
+
+  // Step 2: Select 'second' and tap "keep selected, queue the rest".
+  fireEvent(screen.getAllByRole('button', { name: 'similar_photo' })[1], 'longPress');
+  await act(async () => {
+    fireEvent.press(screen.getByTestId('similar-keep-selected-queue-rest'));
+  });
+
+  // 'first' MUST NOT be queued; ONLY unkept 'third' is queued!
+  expect(mockKeep).toHaveBeenLastCalledWith('group', 'snapshot', ['second'], expect.any(Function));
+  expect(mockEnqueuePending).toHaveBeenCalledTimes(1);
+  expect(mockEnqueuePending).toHaveBeenCalledWith(
+    [expect.objectContaining({ id: 'third' })],
+    'similar',
+  );
+  expect(mockMediaState.deleteQueue.map(item => item.id)).toEqual(['third']);
+
+  // Step 3: When all remaining non-selected photos are already kept, hide the queue-rest button.
+  await keepPhoto(2);
+  fireEvent(screen.getAllByRole('button', { name: 'similar_photo' })[1], 'longPress');
+  expect(screen.queryByTestId('similar-keep-selected-queue-rest')).toBeNull();
+});

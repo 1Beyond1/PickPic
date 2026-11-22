@@ -17,7 +17,9 @@ import { SimilarGroupDetailOverlay } from '../../components/SimilarGroupDetailOv
 import { PendingDeletionButton } from '../../components/PendingDeletionReview';
 import { ZoomablePhotoModal } from '../../components/ZoomablePhotoModal';
 import { getPendingDeletionEntries } from '../../services/pendingDeletion';
+import { flushMediaProgress } from '../../services/mediaProgressStorage';
 import { isAssetProtected } from '../../services/protectedAlbums';
+import { isRecordTransferActive } from '../../services/recordOperationLock';
 import { addReviewIgnore, addReviewIgnores, getIgnoredReviewKeys } from '../../services/reviewIgnores';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { AssetRepository, DupGroupRepository } from '../../database';
@@ -818,6 +820,9 @@ export default function ScanResultsScreen() {
             ) {
                 throw new Error('Access changed');
             }
+            if (!store.hasHydrated || store.isConfirmingDeletion || store.isConfirmingVideoTrash || isRecordTransferActive()) {
+                throw new Error('Busy');
+            }
             const assets = targetIds
                 .map(id => infoMap.get(id))
                 .filter((info): info is NonNullable<typeof info> => !!info && info.mediaType === 'photo');
@@ -835,6 +840,7 @@ export default function ScanResultsScreen() {
 
             let added = 0;
             if (unprotected.length > 0) {
+                const before = new Set(getPendingDeletionEntries(store).map(entry => entry.asset.id));
                 const report = typeof store.enqueuePendingDeletionWithReport === 'function'
                     ? store.enqueuePendingDeletionWithReport(unprotected, 'blur')
                     : (() => {
@@ -843,6 +849,13 @@ export default function ScanResultsScreen() {
                     })();
                 added = report.added;
                 protectedSkipped += report.protectedSkipped;
+                const unprotectedRequested = unprotected.filter(asset => !report.protectedAssetIds.includes(asset.id));
+                if (!added && report.protectedSkipped === 0 && unprotectedRequested.some(asset => !before.has(asset.id))) {
+                    throw new Error('Record mutation is blocked');
+                }
+                if (added > 0) {
+                    await flushMediaProgress();
+                }
             }
 
             exitBlurrySelection();

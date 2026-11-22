@@ -32,7 +32,7 @@ const DARK_CHROME = {
     textSecondary: '#B9BDBA',
     primaryBg: '#F6F7F5',
     primaryFg: '#111212',
-    dangerBg: '#D94B4B',
+    dangerBg: '#A7483F',
     dangerFg: '#FFFFFF',
     protectedBg: 'rgba(59, 130, 246, 0.24)',
     protectedText: '#BFDBFE',
@@ -47,6 +47,8 @@ export interface ZoomableImageProps {
     testID?: string;
 }
 
+const PAN_ACTIVATION_DISTANCE = 8;
+
 export function ZoomableImage({
     uri,
     imageKey,
@@ -57,22 +59,34 @@ export function ZoomableImage({
 }: ZoomableImageProps) {
     const reducedMotion = useReducedMotion();
     const scale = useSharedValue(MIN_ZOOM_SCALE);
+    const targetScale = useSharedValue(MIN_ZOOM_SCALE);
     const translateX = useSharedValue(0);
     const translateY = useSharedValue(0);
     const viewport = useSharedValue({ width: 0, height: 0 });
     const natural = useSharedValue({ width: 0, height: 0 });
     const pinchStart = useSharedValue({ scale: MIN_ZOOM_SCALE, x: 0, y: 0, focalX: 0, focalY: 0 });
     const panStart = useSharedValue({ x: 0, y: 0 });
+    const panTouchStart = useSharedValue({ x: 0, y: 0, active: false });
+    const isPinching = useSharedValue(false);
+    const gestureEpoch = useSharedValue(0);
+    const panStartEpoch = useSharedValue(0);
 
     useEffect(() => {
         scale.value = MIN_ZOOM_SCALE;
+        targetScale.value = MIN_ZOOM_SCALE;
         translateX.value = 0;
         translateY.value = 0;
+        isPinching.value = false;
+        panTouchStart.value = { x: 0, y: 0, active: false };
+        gestureEpoch.value += 1;
         natural.value = { width: 0, height: 0 };
-    }, [uri, resetToken, scale, translateX, translateY, natural]);
+    }, [uri, resetToken, scale, targetScale, translateX, translateY, isPinching, panTouchStart, gestureEpoch, natural]);
 
     const pinch = Gesture.Pinch()
         .onStart(event => {
+            isPinching.value = true;
+            gestureEpoch.value += 1;
+            panTouchStart.value = { x: 0, y: 0, active: false };
             pinchStart.value = {
                 scale: scale.value,
                 x: translateX.value,
@@ -95,17 +109,21 @@ export function ZoomableImage({
                 natural.value.height,
             );
             scale.value = next.scale;
+            targetScale.value = next.scale;
             translateX.value = next.x;
             translateY.value = next.y;
         })
         .onEnd(() => {
+            isPinching.value = false;
             const duration = reducedMotion ? 0 : 180;
             if (scale.value <= MIN_ZOOM_SCALE + 0.02) {
+                targetScale.value = MIN_ZOOM_SCALE;
                 scale.value = withTiming(MIN_ZOOM_SCALE, { duration });
                 translateX.value = withTiming(0, { duration });
                 translateY.value = withTiming(0, { duration });
                 return;
             }
+            targetScale.value = scale.value;
             const clamped = clampZoomTranslation(
                 translateX.value,
                 translateY.value,
@@ -123,17 +141,55 @@ export function ZoomableImage({
         .minPointers(1)
         .maxPointers(1)
         .manualActivation(true)
-        .onTouchesMove((event, manager) => {
-            if (scale.value > MIN_ZOOM_SCALE + 0.02 && event.numberOfTouches === 1) {
-                manager.activate();
-            } else {
+        .onTouchesDown((event, manager) => {
+            if (
+                isPinching.value
+                || targetScale.value <= MIN_ZOOM_SCALE + 0.02
+                || event.numberOfTouches !== 1
+            ) {
+                panTouchStart.value = { x: 0, y: 0, active: false };
                 manager.fail();
+                return;
+            }
+            const touch = event.allTouches?.[0];
+            if (touch) {
+                panTouchStart.value = { x: touch.absoluteX, y: touch.absoluteY, active: true };
+            }
+        })
+        .onTouchesMove((event, manager) => {
+            if (
+                isPinching.value
+                || targetScale.value <= MIN_ZOOM_SCALE + 0.02
+                || event.numberOfTouches !== 1
+            ) {
+                panTouchStart.value = { x: 0, y: 0, active: false };
+                manager.fail();
+                return;
+            }
+            const touch = event.allTouches?.[0];
+            if (!touch) return;
+            if (!panTouchStart.value.active) {
+                panTouchStart.value = { x: touch.absoluteX, y: touch.absoluteY, active: true };
+                return;
+            }
+            const dx = touch.absoluteX - panTouchStart.value.x;
+            const dy = touch.absoluteY - panTouchStart.value.y;
+            if (dx * dx + dy * dy >= PAN_ACTIVATION_DISTANCE * PAN_ACTIVATION_DISTANCE) {
+                manager.activate();
             }
         })
         .onStart(() => {
+            panStartEpoch.value = gestureEpoch.value;
             panStart.value = { x: translateX.value, y: translateY.value };
         })
         .onUpdate(event => {
+            if (
+                isPinching.value
+                || panStartEpoch.value !== gestureEpoch.value
+                || targetScale.value <= MIN_ZOOM_SCALE + 0.02
+            ) {
+                return;
+            }
             const clamped = clampZoomTranslation(
                 panStart.value.x + event.translationX,
                 panStart.value.y + event.translationY,
@@ -147,8 +203,14 @@ export function ZoomableImage({
             translateY.value = clamped.y;
         })
         .onEnd(() => {
+            panTouchStart.value = { x: 0, y: 0, active: false };
+            // Never interrupt a double-tap reset or pinch transition that took ownership.
+            if (isPinching.value || panStartEpoch.value !== gestureEpoch.value) {
+                return;
+            }
             const duration = reducedMotion ? 0 : 160;
-            if (scale.value <= MIN_ZOOM_SCALE + 0.02) {
+            if (targetScale.value <= MIN_ZOOM_SCALE + 0.02 || scale.value <= MIN_ZOOM_SCALE + 0.02) {
+                targetScale.value = MIN_ZOOM_SCALE;
                 scale.value = withTiming(MIN_ZOOM_SCALE, { duration });
                 translateX.value = withTiming(0, { duration });
                 translateY.value = withTiming(0, { duration });
@@ -172,16 +234,19 @@ export function ZoomableImage({
         .maxDuration(260)
         .onEnd((event, success) => {
             if (!success) return;
+            gestureEpoch.value += 1;
+            panTouchStart.value = { x: 0, y: 0, active: false };
             const next = computeDoubleTapZoom(
                 event.x,
                 event.y,
                 viewport.value.width,
                 viewport.value.height,
-                scale.value,
+                targetScale.value,
                 DOUBLE_TAP_ZOOM_SCALE,
                 natural.value.width,
                 natural.value.height,
             );
+            targetScale.value = next.scale;
             const duration = reducedMotion ? 0 : 200;
             scale.value = withTiming(next.scale, { duration });
             translateX.value = withTiming(next.x, { duration });
@@ -405,7 +470,7 @@ function ZoomablePhotoModalContent({ photo }: { photo: { uri: string; id?: strin
     if (image.failed) {
         return (
             <View style={styles.centered}>
-                <PhotoReadFeedback onRetry={image.retry} />
+                <PhotoReadFeedback onRetry={image.retry} appearance="dark" />
             </View>
         );
     }

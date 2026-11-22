@@ -299,6 +299,10 @@ export function SimilarGroupDetailOverlay({
         [keptIds, pendingPhotoIdSet, processedIdSet],
     );
     const confirmedKeptIdSet = useMemo(() => new Set(confirmedKeptIds), [confirmedKeptIds]);
+    const hasQueueableRest = useMemo(
+        () => photos.some(photo => !selectedIds.has(photo.assetId) && !confirmedKeptIdSet.has(photo.assetId)),
+        [confirmedKeptIdSet, photos, selectedIds],
+    );
     const allAccessible = !!snapshot && snapshot.assets.length === photos.length
         && snapshot.assets.every(asset => photos.some(photo => photo.assetId === asset.asset_id));
     const canComplete = allAccessible && confirmedKeptIds.length > 0 && photos.every(photo => confirmedKeptIdSet.has(photo.assetId)
@@ -321,7 +325,9 @@ export function SimilarGroupDetailOverlay({
     const keepSelectedAndQueueRest = async () => {
         if (!snapshot || isDeletingRef.current) return;
         const keepList = Array.from(selectedIds);
-        const restPhotos = photos.filter(photo => !selectedIds.has(photo.assetId));
+        const restPhotos = photos.filter(
+            photo => !selectedIds.has(photo.assetId) && !confirmedKeptIdSet.has(photo.assetId),
+        );
         if (!keepList.length || !restPhotos.length) return;
 
         const generation = loadRequestIdRef.current;
@@ -545,7 +551,7 @@ export function SimilarGroupDetailOverlay({
                                 onPress={() => void keepPhotos(Array.from(selectedIds))} style={[styles.retryButton, { backgroundColor: colors.actionBackground }]}>
                                 <Text style={[styles.retryText, { color: colors.actionForeground }]}>{t('similar_keep_selected')}</Text>
                             </Pressable>
-                            {selectedIds.size < photos.length && (
+                            {hasQueueableRest && (
                                 <Pressable
                                     testID="similar-keep-selected-queue-rest"
                                     accessibilityRole="button"
