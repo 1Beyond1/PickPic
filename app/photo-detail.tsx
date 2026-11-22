@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -8,6 +7,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { PhotoReadFeedback } from '../components/PhotoReadFeedback';
+import { ZoomableImage } from '../components/ZoomablePhotoModal';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { usePhotoPreviewSource } from '../hooks/usePhotoPreviewSource';
@@ -168,12 +168,21 @@ export default function PhotoDetailScreen() {
 function PhotoDetailMedia({ uri, assetId, onResolvedUri }: { uri: string; assetId: string; onResolvedUri: (uri: string) => void }) {
     const image = usePhotoPreviewSource(uri, assetId);
     const { colors } = useThemeColor();
+    const { t } = useI18n();
     useEffect(() => {
         if (image.attempt > 0 && image.uri && !image.failed) onResolvedUri(image.uri);
     }, [image.attempt, image.uri, image.failed, onResolvedUri]);
-    if (image.loading) return <ActivityIndicator size="large" color={colors.primary} />;
     if (image.failed) return <PhotoReadFeedback onRetry={image.retry} />;
-    return <Image key={image.attempt} source={{ uri: image.uri }} cachePolicy="memory" style={styles.image} contentFit="contain" onError={image.onError} />;
+    if (image.loading || !image.uri) return <ActivityIndicator size="large" color={colors.primary} />;
+    return (
+        <ZoomableImage
+            uri={image.uri}
+            imageKey={image.attempt}
+            resetToken={`${assetId}:${image.uri}:${image.attempt}`}
+            accessibilityLabel={t('photo_detail_title')}
+            onError={image.onError}
+        />
+    );
 }
 
 const styles = StyleSheet.create({

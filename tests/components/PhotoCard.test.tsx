@@ -181,6 +181,7 @@ describe('PhotoCard decisions and fitting', () => {
     view.rerender(<PhotoCard {...props} maxWidth={240} maxHeight={300} />);
     expect(screen.getByTestId('card-image').props.nativeIdentity).toBe(original);
     expect(screen.getByTestId('card-image').props.transition).toBe(0);
+    expect(screen.getByTestId('card-image').props.recyclingKey).toBe('photo:file:///photo.jpg');
     expect(screen.getByTestId('card-image').props.cachePolicy).toBe('memory');
     expect(callbacks.onSwipeUp).not.toHaveBeenCalled();
     expect(callbacks.onSwipeDown).not.toHaveBeenCalled();

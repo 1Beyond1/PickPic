@@ -15,7 +15,10 @@ import { useReducedMotion } from 'react-native-reanimated';
 import { SimilarGroupCard } from '../../components/SimilarGroupCard';
 import { SimilarGroupDetailOverlay } from '../../components/SimilarGroupDetailOverlay';
 import { PendingDeletionButton } from '../../components/PendingDeletionReview';
+import { ZoomablePhotoModal } from '../../components/ZoomablePhotoModal';
 import { getPendingDeletionEntries } from '../../services/pendingDeletion';
+import { isAssetProtected } from '../../services/protectedAlbums';
+import { addReviewIgnore, addReviewIgnores, getIgnoredReviewKeys } from '../../services/reviewIgnores';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { AssetRepository, DupGroupRepository } from '../../database';
 import type { BlurryAssetsCursor, DupGroup, DupGroupsCursor, DupMember } from '../../database';
@@ -32,12 +35,15 @@ interface BlurryPhoto {
     blurScore: number;
     meanLuma: number;
     uri?: string;
+    albumId?: string;
 }
 
 interface SimilarGroup {
     groupId: string;
+    snapshotKey: string | null;
     memberCount: number;
     memberAssetIds: string[];
+    memberAlbumIds: Record<string, string | undefined>;
     bestAssetId: string | null;
     representativeUri?: string;
     previewUris: string[];
@@ -115,11 +121,12 @@ async function hydrateSimilarGroupPage(
     groups: readonly DupGroup[],
     membersByGroupId: ReadonlyMap<string, DupMember[]>,
     visiblePhotoIds: ReadonlySet<string> | undefined,
-    readableInfos: ReadonlyMap<string, { localUri?: string; uri?: string }>,
+    readableInfos: ReadonlyMap<string, { localUri?: string; uri?: string; albumId?: string }>,
+    ignoredSimilarKeys: ReadonlySet<string> = new Set(),
 ): Promise<SimilarGroup[]> {
     const candidates: {
         group: DupGroup;
-        availableMembers: { member: DupMember; uri: string }[];
+        availableMembers: { member: DupMember; uri: string; albumId?: string }[];
     }[] = [];
 
     for (const group of groups) {
@@ -132,9 +139,9 @@ async function hydrateSimilarGroupPage(
             .map(member => {
                 const info = readableInfos.get(member.asset_id);
                 const uri = info?.localUri || info?.uri;
-                return uri ? { member, uri } : null;
+                return uri ? { member, uri, ...(info?.albumId ? { albumId: info.albumId } : {}) } : null;
             })
-            .filter((entry): entry is { member: DupMember; uri: string } => entry !== null);
+            .filter((entry): entry is { member: DupMember; uri: string; albumId?: string } => entry !== null);
 
         // A group with a deleted/inaccessible member should not remain
         // actionable in the results screen.
@@ -152,7 +159,12 @@ async function hydrateSimilarGroupPage(
         Array.from(snapshotsByGroupId.values()),
     );
 
-    return candidates.map(({ group, availableMembers }) => {
+    const hydrated: SimilarGroup[] = [];
+    for (const { group, availableMembers } of candidates) {
+        const snapshot = snapshotsByGroupId.get(group.group_id) ?? null;
+        if (snapshot && ignoredSimilarKeys.has(snapshot.key)) {
+            continue;
+        }
         const representative = availableMembers.find(
             item => item.member.asset_id === group.representative_asset_id,
         ) ?? availableMembers[0];
@@ -161,21 +173,27 @@ async function hydrateSimilarGroupPage(
         )
             ? group.best_asset_id
             : null;
-        const snapshot = snapshotsByGroupId.get(group.group_id) ?? null;
         const review = snapshot ? (reviewsBySnapshotKey.get(snapshot.key) ?? null) : null;
+        const memberAlbumIds: Record<string, string | undefined> = {};
+        for (const item of availableMembers) {
+            if (item.albumId) memberAlbumIds[item.member.asset_id] = item.albumId;
+        }
 
-        return {
+        hydrated.push({
             groupId: group.group_id,
+            snapshotKey: snapshot?.key ?? null,
             memberCount: availableMembers.length,
             memberAssetIds: availableMembers.map(item => item.member.asset_id),
+            memberAlbumIds,
             bestAssetId,
             representativeUri: representative.uri,
             previewUris: availableMembers.slice(0, 2).map(item => item.uri),
             review,
             allAccessible: !!snapshot && snapshot.assets.length === availableMembers.length
                 && snapshot.assets.every(asset => availableMembers.some(item => item.member.asset_id === asset.asset_id)),
-        };
-    });
+        });
+    }
+    return hydrated;
 }
 
 /**
@@ -224,10 +242,20 @@ export default function ScanResultsScreen() {
     const lastDeletionResult = useMediaStore(state => state.lastDeletionResult ?? null);
     const photoProcessedIds = useMediaStore(state => state.photoProcessedIds);
     const deleteQueue = useMediaStore(state => state.deleteQueue);
+    const protectedAlbums = useMediaStore(state => state.protectedAlbums);
+    const protectedAssetIds = useMediaStore(state => state.protectedAssetIds);
     const hasHydrated = useMediaStore(state => state.hasHydrated);
 
     const processedPhotoIdSet = useMemo(() => new Set(photoProcessedIds), [photoProcessedIds]);
     const pendingDeleteIdSet = useMemo(() => new Set(deleteQueue.map(asset => asset.id)), [deleteQueue]);
+    const protectedAlbumIdSet = useMemo(
+        () => new Set((protectedAlbums ?? []).map(album => album.albumId)),
+        [protectedAlbums],
+    );
+    const protectedAssetIdSet = useMemo(
+        () => new Set(protectedAssetIds ?? []),
+        [protectedAssetIds],
+    );
 
     const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'ai'>('blur');
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
@@ -248,6 +276,11 @@ export default function ScanResultsScreen() {
     const [isDeletingBlurry, setIsDeletingBlurry] = useState(false);
     const isDeletingBlurryRef = useRef(false);
     const [queueFeedback, setQueueFeedback] = useState<string | null>(null);
+    const [isSelectingBlurry, setIsSelectingBlurry] = useState(false);
+    const [selectedBlurryIds, setSelectedBlurryIds] = useState<Set<string>>(new Set());
+    const [previewBlurryPhoto, setPreviewBlurryPhoto] = useState<BlurryPhoto | null>(null);
+    const ignoredBlurIdsRef = useRef<Set<string>>(new Set());
+    const ignoredSimilarKeysRef = useRef<Set<string>>(new Set());
 
     // Similar Groups detail modal state
     const [selectedSimilarGroup, setSelectedSimilarGroup] = useState<{
@@ -300,6 +333,7 @@ export default function ScanResultsScreen() {
             if (requestId !== loadRequestIdRef.current) return null;
 
             for (const asset of nextAssets) {
+                if (ignoredBlurIdsRef.current.has(asset.asset_id)) continue;
                 const info = readableInfos.get(asset.asset_id);
                 const uri = info?.localUri || info?.uri;
                 if (!uri) continue;
@@ -308,6 +342,7 @@ export default function ScanResultsScreen() {
                     blurScore: asset.blur_score,
                     meanLuma: asset.mean_luma,
                     uri,
+                    ...(info?.albumId ? { albumId: info.albumId } : {}),
                 });
             }
         }
@@ -364,6 +399,7 @@ export default function ScanResultsScreen() {
                 membersByGroupId,
                 visiblePhotoIds,
                 readableInfos,
+                ignoredSimilarKeysRef.current,
             );
             if (requestId !== loadRequestIdRef.current) return null;
             collected.push(...hydrated);
@@ -391,11 +427,15 @@ export default function ScanResultsScreen() {
             visiblePhotoIdsRef.current = visiblePhotoIds;
             const visibleIdsArray = visiblePhotoIds === undefined ? undefined : Array.from(visiblePhotoIds);
 
-            const [statusCounts, blurryAssets, groups] = await Promise.all([
+            const [statusCounts, blurryAssets, groups, ignoredBlurIds, ignoredSimilarKeys] = await Promise.all([
                 AssetRepository.getStatusCounts(visibleIdsArray),
                 AssetRepository.getBlurryAssets(visibleIdsArray, BLURRY_PAGE_SIZE, 0),
                 DupGroupRepository.getGroupsPage({ limit: SIMILAR_PAGE_SIZE, offset: 0, repair: true }),
+                getIgnoredReviewKeys('blur'),
+                getIgnoredReviewKeys('similar_group'),
             ]);
+            ignoredBlurIdsRef.current = new Set(ignoredBlurIds);
+            ignoredSimilarKeysRef.current = new Set(ignoredSimilarKeys);
             const membersByGroupId = await DupGroupRepository.getGroupMembersBatch(
                 groups.map(group => group.group_id),
             );
@@ -423,6 +463,7 @@ export default function ScanResultsScreen() {
 
             let blurryWithUris: BlurryPhoto[] = [];
             for (const asset of blurryAssets) {
+                if (ignoredBlurIdsRef.current.has(asset.asset_id)) continue;
                 const info = readableInfos.get(asset.asset_id);
                 const uri = info?.localUri || info?.uri;
                 if (!uri) continue;
@@ -431,6 +472,7 @@ export default function ScanResultsScreen() {
                     blurScore: asset.blur_score,
                     meanLuma: asset.mean_luma,
                     uri,
+                    ...(info?.albumId ? { albumId: info.albumId } : {}),
                 });
             }
 
@@ -439,6 +481,7 @@ export default function ScanResultsScreen() {
                 membersByGroupId,
                 visiblePhotoIds,
                 readableInfos,
+                ignoredSimilarKeysRef.current,
             );
             if (requestId !== loadRequestIdRef.current) return;
 
@@ -628,6 +671,7 @@ export default function ScanResultsScreen() {
                 membersByGroupId,
                 visiblePhotoIds,
                 readableInfos,
+                ignoredSimilarKeysRef.current,
             );
             if (requestId !== loadRequestIdRef.current) return;
 
@@ -677,10 +721,23 @@ export default function ScanResultsScreen() {
             ) {
                 throw new Error('Access changed');
             }
+            if (isAssetProtected(info, protectedAlbumIdSet, protectedAssetIdSet)) {
+                setQueueFeedback(t('protected_delete_blocked'));
+                return;
+            }
             const existed = getPendingDeletionEntries(store).some(entry => entry.asset.id === assetId);
-            const added = store.enqueuePendingDeletion([info], source);
-            if (!added && !existed) throw new Error('Record mutation is blocked');
-            setQueueFeedback(t(added ? 'pending_added' : 'pending_already_added'));
+            const report = typeof store.enqueuePendingDeletionWithReport === 'function'
+                ? store.enqueuePendingDeletionWithReport([info], source)
+                : (() => {
+                    const added = store.enqueuePendingDeletion([info], source);
+                    return { added, alreadyQueued: 0, protectedSkipped: 0, protectedAssetIds: [] as string[] };
+                })();
+            if (report.protectedSkipped > 0) {
+                setQueueFeedback(t('protected_delete_blocked'));
+                return;
+            }
+            if (!report.added && !existed) throw new Error('Record mutation is blocked');
+            setQueueFeedback(t(report.added ? 'pending_added' : 'pending_already_added'));
         } catch {
             setQueueFeedback(t('pending_add_failed'));
         } finally {
@@ -690,41 +747,230 @@ export default function ScanResultsScreen() {
     };
     const handleDeleteBlurry = (assetId: string) => queueFromAI(assetId, 'blur');
 
+    const toggleBlurrySelection = (assetId: string) => {
+        setSelectedBlurryIds(previous => {
+            const next = new Set(previous);
+            if (next.has(assetId)) next.delete(assetId);
+            else next.add(assetId);
+            return next;
+        });
+    };
+
+    const exitBlurrySelection = () => {
+        setIsSelectingBlurry(false);
+        setSelectedBlurryIds(new Set());
+    };
+
+    const handleIgnoreBlurry = async (assetIds: readonly string[]) => {
+        const uniqueIds = Array.from(new Set(assetIds.filter(Boolean)));
+        if (uniqueIds.length === 0 || isDeletingBlurryRef.current) return;
+        isDeletingBlurryRef.current = true;
+        setIsDeletingBlurry(true);
+        setQueueFeedback(null);
+        try {
+            if (uniqueIds.length === 1) {
+                await addReviewIgnore('blur', uniqueIds[0]);
+            } else {
+                await addReviewIgnores(uniqueIds.map(targetKey => ({ ignoreType: 'blur' as const, targetKey })));
+            }
+            const ignoredSet = new Set(uniqueIds);
+            for (const id of ignoredSet) ignoredBlurIdsRef.current.add(id);
+            setBlurryPhotos(previous => previous.filter(item => !ignoredSet.has(item.assetId)));
+            setPreviewBlurryPhoto(previous => (previous && ignoredSet.has(previous.assetId) ? null : previous));
+            setSelectedBlurryIds(previous => {
+                const next = new Set(previous);
+                for (const id of ignoredSet) next.delete(id);
+                return next;
+            });
+            if (isSelectingBlurry) {
+                setIsSelectingBlurry(false);
+            }
+            setQueueFeedback(
+                uniqueIds.length === 1
+                    ? t('blur_ignored_feedback')
+                    : t('blur_batch_ignored_feedback', { count: uniqueIds.length }),
+            );
+        } catch {
+            setQueueFeedback(t('similar_save_failed'));
+        } finally {
+            isDeletingBlurryRef.current = false;
+            setIsDeletingBlurry(false);
+        }
+    };
+
+    const handleBatchQueueBlurry = async () => {
+        const targetIds = Array.from(selectedBlurryIds);
+        if (targetIds.length === 0 || isDeletingBlurryRef.current) return;
+        const initialStore = useMediaStore.getState();
+        const refreshVersion = initialStore.mediaLibraryRefreshVersion;
+        const permVersion = initialStore.permissionRefreshVersion ?? 0;
+        isDeletingBlurryRef.current = true;
+        setIsDeletingBlurry(true);
+        setQueueFeedback(null);
+        try {
+            const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+            if (!permission.granted) throw new Error('Unavailable');
+            const infoMap = await getReadableMediaInfos(targetIds, 'photo', { shouldDownloadFromNetwork: false });
+            const store = useMediaStore.getState();
+            if (
+                refreshVersion !== store.mediaLibraryRefreshVersion
+                || permVersion !== (store.permissionRefreshVersion ?? 0)
+            ) {
+                throw new Error('Access changed');
+            }
+            const assets = targetIds
+                .map(id => infoMap.get(id))
+                .filter((info): info is NonNullable<typeof info> => !!info && info.mediaType === 'photo');
+            if (assets.length === 0) throw new Error('Unavailable');
+
+            const unprotected: typeof assets = [];
+            let protectedSkipped = 0;
+            for (const asset of assets) {
+                if (isAssetProtected(asset, protectedAlbumIdSet, protectedAssetIdSet)) {
+                    protectedSkipped++;
+                } else {
+                    unprotected.push(asset);
+                }
+            }
+
+            let added = 0;
+            if (unprotected.length > 0) {
+                const report = typeof store.enqueuePendingDeletionWithReport === 'function'
+                    ? store.enqueuePendingDeletionWithReport(unprotected, 'blur')
+                    : (() => {
+                        const count = store.enqueuePendingDeletion(unprotected, 'blur');
+                        return { added: count, alreadyQueued: 0, protectedSkipped: 0, protectedAssetIds: [] as string[] };
+                    })();
+                added = report.added;
+                protectedSkipped += report.protectedSkipped;
+            }
+
+            exitBlurrySelection();
+            if (protectedSkipped > 0) {
+                setQueueFeedback(added > 0
+                    ? t('protected_batch_skipped_feedback', { added, skipped: protectedSkipped })
+                    : t('protected_all_skipped_feedback', { skipped: protectedSkipped }));
+            } else {
+                setQueueFeedback(t(added > 0 ? 'pending_added' : 'pending_already_added'));
+            }
+        } catch {
+            setQueueFeedback(t('pending_add_failed'));
+        } finally {
+            isDeletingBlurryRef.current = false;
+            setIsDeletingBlurry(false);
+        }
+    };
+
+    const handleIgnoreSimilarGroup = async (groupId: string, snapshotKey: string | null) => {
+        if (!snapshotKey || isDeletingBlurryRef.current) return;
+        isDeletingBlurryRef.current = true;
+        setIsDeletingBlurry(true);
+        setQueueFeedback(null);
+        try {
+            await addReviewIgnore('similar_group', snapshotKey);
+            ignoredSimilarKeysRef.current.add(snapshotKey);
+            setSimilarGroups(previous => previous.filter(item => item.groupId !== groupId && item.snapshotKey !== snapshotKey));
+            setQueueFeedback(t('similar_hidden_feedback'));
+        } catch {
+            setQueueFeedback(t('similar_save_failed'));
+        } finally {
+            isDeletingBlurryRef.current = false;
+            setIsDeletingBlurry(false);
+        }
+    };
+
     const renderBlurryItem = ({ item }: { item: BlurryPhoto }) => {
         const isQueued = pendingDeleteIdSet.has(item.assetId);
+        const isSelected = selectedBlurryIds.has(item.assetId);
+        const isProtected = isAssetProtected({ id: item.assetId, albumId: item.albumId }, protectedAlbumIdSet, protectedAssetIdSet);
         return (
-            <View style={[styles.photoCard, { borderBottomColor: colors.divider }]}>
-                {item.uri && (
-                    <Image source={{ uri: item.uri }} cachePolicy="memory" contentFit="cover" style={styles.thumbnail} />
-                )}
-                <View style={styles.cardInfo}>
-                    <Text style={[styles.scoreText, { color: colors.danger }]}>
-                        {t('scan_blur_score', { score: item.blurScore.toFixed(1) })}
-                    </Text>
-                    <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                        {t('scan_brightness', { value: item.meanLuma.toFixed(0) })}
-                    </Text>
-                    {isQueued && (
-                        <View
-                            testID={`blurry-queued-badge-${item.assetId}`}
-                            style={[styles.queuedBadge, { backgroundColor: colors.surfaceHover }]}
-                        >
-                            <Text style={[styles.queuedBadgeText, { color: colors.danger }]}>
-                                {t('pending_already_added')}
-                            </Text>
+            <View style={[styles.photoCard, { borderBottomColor: colors.divider }, isSelected && { backgroundColor: colors.surfaceHover }]}>
+                <Pressable
+                    style={styles.photoCardBody}
+                    accessibilityRole={isSelectingBlurry ? 'checkbox' : 'button'}
+                    accessibilityLabel={t('blur_open_preview')}
+                    accessibilityState={isSelectingBlurry ? { checked: isSelected } : undefined}
+                    onPress={() => {
+                        if (isSelectingBlurry) {
+                            toggleBlurrySelection(item.assetId);
+                        } else if (item.uri) {
+                            setQueueFeedback(null);
+                            setPreviewBlurryPhoto(item);
+                        }
+                    }}
+                    onLongPress={() => {
+                        if (!isSelectingBlurry) setIsSelectingBlurry(true);
+                        toggleBlurrySelection(item.assetId);
+                    }}
+                >
+                    {isSelectingBlurry && (
+                        <View style={styles.selectCheckbox}>
+                            <Ionicons
+                                name={isSelected ? 'checkbox' : 'square-outline'}
+                                size={22}
+                                color={isSelected ? colors.primary : colors.textSecondary}
+                            />
                         </View>
                     )}
-                </View>
-                <Pressable
-                    style={({ pressed }) => [styles.deleteButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }, isDeletingBlurry && { opacity: 0.5 }]}
-                    disabled={isDeletingBlurry}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('pending_add')}
-                    accessibilityState={{ disabled: isDeletingBlurry, busy: isDeletingBlurry }}
-                    onPress={() => handleDeleteBlurry(item.assetId)}
-                >
-                    <Ionicons name={isQueued ? 'trash' : 'trash-outline'} size={20} color={colors.danger} />
+                    {item.uri && (
+                        <Image source={{ uri: item.uri }} cachePolicy="memory" contentFit="cover" style={styles.thumbnail} />
+                    )}
+                    <View style={styles.cardInfo}>
+                        <Text style={[styles.scoreText, { color: colors.danger }]}>
+                            {t('scan_blur_score', { score: item.blurScore.toFixed(1) })}
+                        </Text>
+                        <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+                            {t('scan_brightness', { value: item.meanLuma.toFixed(0) })}
+                        </Text>
+                        <View style={styles.badgeRow}>
+                            {isProtected && (
+                                <View
+                                    testID={`blurry-protected-badge-${item.assetId}`}
+                                    style={[styles.queuedBadge, { backgroundColor: colors.surfaceHover }]}
+                                >
+                                    <Text style={[styles.queuedBadgeText, { color: colors.primary }]}>
+                                        {t('protected_badge')}
+                                    </Text>
+                                </View>
+                            )}
+                            {isQueued && (
+                                <View
+                                    testID={`blurry-queued-badge-${item.assetId}`}
+                                    style={[styles.queuedBadge, { backgroundColor: colors.surfaceHover }]}
+                                >
+                                    <Text style={[styles.queuedBadgeText, { color: colors.danger }]}>
+                                        {t('pending_already_added')}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
+                    </View>
                 </Pressable>
+                {!isSelectingBlurry && (
+                    <View style={styles.rowActions}>
+                        <Pressable
+                            testID={`blurry-ignore-${item.assetId}`}
+                            style={({ pressed }) => [styles.deleteButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }, isDeletingBlurry && { opacity: 0.5 }]}
+                            disabled={isDeletingBlurry}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('blur_ignore_action')}
+                            accessibilityState={{ disabled: isDeletingBlurry, busy: isDeletingBlurry }}
+                            onPress={() => void handleIgnoreBlurry([item.assetId])}
+                        >
+                            <Ionicons name="eye-off-outline" size={20} color={colors.textSecondary} />
+                        </Pressable>
+                        <Pressable
+                            style={({ pressed }) => [styles.deleteButton, { backgroundColor: pressed ? colors.surfaceHover : 'transparent' }, (isDeletingBlurry || isProtected) && { opacity: 0.5 }]}
+                            disabled={isDeletingBlurry}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('pending_add')}
+                            accessibilityState={{ disabled: isDeletingBlurry, busy: isDeletingBlurry }}
+                            onPress={() => void handleDeleteBlurry(item.assetId)}
+                        >
+                            <Ionicons name={isQueued ? 'trash' : 'trash-outline'} size={20} color={colors.danger} />
+                        </Pressable>
+                    </View>
+                )}
             </View>
         );
     };
@@ -732,26 +978,35 @@ export default function ScanResultsScreen() {
     const isGroupProcessed = useCallback((group: SimilarGroup) => hasHydrated && group.allAccessible
         && isSimilarReviewCurrent(group.review, processedPhotoIdSet, pendingDeleteIdSet), [hasHydrated, pendingDeleteIdSet, processedPhotoIdSet]);
 
-    const renderSimilarItem = ({ item }: { item: SimilarGroup }) => (
-        <SimilarGroupCard
-            groupId={item.groupId}
-            memberCount={item.memberCount}
-            memberAssetIds={item.memberAssetIds}
-            previewUris={item.previewUris}
-            isProcessed={isGroupProcessed(item)}
-            onPress={(layout) => {
-                if (layout) {
-                    setSelectedSimilarGroup({ group: item, origin: layout });
-                } else {
-                    // Fallback if measurement fails
-                    setSelectedSimilarGroup({
-                        group: item,
-                        origin: { x: 0, y: 0, width: 0, height: 0 }
-                    });
-                }
-            }}
-        />
-    );
+    const renderSimilarItem = ({ item }: { item: SimilarGroup }) => {
+        const protectedCount = item.memberAssetIds.reduce((count, assetId) => (
+            isAssetProtected({ id: assetId, albumId: item.memberAlbumIds[assetId] }, protectedAlbumIdSet, protectedAssetIdSet)
+                ? count + 1
+                : count
+        ), 0);
+        return (
+            <SimilarGroupCard
+                groupId={item.groupId}
+                memberCount={item.memberCount}
+                memberAssetIds={item.memberAssetIds}
+                previewUris={item.previewUris}
+                isProcessed={isGroupProcessed(item)}
+                protectedCount={protectedCount}
+                onIgnore={item.snapshotKey ? () => { void handleIgnoreSimilarGroup(item.groupId, item.snapshotKey); } : undefined}
+                onPress={(layout) => {
+                    if (layout) {
+                        setSelectedSimilarGroup({ group: item, origin: layout });
+                    } else {
+                        // Fallback if measurement fails
+                        setSelectedSimilarGroup({
+                            group: item,
+                            origin: { x: 0, y: 0, width: 0, height: 0 }
+                        });
+                    }
+                }}
+            />
+        );
+    };
 
     // Category Detail State
     const [selectedCategory, setSelectedCategory] = useState<CategoryGroup | null>(null);
@@ -1076,6 +1331,9 @@ export default function ScanResultsScreen() {
         setSelectedSimilarGroup(null);
         setSelectedCategory(null);
         setSelectedPhoto(null);
+        setPreviewBlurryPhoto(null);
+        setIsSelectingBlurry(false);
+        setSelectedBlurryIds(new Set());
         setCategoryCoverUris({ version: -1, map: {} });
         setCategoryDetailUris({ version: -1, categoryId: '', map: {} });
         setQueueFeedback(null);
@@ -1111,6 +1369,13 @@ export default function ScanResultsScreen() {
             })
             .filter((group): group is SimilarGroup => group !== null));
         setSelectedPhoto(previous => (previous && deletedIdSet.has(previous) ? null : previous));
+        setPreviewBlurryPhoto(previous => (previous && deletedIdSet.has(previous.assetId) ? null : previous));
+        setSelectedBlurryIds(previous => {
+            if (previous.size === 0) return previous;
+            const next = new Set(previous);
+            for (const id of deletedIdSet) next.delete(id);
+            return next;
+        });
 
         void loadResults();
         if (activeTab === 'ai' && enableAIClassification) {
@@ -1349,28 +1614,117 @@ export default function ScanResultsScreen() {
                         <ActivityIndicator size="large" color={colors.primary} />
                     </View>
                 ) : loadError ? renderResultState(true) : completedCount === 0 && blurryPhotos.length === 0 && similarGroups.length === 0 ? renderResultState(false) : activeTab === 'blur' ? (
-                    <FlatList<BlurryPhoto>
-                        testID="blurry-results-list"
-                        data={blurryPhotos}
-                        extraData={pendingDeleteIdSet}
-                        renderItem={renderBlurryItem}
-                        keyExtractor={(item) => item.assetId}
-                        contentContainerStyle={styles.listContent}
-                        windowSize={5}
-                        initialNumToRender={12}
-                        maxToRenderPerBatch={10}
-                        removeClippedSubviews
-                        onEndReached={() => { void loadMoreBlurry(); }}
-                        onEndReachedThreshold={0.5}
-                        ListFooterComponent={loadingMoreBlurry ? (
-                            <View style={styles.listFooterLoading}>
-                                <ActivityIndicator size="small" color={colors.primary} />
+                    <View style={{ flex: 1 }}>
+                        {blurryPhotos.length > 0 && (
+                            <View style={[styles.blurToolbar, { borderBottomColor: colors.divider }]}>
+                                {!isSelectingBlurry ? (
+                                    <Pressable
+                                        testID="blur-multiselect-toggle"
+                                        accessibilityRole="button"
+                                        accessibilityLabel={t('blur_multi_select')}
+                                        disabled={isDeletingBlurry}
+                                        onPress={() => {
+                                            setQueueFeedback(null);
+                                            setIsSelectingBlurry(true);
+                                        }}
+                                        style={({ pressed }) => [
+                                            styles.toolbarChip,
+                                            { backgroundColor: pressed ? colors.surfaceHover : colors.surface },
+                                        ]}
+                                    >
+                                        <Ionicons name="checkmark-done-outline" size={16} color={colors.text} />
+                                        <Text style={[styles.toolbarChipText, { color: colors.text }]}>{t('blur_multi_select')}</Text>
+                                    </Pressable>
+                                ) : (
+                                    <View style={styles.blurSelectionControls}>
+                                        <View style={styles.blurSelectionTopRow}>
+                                            <Text accessibilityLiveRegion="polite" style={[styles.metaText, { color: colors.text }]}>
+                                                {t('blur_selected_count', { count: selectedBlurryIds.size })}
+                                            </Text>
+                                            <View style={styles.blurSelectionTopButtons}>
+                                                <Pressable
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={selectedBlurryIds.size === blurryPhotos.length ? t('blur_deselect_all') : t('blur_select_all')}
+                                                    disabled={isDeletingBlurry}
+                                                    onPress={() => {
+                                                        if (selectedBlurryIds.size === blurryPhotos.length) {
+                                                            setSelectedBlurryIds(new Set());
+                                                        } else {
+                                                            setSelectedBlurryIds(new Set(blurryPhotos.map(item => item.assetId)));
+                                                        }
+                                                    }}
+                                                    style={[styles.toolbarChip, { backgroundColor: colors.surface }]}
+                                                >
+                                                    <Text style={[styles.toolbarChipText, { color: colors.text }]}>
+                                                        {selectedBlurryIds.size === blurryPhotos.length ? t('blur_deselect_all') : t('blur_select_all')}
+                                                    </Text>
+                                                </Pressable>
+                                                <Pressable
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={t('cancel')}
+                                                    disabled={isDeletingBlurry}
+                                                    onPress={exitBlurrySelection}
+                                                    style={[styles.toolbarChip, { backgroundColor: colors.surface }]}
+                                                >
+                                                    <Text style={[styles.toolbarChipText, { color: colors.textSecondary }]}>{t('cancel')}</Text>
+                                                </Pressable>
+                                            </View>
+                                        </View>
+                                        {selectedBlurryIds.size > 0 && (
+                                            <View style={styles.blurBatchRow}>
+                                                <Pressable
+                                                    testID="blur-batch-queue-delete"
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={t('blur_batch_queue_delete', { count: selectedBlurryIds.size })}
+                                                    disabled={isDeletingBlurry}
+                                                    onPress={() => void handleBatchQueueBlurry()}
+                                                    style={[styles.batchActionButton, { backgroundColor: colors.dangerBackground, opacity: isDeletingBlurry ? 0.5 : 1 }]}
+                                                >
+                                                    <Text style={[styles.batchActionText, { color: colors.dangerForeground }]}>
+                                                        {t('blur_batch_queue_delete', { count: selectedBlurryIds.size })}
+                                                    </Text>
+                                                </Pressable>
+                                                <Pressable
+                                                    testID="blur-batch-ignore"
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={t('blur_batch_ignore', { count: selectedBlurryIds.size })}
+                                                    disabled={isDeletingBlurry}
+                                                    onPress={() => void handleIgnoreBlurry(Array.from(selectedBlurryIds))}
+                                                    style={[styles.batchActionButton, { backgroundColor: colors.surfaceHover, opacity: isDeletingBlurry ? 0.5 : 1 }]}
+                                                >
+                                                    <Text style={[styles.batchActionText, { color: colors.text }]}>
+                                                        {t('blur_batch_ignore', { count: selectedBlurryIds.size })}
+                                                    </Text>
+                                                </Pressable>
+                                            </View>
+                                        )}
+                                    </View>
+                                )}
                             </View>
-                        ) : null}
-                        ListEmptyComponent={
-                            renderResultState(false, 'scan_no_blurry')
-                        }
-                    />
+                        )}
+                        <FlatList<BlurryPhoto>
+                            testID="blurry-results-list"
+                            data={blurryPhotos}
+                            extraData={{ pendingDeleteIdSet, isSelectingBlurry, selectedBlurryIds, protectedAlbumIdSet, protectedAssetIdSet }}
+                            renderItem={renderBlurryItem}
+                            keyExtractor={(item) => item.assetId}
+                            contentContainerStyle={styles.listContent}
+                            windowSize={5}
+                            initialNumToRender={12}
+                            maxToRenderPerBatch={10}
+                            removeClippedSubviews
+                            onEndReached={() => { void loadMoreBlurry(); }}
+                            onEndReachedThreshold={0.5}
+                            ListFooterComponent={loadingMoreBlurry ? (
+                                <View style={styles.listFooterLoading}>
+                                    <ActivityIndicator size="small" color={colors.primary} />
+                                </View>
+                            ) : null}
+                            ListEmptyComponent={
+                                renderResultState(false, 'scan_no_blurry')
+                            }
+                        />
+                    </View>
                 ) : (
                     <FlatList<SimilarGroup>
                         testID="similar-results-list"
@@ -1414,6 +1768,51 @@ export default function ScanResultsScreen() {
                     }
                 }}
                 onComplete={() => setSelectedSimilarGroup(null)}
+                onIgnore={(snapshotKey) => {
+                    const closedGroupId = selectedSimilarGroup?.group.groupId;
+                    ignoredSimilarKeysRef.current.add(snapshotKey);
+                    setSimilarGroups(previous => previous.filter(
+                        item => item.groupId !== closedGroupId && item.snapshotKey !== snapshotKey,
+                    ));
+                    setSelectedSimilarGroup(null);
+                    setQueueFeedback(t('similar_hidden_feedback'));
+                }}
+            />
+
+            {/* Zoomable Blur Photo Preview Modal */}
+            <ZoomablePhotoModal
+                testID="blur-zoom-preview"
+                visible={!!previewBlurryPhoto}
+                photo={previewBlurryPhoto?.uri ? { id: previewBlurryPhoto.assetId, uri: previewBlurryPhoto.uri } : null}
+                title={t('photo_detail_title')}
+                subtitle={previewBlurryPhoto
+                    ? `${t('scan_blur_score', { score: previewBlurryPhoto.blurScore.toFixed(1) })} · ${t('scan_brightness', { value: previewBlurryPhoto.meanLuma.toFixed(0) })}`
+                    : undefined}
+                isProtected={previewBlurryPhoto
+                    ? isAssetProtected({ id: previewBlurryPhoto.assetId, albumId: previewBlurryPhoto.albumId }, protectedAlbumIdSet, protectedAssetIdSet)
+                    : false}
+                feedback={queueFeedback}
+                onClose={() => setPreviewBlurryPhoto(null)}
+                actions={previewBlurryPhoto ? [
+                    {
+                        id: 'ignore',
+                        testID: 'blur-preview-ignore',
+                        label: t('blur_ignore_action'),
+                        icon: 'eye-off-outline',
+                        tone: 'default',
+                        disabled: isDeletingBlurry,
+                        onPress: () => { void handleIgnoreBlurry([previewBlurryPhoto.assetId]); },
+                    },
+                    {
+                        id: 'delete',
+                        testID: 'blur-preview-queue-delete',
+                        label: pendingDeleteIdSet.has(previewBlurryPhoto.assetId) ? t('pending_already_added') : t('pending_add'),
+                        icon: pendingDeleteIdSet.has(previewBlurryPhoto.assetId) ? 'trash' : 'trash-outline',
+                        tone: 'danger',
+                        disabled: isDeletingBlurry,
+                        onPress: () => { void handleDeleteBlurry(previewBlurryPhoto.assetId); },
+                    },
+                ] : []}
             />
 
 
@@ -1692,6 +2091,82 @@ const styles = StyleSheet.create({
         paddingVertical: 16,
         gap: 12,
         borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    photoCardBody: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    selectCheckbox: {
+        width: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    badgeRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 6,
+    },
+    rowActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        flexShrink: 0,
+    },
+    blurToolbar: {
+        paddingHorizontal: UI_METRICS.pageInset,
+        paddingVertical: 8,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    blurSelectionControls: {
+        gap: 10,
+    },
+    blurSelectionTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+    },
+    blurSelectionTopButtons: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    blurBatchRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    toolbarChip: {
+        minHeight: 36,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        alignSelf: 'flex-start',
+    },
+    toolbarChipText: {
+        ...TYPOGRAPHY.caption,
+        fontWeight: '600',
+    },
+    batchActionButton: {
+        flex: 1,
+        minWidth: 132,
+        minHeight: UI_METRICS.touchTarget,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: UI_METRICS.buttonRadius,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    batchActionText: {
+        ...TYPOGRAPHY.button,
+        textAlign: 'center',
     },
     thumbnail: {
         width: 64,

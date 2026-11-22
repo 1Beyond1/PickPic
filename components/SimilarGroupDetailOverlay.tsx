@@ -33,6 +33,8 @@ import type { SimilarGroupSnapshot } from '../database/repositories/SimilarRevie
 import { keepSimilarPhotos, completeSimilarGroup } from '../services/similarReview';
 import { flushMediaProgress } from '../services/mediaProgressStorage';
 import { readMediaSizes } from '../services/mediaSizes';
+import { isAssetProtected } from '../services/protectedAlbums';
+import { addReviewIgnore } from '../services/reviewIgnores';
 import { SimilarComparison } from './SimilarComparison';
 import { calculateBestShotBreakdown } from '../database/bestShotScoring';
 
@@ -45,6 +47,7 @@ interface PhotoItem {
     height: number;
     takenAt: number | null;
     bytes: number | null;
+    albumId?: string;
 }
 
 interface SimilarGroupDetailOverlayProps {
@@ -54,6 +57,7 @@ interface SimilarGroupDetailOverlayProps {
     originRect: { x: number; y: number; width: number; height: number } | null;
     onClose: (didChange?: boolean) => void;
     onComplete: () => void;
+    onIgnore?: (snapshotKey: string) => void;
 }
 
 export function SimilarGroupDetailOverlay({
@@ -62,6 +66,7 @@ export function SimilarGroupDetailOverlay({
     memberAssetIds,
     onClose,
     onComplete,
+    onIgnore,
 }: SimilarGroupDetailOverlayProps) {
     const insets = useSafeAreaInsets();
     const { colors } = useThemeColor();
@@ -71,6 +76,8 @@ export function SimilarGroupDetailOverlay({
     const reducedMotion = useReducedMotion();
     const processedIds = useMediaStore(state => state.photoProcessedIds);
     const pendingPhotos = useMediaStore(state => state.deleteQueue);
+    const protectedAlbums = useMediaStore(state => state.protectedAlbums);
+    const protectedAssetIds = useMediaStore(state => state.protectedAssetIds);
 
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
     const [isLoadingPhotos, setIsLoadingPhotos] = useState(false);
@@ -90,6 +97,14 @@ export function SimilarGroupDetailOverlay({
     const pendingPhotoIdSet = useMemo(
         () => new Set(pendingPhotos.map(asset => asset.id)),
         [pendingPhotos],
+    );
+    const protectedAlbumIdSet = useMemo(
+        () => new Set((protectedAlbums ?? []).map(album => album.albumId)),
+        [protectedAlbums],
+    );
+    const protectedAssetIdSet = useMemo(
+        () => new Set(protectedAssetIds ?? []),
+        [protectedAssetIds],
     );
 
     // Animation state
@@ -130,6 +145,7 @@ export function SimilarGroupDetailOverlay({
                     height: Number.isFinite(info.height) && info.height > 0 ? info.height : 0,
                     takenAt: Number.isFinite(info.creationTime) && info.creationTime > 0 ? info.creationTime : null,
                     bytes: null,
+                    ...(info.albumId ? { albumId: info.albumId } : {}),
                 });
             }
         }
@@ -248,12 +264,26 @@ export function SimilarGroupDetailOverlay({
             store = useMediaStore.getState();
             if (!store.hasHydrated || store.isConfirmingDeletion || store.isConfirmingVideoTrash) throw new Error('Busy');
             const before = new Set(getPendingDeletionEntries(store).map(entry => entry.asset.id));
-            const added = store.enqueuePendingDeletion(validatedAssets, 'similar');
-            if (!added && assetIds.some(id => !before.has(id))) throw new Error('Record mutation is blocked');
+            const report = typeof store.enqueuePendingDeletionWithReport === 'function'
+                ? store.enqueuePendingDeletionWithReport(validatedAssets, 'similar')
+                : (() => {
+                    const added = store.enqueuePendingDeletion(validatedAssets, 'similar');
+                    return { added, alreadyQueued: 0, protectedSkipped: 0, protectedAssetIds: [] as string[] };
+                })();
+            const added = report.added;
+            const protectedSkipped = report.protectedSkipped;
+            const unprotectedRequested = assetIds.filter(id => !report.protectedAssetIds.includes(id));
+            if (!added && protectedSkipped === 0 && unprotectedRequested.some(id => !before.has(id))) throw new Error('Record mutation is blocked');
             await flushMediaProgress();
             if (generation !== loadRequestIdRef.current) return;
             if (added) hasMutatedRef.current = true;
-            setQueueFeedback(t(added ? 'pending_added' : 'pending_already_added'));
+            if (protectedSkipped > 0) {
+                setQueueFeedback(added > 0
+                    ? t('protected_batch_skipped_feedback', { added, skipped: protectedSkipped })
+                    : t('protected_all_skipped_feedback', { skipped: protectedSkipped }));
+            } else {
+                setQueueFeedback(t(added ? 'pending_added' : 'pending_already_added'));
+            }
             setSelectedIds(new Set());
             setPreviewPhoto(null);
             // Queuing is not physical deletion, nor an explicit decision to keep
@@ -288,6 +318,117 @@ export function SimilarGroupDetailOverlay({
             } else setQueueFeedback(t(result === 'stale' ? 'similar_group_changed' : 'similar_save_failed'));
         } finally { isDeletingRef.current = false; setIsDeleting(false); }
     };
+    const keepSelectedAndQueueRest = async () => {
+        if (!snapshot || isDeletingRef.current) return;
+        const keepList = Array.from(selectedIds);
+        const restPhotos = photos.filter(photo => !selectedIds.has(photo.assetId));
+        if (!keepList.length || !restPhotos.length) return;
+
+        const generation = loadRequestIdRef.current;
+        const permissionVersion = useMediaStore.getState().permissionRefreshVersion;
+        isDeletingRef.current = true; setIsDeleting(true); setQueueFeedback(null);
+        try {
+            // Step 1: Explicitly keep the selected photos first.
+            const keepResult = await keepSimilarPhotos(groupId, snapshot.key, keepList, () => generation === loadRequestIdRef.current);
+            if (generation !== loadRequestIdRef.current) return;
+            if (keepResult !== 'saved') {
+                setQueueFeedback(t(keepResult === 'stale' ? 'similar_group_changed' : 'similar_save_failed'));
+                return;
+            }
+            hasMutatedRef.current = true;
+            setKeptIds(previous => new Set([...previous, ...keepList]));
+
+            // Step 2: Partition remaining photos into protected vs unprotected so
+            // protected-album photos are automatically skipped with explicit feedback.
+            const protectedRestIds = new Set<string>();
+            const restCandidateIds: string[] = [];
+            for (const photo of restPhotos) {
+                if (isAssetProtected({ id: photo.assetId, albumId: photo.albumId }, protectedAlbumIdSet, protectedAssetIdSet)) {
+                    protectedRestIds.add(photo.assetId);
+                } else {
+                    restCandidateIds.push(photo.assetId);
+                }
+            }
+
+            let added = 0;
+            let storeProtectedSkipped = 0;
+            if (restCandidateIds.length > 0) {
+                const visibleIds = await getCurrentlyVisibleAssetIds(restCandidateIds, 'photo');
+                if (visibleIds.size !== new Set(restCandidateIds).size) throw new Error('Unavailable');
+                const infoMap = await getReadableMediaInfos(restCandidateIds, 'photo', { shouldDownloadFromNetwork: false });
+                const validatedAssets = restCandidateIds.map(id => infoMap.get(id));
+                if (validatedAssets.some((asset, index) => !asset || asset.id !== restCandidateIds[index] || asset.mediaType !== 'photo')) {
+                    throw new Error('Unavailable');
+                }
+                const checkedAssets = validatedAssets as NonNullable<typeof validatedAssets[number]>[];
+                const latest = await SimilarReviewRepository.getSnapshot(groupId);
+                let store = useMediaStore.getState();
+                if (generation !== loadRequestIdRef.current || permissionVersion !== store.permissionRefreshVersion || latest?.key !== snapshot.key) {
+                    throw new Error('Group changed');
+                }
+                if (!store.hasHydrated || store.isConfirmingDeletion || store.isConfirmingVideoTrash) throw new Error('Busy');
+
+                // Re-check albumId returned by fresh getReadableMediaInfos.
+                const queueableAssets: typeof checkedAssets = [];
+                for (const asset of checkedAssets) {
+                    if (isAssetProtected(asset, protectedAlbumIdSet, protectedAssetIdSet)) {
+                        protectedRestIds.add(asset.id);
+                    } else {
+                        queueableAssets.push(asset);
+                    }
+                }
+
+                if (queueableAssets.length > 0) {
+                    const before = new Set(getPendingDeletionEntries(store).map(entry => entry.asset.id));
+                    const report = typeof store.enqueuePendingDeletionWithReport === 'function'
+                        ? store.enqueuePendingDeletionWithReport(queueableAssets, 'similar')
+                        : (() => {
+                            const count = store.enqueuePendingDeletion(queueableAssets, 'similar');
+                            return { added: count, alreadyQueued: 0, protectedSkipped: 0, protectedAssetIds: [] as string[] };
+                        })();
+                    added = report.added;
+                    storeProtectedSkipped = report.protectedSkipped;
+                    const unprotected = queueableAssets.filter(asset => !report.protectedAssetIds.includes(asset.id));
+                    if (!added && storeProtectedSkipped === 0 && unprotected.some(asset => !before.has(asset.id))) {
+                        throw new Error('Record mutation is blocked');
+                    }
+                }
+                await flushMediaProgress();
+            }
+
+            if (generation !== loadRequestIdRef.current) return;
+            const totalProtected = protectedRestIds.size + storeProtectedSkipped;
+            setSelectedIds(new Set());
+            if (totalProtected > 0) {
+                setQueueFeedback(added > 0
+                    ? t('similar_keep_rest_protected_skipped', { kept: keepList.length, queued: added, protectedCount: totalProtected })
+                    : t('similar_keep_rest_all_protected', { kept: keepList.length, protectedCount: totalProtected }));
+            } else {
+                setQueueFeedback(t('similar_keep_rest_success', { kept: keepList.length, queued: added }));
+            }
+        } catch {
+            if (generation === loadRequestIdRef.current) setQueueFeedback(t('pending_add_failed'));
+        } finally {
+            isDeletingRef.current = false; setIsDeleting(false);
+        }
+    };
+    const handleIgnoreGroup = async () => {
+        if (!snapshot || isDeletingRef.current) return;
+        const generation = loadRequestIdRef.current;
+        isDeletingRef.current = true; setIsDeleting(true); setQueueFeedback(null);
+        try {
+            await addReviewIgnore('similar_group', snapshot.key);
+            if (generation !== loadRequestIdRef.current) return;
+            hasMutatedRef.current = true;
+            onIgnore?.(snapshot.key);
+            onComplete();
+            onClose(true);
+        } catch {
+            if (generation === loadRequestIdRef.current) setQueueFeedback(t('similar_save_failed'));
+        } finally {
+            isDeletingRef.current = false; setIsDeleting(false);
+        }
+    };
     const finish = async () => {
         if (!snapshot || !canComplete || isDeletingRef.current) return;
         const generation = loadRequestIdRef.current;
@@ -302,6 +443,7 @@ export function SimilarGroupDetailOverlay({
 
     const renderPhotoItem = ({ item, index }: { item: PhotoItem; index: number }) => {
         const isSelected = selectedIds.has(item.assetId);
+        const isProtected = isAssetProtected({ id: item.assetId, albumId: item.albumId }, protectedAlbumIdSet, protectedAssetIdSet);
         return (
             <Pressable
                 accessibilityRole="button"
@@ -321,6 +463,12 @@ export function SimilarGroupDetailOverlay({
                 {isSelected && (
                     <View style={[styles.checkmark, { backgroundColor: colors.actionBackground }]}>
                         <Ionicons name="checkmark" size={16} color={colors.actionForeground} />
+                    </View>
+                )}
+                {isProtected && (
+                    <View testID={`similar-protected-badge-${item.assetId}`} style={[styles.protectedBadge, { backgroundColor: colors.surface }]}>
+                        <Ionicons name="shield-checkmark" size={12} color={colors.primary} />
+                        <Text style={[styles.badgeText, { color: colors.primary }]}>{t('protected_badge')}</Text>
                     </View>
                 )}
                 {confirmedKeptIds.includes(item.assetId) && <View style={[styles.keptBadge, { backgroundColor: colors.surface }]}><Text style={[styles.badgeText, { color: colors.success }]}>{t('similar_kept')}</Text></View>}
@@ -380,11 +528,36 @@ export function SimilarGroupDetailOverlay({
                             disabled={isDeleting} onPress={() => setShowComparison(true)} style={[styles.retryButton, { backgroundColor: colors.surfaceHover }]}>
                             <Text style={[styles.retryText, { color: colors.text }]}>{t('similar_compare')}</Text>
                         </Pressable>}
+                        {snapshot && (
+                            <Pressable
+                                testID="similar-ignore-group"
+                                accessibilityRole="button"
+                                accessibilityLabel={t('similar_not_similar_hide')}
+                                disabled={isDeleting}
+                                onPress={() => void handleIgnoreGroup()}
+                                style={[styles.retryButton, { backgroundColor: colors.surface }]}
+                            >
+                                <Text style={[styles.retryText, { color: colors.textSecondary }]}>{t('similar_not_similar_hide')}</Text>
+                            </Pressable>
+                        )}
                         {selectedIds.size > 0 && <>
                             <Pressable accessibilityRole="button" accessibilityLabel={t('similar_keep_selected')} disabled={isDeleting || !snapshot}
                                 onPress={() => void keepPhotos(Array.from(selectedIds))} style={[styles.retryButton, { backgroundColor: colors.actionBackground }]}>
                                 <Text style={[styles.retryText, { color: colors.actionForeground }]}>{t('similar_keep_selected')}</Text>
                             </Pressable>
+                            {selectedIds.size < photos.length && (
+                                <Pressable
+                                    testID="similar-keep-selected-queue-rest"
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('similar_keep_selected_queue_rest')}
+                                    accessibilityState={{ disabled: isDeleting || !snapshot, busy: isDeleting }}
+                                    disabled={isDeleting || !snapshot}
+                                    onPress={() => void keepSelectedAndQueueRest()}
+                                    style={[styles.retryButton, { backgroundColor: colors.dangerBackground, opacity: isDeleting || !snapshot ? 0.5 : 1 }]}
+                                >
+                                    <Text style={[styles.retryText, { color: colors.dangerForeground }]}>{t('similar_keep_selected_queue_rest')}</Text>
+                                </Pressable>
+                            )}
                             <Pressable accessibilityRole="button" accessibilityLabel={t('pending_add')}
                                 accessibilityState={{ disabled: isDeleting || !confirmedKeptIds.length || Array.from(selectedIds).some(id => confirmedKeptIds.includes(id)), busy: isDeleting }}
                                 disabled={isDeleting || !confirmedKeptIds.length || Array.from(selectedIds).some(id => confirmedKeptIds.includes(id))}
@@ -529,6 +702,7 @@ function SimilarPhotoPreview({ photo }: { photo: PhotoItem }) {
 
 const styles = StyleSheet.create({
     groupActions: { paddingVertical: 12, gap: 12 },
+    protectedBadge: { position: 'absolute', left: 4, top: 4, flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 4, maxWidth: '80%' },
     keptBadge: { position: 'absolute', left: 4, bottom: 4, paddingHorizontal: 4, paddingVertical: 2, borderRadius: 4, maxWidth: '94%' },
     badgeText: { ...TYPOGRAPHY.caption },
     details: { paddingHorizontal: 8, gap: 6 },

@@ -1,6 +1,7 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import React, { useEffect, useState } from 'react';
-import { Image as RNImage, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { Image as RNImage, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Extrapolation,
@@ -44,7 +45,7 @@ interface PhotoCardProps {
     photo: PhotoAsset;
     index: number;
     total: number;
-    onSwipeUp: () => void;
+    onSwipeUp: () => boolean | void;
     onSwipeDown: (zoneId?: string) => Promise<boolean>;
     onTap: () => void;
     onHoverZone?: (zoneId: string | null) => void;
@@ -52,6 +53,7 @@ interface PhotoCardProps {
     dropZones?: DropZone[];
     maxWidth: number;
     maxHeight: number;
+    isProtected?: boolean;
 }
 
 export const PhotoCard: React.FC<PhotoCardProps> = ({
@@ -66,6 +68,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
     dropZones = [],
     maxWidth,
     maxHeight,
+    isProtected = false,
 }) => {
     const { colors } = useThemeColor();
     const { t } = useI18n();
@@ -123,6 +126,13 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
         onHoverZone?.(null);
     };
 
+    const completeSwipeUp = () => {
+        const result = onSwipeUp();
+        if (result === false) {
+            resetCardPosition();
+        }
+    };
+
     const completeSwipeDown = (zoneId?: string) => {
         // The card is animated away before an async collection operation can
         // finish. Put it back if that operation fails so the item remains
@@ -158,7 +168,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
             if (translateY.value < -SWIPE_THRESHOLD) {
                 translateX.value = withTiming(0, { duration: reducedMotion ? 0 : 300 });
                 translateY.value = withTiming(-SCREEN_HEIGHT, { duration: reducedMotion ? 0 : 300 }, finished => {
-                    if (finished) runOnJS(onSwipeUp)();
+                    if (finished) runOnJS(completeSwipeUp)();
                 });
             } else if (translateY.value > SWIPE_THRESHOLD) {
                 const isInZoneArea = event.absoluteY > ZONE_ACTIVATION_Y;
@@ -229,6 +239,7 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                 }]}>
                     <Image
                         key={`${photo.id}:${photo.uri}`}
+                        recyclingKey={`${photo.id}:${photo.uri}`}
                         cachePolicy="memory"
                         source={{ uri: photo.uri }}
                         style={styles.image}
@@ -237,6 +248,12 @@ export const PhotoCard: React.FC<PhotoCardProps> = ({
                         // overlapping native crossfades; gesture motion stays animated.
                         transition={0}
                     />
+                    {isProtected && (
+                        <View testID="photo-card-protected-badge" style={styles.protectedBadge}>
+                            <Ionicons name="shield-checkmark" size={14} color="#FFFFFF" />
+                            <Text style={styles.protectedBadgeText}>{t('protected_badge')}</Text>
+                        </View>
+                    )}
                 </View>
             </Animated.View>
         </GestureDetector>
@@ -255,5 +272,22 @@ const styles = StyleSheet.create({
     },
     image: {
         flex: 1,
+    },
+    protectedBadge: {
+        position: 'absolute',
+        top: 10,
+        left: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: BORDER_RADIUS.full,
+        backgroundColor: 'rgba(17, 24, 39, 0.82)',
+    },
+    protectedBadgeText: {
+        color: '#FFFFFF',
+        fontSize: 12,
+        fontWeight: '600',
     },
 });
