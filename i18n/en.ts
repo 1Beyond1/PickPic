@@ -523,5 +523,6 @@ export default {
     backup_preview_summary_v2: 'Keep {kept} · Collect {collected}\nPending deletion {pending} · Cross-device rebound {rebound}\nProtected albums {protectedAlbums} · Review ignores {reviewIgnores}\nAlready decided {existing} · Ambiguous skipped {ambiguousSkipped} · Unmatched {skipped}',
     backup_reminder_badge: '{count} unbacked',
     backup_unsaved_changes_reminder: '{count} organizing changes since your last backup. Consider exporting an encrypted backup.',
+    backup_unmatched_protected_albums_hint: '{count} protected albums could not be matched automatically (e.g. cross-platform or renamed/unavailable albums). Please review them in Settings after restoring.',
 
 };

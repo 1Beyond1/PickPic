@@ -1,4 +1,4 @@
-jest.mock('expo-media-library', () => ({ getPermissionsAsync: jest.fn(), getAssetInfoAsync: jest.fn(), getAssetsAsync: jest.fn(), deleteAssetsAsync: jest.fn() }));
+jest.mock('expo-media-library', () => ({ getPermissionsAsync: jest.fn(), getAlbumsAsync: jest.fn(), getAssetInfoAsync: jest.fn(), getAssetsAsync: jest.fn(), deleteAssetsAsync: jest.fn() }));
 jest.mock('../../stores/useMediaStore', () => ({ useMediaStore: { getState: jest.fn(), setState: jest.fn() } }));
 jest.mock('../../services/mediaProgressStorage', () => ({ flushMediaProgress: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('../../services/backup/crypto', () => {
@@ -33,6 +33,7 @@ beforeEach(() => {
     jest.mocked(useMediaStore.getState).mockImplementation(() => state);
     jest.mocked(useMediaStore.setState).mockImplementation((next: any) => { Object.assign(state, next); });
     jest.mocked(MediaLibrary.getPermissionsAsync).mockResolvedValue({ granted: true, accessPrivileges: 'all' } as any);
+    jest.mocked(MediaLibrary.getAlbumsAsync).mockResolvedValue([{ id: 'android-alb-docs', title: 'Docs', assetCount: 1 }] as any);
     jest.mocked(MediaLibrary.getAssetInfoAsync).mockResolvedValue({ ...photo, location: { latitude: 1, longitude: 2 } } as any);
     jest.mocked(MediaLibrary.getAssetsAsync).mockResolvedValue({ assets: [{ ...photo, location: { latitude: 1, longitude: 2 }, exif: {} }], hasNextPage: false } as any);
     jest.mocked(decryptBackup).mockResolvedValue(file());
@@ -171,10 +172,64 @@ it('restores v2 backups across devices via unique contentFingerprint and merges 
     });
     expect(state.photoProcessedIds).toEqual(['new-device-id']);
     expect(await protectedAlbumsService.loadProtectedAlbums()).toEqual([
-        { albumId: 'alb-docs', title: 'Docs', createdAt: 50 },
+        { albumId: 'android-alb-docs', title: 'Docs', createdAt: 50 },
     ]);
     expect(await reviewIgnoresService.getIgnoredReviewKeys('similar_group')).toEqual(new Set(['snap-v2']));
     expect(state.loadProtectedAlbums).toHaveBeenCalledTimes(1);
+});
+
+it('P0-2 & P1-1: skips foreign-platform albumId when localAlbums is unavailable and filters protected pending deletions on v2 restore', async () => {
+    const protectedPhoto = { ...photo, id: 'protected-photo-1' };
+    const normalPhoto = { ...photo, id: 'normal-photo-2', filename: 'normal.jpg' };
+    const crossPlatformPayload = {
+        version: 2 as const,
+        platform: 'ios' as const,
+        records: [],
+        protectedAlbums: [{ albumId: 'IOS-UUID-0001/L0/040', title: 'Passport', createdAt: 50 }],
+        reviewIgnores: [],
+    };
+    jest.mocked(MediaLibrary.getAlbumsAsync).mockRejectedValueOnce(new Error('Albums unavailable'));
+    const crossPreview = await restoreEncryptedRecords(crossPlatformPayload, false);
+    expect(crossPreview.protectedAlbums).toBe(0);
+    expect(crossPreview.unmatchedProtectedAlbums).toBe(1);
+    expect(await protectedAlbumsService.loadProtectedAlbums()).toEqual([]);
+
+    // Now test v2 restore with includePending: true skipping assets in a restored protected album.
+    const pendingPayload = {
+        version: 2 as const,
+        platform: 'android' as const,
+        records: [
+            {
+                id: protectedPhoto.id,
+                kind: 'photo' as const,
+                decision: 'delete' as const,
+                fingerprint: mediaFingerprint(protectedPhoto),
+                contentFingerprint: buildContentFingerprint(protectedPhoto, null),
+            },
+            {
+                id: normalPhoto.id,
+                kind: 'photo' as const,
+                decision: 'delete' as const,
+                fingerprint: mediaFingerprint(normalPhoto),
+                contentFingerprint: buildContentFingerprint(normalPhoto, null),
+            },
+        ],
+        protectedAlbums: [{ albumId: 'android-alb-docs', title: 'Docs', createdAt: 50 }],
+        reviewIgnores: [],
+    };
+    jest.mocked(MediaLibrary.getAlbumsAsync).mockResolvedValue([{ id: 'android-alb-docs', title: 'Docs', assetCount: 1 }] as any);
+    jest.mocked(MediaLibrary.getAssetsAsync).mockImplementation(async (options?: any) => {
+        if (options?.album === 'android-alb-docs') {
+            return { assets: [protectedPhoto], hasNextPage: false } as any;
+        }
+        return { assets: [protectedPhoto, normalPhoto], hasNextPage: false } as any;
+    });
+
+    const pendingPreview = await restoreEncryptedRecords(pendingPayload, true);
+    expect(pendingPreview.pendingDeletion).toBe(1);
+    expect(pendingPreview.skipped).toBe(1);
+    expect(state.deleteQueue.map((item: MediaLibrary.Asset) => item.id)).toEqual(['normal-photo-2']);
+    expect(state.photoProcessedIds).toEqual(['normal-photo-2']);
 });
 it('does not import or fabricate undo history from a version-1 backup', async () => {
     state.recentDecisions = [{ eventId: 'stale-local-operation' }];

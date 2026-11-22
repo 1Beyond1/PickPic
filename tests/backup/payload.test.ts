@@ -139,6 +139,7 @@ describe('Backup v2 cross-device content fingerprint rebinding and metadata rest
             ambiguousSkipped: 0,
             protectedAlbums: 1,
             reviewIgnores: 2,
+            unmatchedProtectedAlbums: 1,
         });
         expect(plan.protectedAlbumsToMerge).toEqual([
             { albumId: 'android-alb-docs', title: 'Documents', createdAt: 100 },
@@ -210,5 +211,165 @@ describe('Backup v2 cross-device content fingerprint rebinding and metadata rest
         expect(plan.preview.rebound).toBe(0);
         expect(plan.preview.ambiguousSkipped).toBe(1);
         expect(plan.preview.skipped).toBe(3);
+    });
+
+    it('P0-2: never writes foreign-platform albumId into protectedAlbumsToMerge when localAlbums is undefined', () => {
+        const v2: BackupPayloadV2 = {
+            version: 2,
+            platform: 'ios',
+            records: [],
+            protectedAlbums: [
+                { albumId: '7A3E1234-5678-4ABC-9DEF-1234567890AB/L0/040', title: 'ID Cards', createdAt: 100 },
+            ],
+            reviewIgnores: [],
+        };
+
+        const plan = planRestore(v2, blank(), new Map(), false, {
+            localAlbums: undefined,
+            targetPlatform: 'android',
+        });
+
+        expect(plan.protectedAlbumsToMerge).toEqual([]);
+        expect(plan.preview.protectedAlbums).toBe(0);
+        expect(plan.preview.unmatchedProtectedAlbums).toBe(1);
+    });
+
+    it('P1-1: excludes pending deletions belonging to existing or restored protected albums even when includePending is true', () => {
+        const protectedPhoto = asset('p-prot', 'photo', { albumId: 'alb-docs' });
+        const iOSNoAlbumIdPhoto = asset('p-ios-prot', 'photo');
+        const normalPhoto = asset('p-norm', 'photo', { albumId: 'alb-cam' });
+        const v2: BackupPayloadV2 = {
+            version: 2,
+            platform: 'android',
+            records: [
+                { id: protectedPhoto.id, kind: 'photo', decision: 'delete', fingerprint: mediaFingerprint(protectedPhoto), contentFingerprint: buildContentFingerprint(protectedPhoto, null) },
+                { id: iOSNoAlbumIdPhoto.id, kind: 'photo', decision: 'delete', fingerprint: mediaFingerprint(iOSNoAlbumIdPhoto), contentFingerprint: buildContentFingerprint(iOSNoAlbumIdPhoto, null) },
+                { id: normalPhoto.id, kind: 'photo', decision: 'delete', fingerprint: mediaFingerprint(normalPhoto), contentFingerprint: buildContentFingerprint(normalPhoto, null) },
+            ],
+            protectedAlbums: [{ albumId: 'alb-docs', title: 'Docs', createdAt: 10 }],
+            reviewIgnores: [],
+        };
+
+        const visible = new Map<string, Asset>([
+            ['photo:p-prot', protectedPhoto],
+            ['photo:p-ios-prot', iOSNoAlbumIdPhoto],
+            ['photo:p-norm', normalPhoto],
+        ]);
+        const plan = planRestore(v2, blank(), visible, true, {
+            targetPlatform: 'android',
+            localAlbums: [{ id: 'alb-docs', title: 'Docs' }, { id: 'alb-cam', title: 'Camera' }],
+            protectedAssetIds: new Set(['p-ios-prot']),
+        });
+
+        expect(plan.merged.deleteQueue.map(item => item.id)).toEqual(['p-norm']);
+        expect(plan.merged.photoProcessedIds).toEqual(['p-norm']);
+        expect(plan.preview.pendingDeletion).toBe(1);
+        expect(plan.preview.skipped).toBe(2);
+    });
+
+    it('P1-4: verifies contentFingerprint on blur ignores so Android small-integer _ID collisions never mis-bind', () => {
+        const oldBlurryPhoto = asset('42', 'photo', {
+            filename: 'IMG_OLD_BLUR.jpg', width: 3000, height: 2000, creationTime: 1700000000000,
+        });
+        const v2: BackupPayloadV2 = {
+            version: 2,
+            platform: 'android',
+            records: [],
+            protectedAlbums: [],
+            reviewIgnores: [
+                {
+                    ignoreType: 'blur',
+                    targetKey: '42',
+                    createdAt: 500,
+                    contentFingerprint: buildContentFingerprint(oldBlurryPhoto, 123456),
+                },
+            ],
+        };
+
+        // New Android phone has a completely unrelated photo at _ID = 42,
+        // while the real photo moved to _ID = 900.
+        const unrelatedCollidingPhoto = asset('42', 'photo', {
+            filename: 'IMG_OTHER_PHOTO.jpg', width: 4000, height: 3000, creationTime: 1710000000000,
+        });
+        const realRelocatedPhoto = asset('900', 'photo', {
+            filename: 'IMG_OLD_BLUR.jpg', width: 3000, height: 2000, creationTime: 1700000000500,
+        });
+        const visible = new Map<string, Asset>([
+            ['photo:42', unrelatedCollidingPhoto],
+            ['photo:900', realRelocatedPhoto],
+        ]);
+        const localSizes = new Map<string, number | null>([
+            ['photo:42', 999999],
+            ['photo:900', 123456],
+        ]);
+
+        const plan = planRestore(v2, blank(), visible, false, { localSizes, targetPlatform: 'android' });
+        expect(plan.reviewIgnoresToMerge).toEqual([
+            { ignoreType: 'blur', targetKey: '900', createdAt: 500 },
+        ]);
+        expect(plan.preview.reviewIgnores).toBe(1);
+    });
+
+    it('P1-4: rebinds cross-device copy whose mtime changed when contentFingerprint + fileSize match, while skipping genuine same-device edits', () => {
+        const exportedAndroid = asset('101', 'photo', {
+            filename: 'IMG_COPY.jpg', width: 4000, height: 3000, creationTime: 1700000000000, modificationTime: 1700000000000,
+        });
+        const v2Android: BackupPayloadV2 = {
+            version: 2,
+            platform: 'android',
+            records: [{
+                id: '101',
+                kind: 'photo',
+                decision: 'keep',
+                fingerprint: mediaFingerprint(exportedAndroid),
+                contentFingerprint: buildContentFingerprint(exportedAndroid, 2450123),
+            }],
+            protectedAlbums: [],
+            reviewIgnores: [],
+        };
+
+        // Cross-device copy updated modificationTime, kept exact fileSize/dimensions/filename, and collided on _ID=101.
+        const copiedPhoto = asset('101', 'photo', {
+            filename: 'IMG_COPY.jpg', width: 4000, height: 3000, creationTime: 1700000000000, modificationTime: 1700999999000,
+        });
+        const copyPlan = planRestore(v2Android, blank(), new Map([['photo:101', copiedPhoto]]), false, {
+            localSizes: new Map([['photo:101', 2450123]]),
+            targetPlatform: 'android',
+        });
+        expect(copyPlan.merged.photoProcessedIds).toEqual(['101']);
+        expect(copyPlan.preview.kept).toBe(1);
+        expect(copyPlan.preview.rebound).toBe(1);
+
+        // Genuine same-device edit changes fileSize -> rejected!
+        const editedAndroidPlan = planRestore(v2Android, blank(), new Map([['photo:101', copiedPhoto]]), false, {
+            localSizes: new Map([['photo:101', 2510000]]),
+            targetPlatform: 'android',
+        });
+        expect(editedAndroidPlan.merged.photoProcessedIds).toEqual([]);
+        expect(editedAndroidPlan.preview.skipped).toBe(1);
+
+        // Same-device iOS in-place edit (UUID match, hasFileSize=false, mtime changed) -> rejected!
+        const exportedIos = asset('IOS-UUID-1', 'photo', {
+            filename: 'IMG_IOS.heic', width: 4032, height: 3024, creationTime: 1700000000000, modificationTime: 1700000000000,
+        });
+        const v2Ios: BackupPayloadV2 = {
+            version: 2,
+            platform: 'ios',
+            records: [{
+                id: 'IOS-UUID-1',
+                kind: 'photo',
+                decision: 'keep',
+                fingerprint: mediaFingerprint(exportedIos),
+                contentFingerprint: buildContentFingerprint(exportedIos, null),
+            }],
+            protectedAlbums: [],
+            reviewIgnores: [],
+        };
+        const editedIos = { ...exportedIos, modificationTime: 1700500000000 };
+        const editedIosPlan = planRestore(v2Ios, blank(), new Map([['photo:IOS-UUID-1', editedIos]]), false, {
+            targetPlatform: 'ios',
+        });
+        expect(editedIosPlan.merged.photoProcessedIds).toEqual([]);
+        expect(editedIosPlan.preview.skipped).toBe(1);
     });
 });

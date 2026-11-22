@@ -525,5 +525,6 @@ export default {
     backup_preview_summary_v2: '可恢复保留 {kept} · 收藏 {collected}\n待删除 {pending} · 跨设备重绑定 {rebound}\n保护相册 {protectedAlbums} · 忽略记录 {reviewIgnores}\n已有决定 {existing} · 歧义跳过 {ambiguousSkipped} · 未匹配 {skipped}',
     backup_reminder_badge: '{count} 项未备份',
     backup_unsaved_changes_reminder: '自上次备份以来新增 {count} 项整理变更，建议适时导出加密备份。',
+    backup_unmatched_protected_albums_hint: '另有 {count} 个保护相册未能自动匹配（如跨平台或相册改名/不可读），请恢复后在设置中手动核对。',
 
 };
