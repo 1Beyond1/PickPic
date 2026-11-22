@@ -23,7 +23,8 @@ jest.mock('../services/privacy/encryptedStorage', () => {
   const module = require('@react-native-async-storage/async-storage');
   const storage = module.default ?? module;
   return { encryptedRecordStorage: storage, encryptedSettingsStorage: storage,
-    canWriteEncryptedStorage: () => true, markEncryptedStorageHydrated: () => {} };
+    canWriteEncryptedStorage: () => true, markEncryptedStorageHydrated: () => {},
+    resetEncryptedStorageKeys: jest.fn(async () => {}) };
 });
 jest.mock('../services/privacy/mediaCollectionsStorage', () => {
   let stored = {

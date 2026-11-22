@@ -20,16 +20,22 @@ async function removeSidecars(name: string): Promise<void> {
     }
 }
 async function unlock(db: SQLite.SQLiteDatabase, key: string): Promise<void> {
-    if (!/^[a-f0-9]{64}$/.test(key)) throw new LocalPrivacyError();
-    await db.execAsync(`PRAGMA key = "x'${key}'"; PRAGMA cipher_memory_security = ON; PRAGMA temp_store = MEMORY; PRAGMA busy_timeout = 5000;`);
-    const capability = await db.getFirstAsync<Record<string, string>>('PRAGMA cipher_version;');
-    if (!capability || !Object.values(capability).some(value => typeof value === 'string' && /^\d+\./.test(value))) throw new LocalPrivacyError();
-    await db.getFirstAsync('SELECT count(*) FROM sqlite_master'); // Wrong keys fail here.
+    if (!/^[a-f0-9]{64}$/.test(key)) throw new LocalPrivacyError('keystore_unavailable');
+    try {
+        await db.execAsync(`PRAGMA key = "x'${key}'"; PRAGMA cipher_memory_security = ON; PRAGMA temp_store = MEMORY; PRAGMA busy_timeout = 5000;`);
+        const capability = await db.getFirstAsync<Record<string, string>>('PRAGMA cipher_version;');
+        if (!capability || !Object.values(capability).some(value => typeof value === 'string' && /^\d+\./.test(value))) {
+            throw new LocalPrivacyError('cipher_decrypt_failed');
+        }
+        await db.getFirstAsync('SELECT count(*) FROM sqlite_master'); // Wrong keys fail here.
+    } catch (error) {
+        throw error instanceof LocalPrivacyError ? error : new LocalPrivacyError('cipher_decrypt_failed');
+    }
 }
 async function verifyIntegrity(db: SQLite.SQLiteDatabase): Promise<void> {
     const rows = await db.getAllAsync<Record<string, unknown>>('PRAGMA integrity_check;');
-    if (rows.length !== 1 || !Object.values(rows[0]).includes('ok')) throw new LocalPrivacyError();
-    if ((await db.getAllAsync('PRAGMA cipher_integrity_check;')).length !== 0) throw new LocalPrivacyError();
+    if (rows.length !== 1 || !Object.values(rows[0]).includes('ok')) throw new LocalPrivacyError('schema_corrupt');
+    if ((await db.getAllAsync('PRAGMA cipher_integrity_check;')).length !== 0) throw new LocalPrivacyError('cipher_decrypt_failed');
 }
 async function isComplete(db: SQLite.SQLiteDatabase): Promise<boolean> {
     const meta = await db.getFirstAsync("SELECT name FROM sqlite_master WHERE type='table' AND name='meta'");
@@ -110,11 +116,29 @@ export async function openEncryptedDatabase(): Promise<SQLite.SQLiteDatabase> {
         await removeSidecars(DB_NAME);
         await target.execAsync('PRAGMA journal_mode = WAL;');
         return target;
-    } catch {
+    } catch (error) {
         await source?.closeAsync().catch(() => undefined);
         await target?.closeAsync().catch(() => undefined);
-        usePrivacyStore.getState().block('scanner', 'read');
-        throw new LocalPrivacyError();
+        const reason = error instanceof LocalPrivacyError ? error.reason : 'cipher_decrypt_failed';
+        usePrivacyStore.getState().block('scanner', 'read', reason);
+        throw new LocalPrivacyError(reason);
+    }
+}
+
+/** Explicit user-confirmed self-rescue only: removes PickPic's own local SQLite
+ * database files and sidecars so a fresh encrypted index can be created.
+ * Never touches user media library files. */
+export async function resetEncryptedDatabaseFiles(): Promise<void> {
+    for (const name of [ENCRYPTED_DB_NAME, DB_NAME]) {
+        try {
+            if (await exists(name)) {
+                await SQLite.deleteDatabaseAsync(name);
+            }
+        } catch {
+            // Fall back to direct file deletion for the owned database file only.
+            await FileSystem.deleteAsync(uri(name), { idempotent: true });
+        }
+        await removeSidecars(name);
     }
 }
 
@@ -137,7 +161,8 @@ export async function withEncryptedTransaction<T>(fn: (db: SQLite.SQLiteDatabase
     } catch (error) {
         if (begun) await connection?.execAsync('ROLLBACK;').catch(() => undefined);
         if (phase === 'callback') throw error; // A cancelled application action is not a lost key.
-        usePrivacyStore.getState().block('scanner', 'write');
-        throw new LocalPrivacyError();
+        const reason = error instanceof LocalPrivacyError ? error.reason : 'storage_io';
+        usePrivacyStore.getState().block('scanner', 'write', reason);
+        throw new LocalPrivacyError(reason);
     } finally { await connection?.closeAsync().catch(() => undefined); }
 }

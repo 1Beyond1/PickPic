@@ -51,27 +51,34 @@ async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
     try {
         // Web has no device SecureStore/SQLCipher in this integration. Keep
         // existing browser data untouched instead of silently using plaintext.
-        if (Platform.OS === 'web') throw new LocalPrivacyError();
+        if (Platform.OS === 'web') throw new LocalPrivacyError('keystore_unavailable');
         db = await openEncryptedDatabase();
 
-        // Enable WAL mode for better performance
-        await db.execAsync('PRAGMA journal_mode = WAL;');
+        try {
+            // Enable WAL mode for better performance
+            await db.execAsync('PRAGMA journal_mode = WAL;');
 
-        // Run migrations
-        await runMigrations(db);
+            // Run migrations
+            await runMigrations(db);
+        } catch (migrationError) {
+            throw migrationError instanceof LocalPrivacyError
+                ? migrationError
+                : new LocalPrivacyError('schema_corrupt');
+        }
         usePrivacyStore.getState().clear('scanner');
 
         console.log('[DB] Database ready.');
         return db;
-    } catch {
+    } catch (error) {
         // Opening succeeds before PRAGMA/migrations run. If either step fails,
         // close that handle before allowing a retry so a transient failure
         // cannot accumulate open connections or leave a lock behind.
         if (db) {
             await db.closeAsync().catch(() => undefined);
         }
-        usePrivacyStore.getState().block('scanner', 'read');
-        throw new LocalPrivacyError();
+        const reason = error instanceof LocalPrivacyError ? error.reason : 'cipher_decrypt_failed';
+        usePrivacyStore.getState().block('scanner', 'read', reason);
+        throw new LocalPrivacyError(reason);
     }
 }
 

@@ -42,6 +42,11 @@ jest.mock('../../services/scanner', () => ({
 jest.mock('../../services/mediaProgressStorage', () => ({ flushMediaProgress: async () => {} }));
 jest.mock('../../services/privacy/settingsStorage', () => ({ flushSettings: async () => {} }));
 jest.mock('../../services/privacy/mediaCache', () => ({ clearLegacyMediaCache: async () => {} }));
+jest.mock('../../services/privacy/recovery', () => ({
+    resolvePrimaryFailureDomain: () => null,
+    resetLocalPrivacyIndex: jest.fn().mockResolvedValue(undefined),
+    recoverFromEncryptedBackup: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('../../stores/useScannerStore', () => ({ useScannerStore: { getState: () => ({ setLastError: jest.fn() }) } }));
 jest.mock('../../database', () => ({
     AssetRepository: { removeAssetsAndDerivedData: jest.fn().mockResolvedValue(undefined) },

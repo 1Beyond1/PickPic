@@ -291,11 +291,29 @@ async function loadMediaProgressEnvelope(
             },
             version: envelope?.version ?? 0,
         };
-    } catch {
+    } catch (error) {
         collectionsReady = false;
-        usePrivacyStore.getState().block('records', 'read');
-        throw new LocalPrivacyError();
+        const reason = error instanceof LocalPrivacyError ? error.reason : 'schema_corrupt';
+        usePrivacyStore.getState().block('records', 'read', reason);
+        throw new LocalPrivacyError(reason);
     }
+}
+
+/** Explicit user-confirmed self-rescue only: clears in-memory persistence queues
+ * after the local encrypted index has been wiped for reinitialization. */
+export async function resetMediaProgressPersistenceState(): Promise<void> {
+    await drainQueue();
+    lastWriteFailed = false;
+    latestMetadata = null;
+    pendingMetadata = null;
+    lastCollectionsWriteFailed = false;
+    latestCollections = null;
+    pendingCollections = null;
+    lastPersistedCollections = emptyMediaProgressCollections();
+    collectionsReady = false;
+    otherActiveWrite = null;
+    otherPendingWrite = null;
+    otherLatestWrite = null;
 }
 
 function enqueueMetadataWrite(name: string, value: string): void {
