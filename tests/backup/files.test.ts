@@ -19,6 +19,7 @@ jest.mock('expo-file-system', () => ({
 import { Platform } from 'react-native';
 import * as Picker from 'expo-document-picker';
 import * as Legacy from 'expo-file-system/legacy';
+import { MAX_BACKUP_BYTES } from '../../services/backup/crypto';
 import { pickEncryptedFile, saveEncryptedFile } from '../../services/backup/files';
 beforeEach(() => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
@@ -43,7 +44,7 @@ it('does not create a destination if the user cancels the directory picker', asy
 });
 it('checks input size before reading and never removes the original user file', async () => {
     jest.mocked(Picker.getDocumentAsync).mockResolvedValue({ canceled: false, assets: [{ uri: 'content://original/backup' }] } as any);
-    mockSize = 20 * 1024 * 1024;
+    mockSize = MAX_BACKUP_BYTES + 1;
     await expect(pickEncryptedFile()).rejects.toMatchObject({ code: 'size' });
     expect(mockRead).not.toHaveBeenCalled(); expect(mockDelete).not.toHaveBeenCalled();
 });
