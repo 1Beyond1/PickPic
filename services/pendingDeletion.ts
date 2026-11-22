@@ -14,6 +14,7 @@ export interface PendingDeletionResult {
     deletedIds: string[];
     remainingIds: string[];
     failureKind: 'cancelled' | 'failed' | null;
+    protectedSkippedIds?: string[];
 }
 
 /** Existing photo/video arrays remain compatible with password backups. This

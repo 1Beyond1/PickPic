@@ -17,6 +17,8 @@ interface SimilarGroupCardProps {
     memberAssetIds: string[];
     previewUris?: readonly string[];
     isProcessed?: boolean;
+    protectedCount?: number;
+    onIgnore?: () => void;
     onPress: (layout?: { x: number; y: number; width: number; height: number }) => void;
 }
 
@@ -25,6 +27,8 @@ export function SimilarGroupCard({
     memberAssetIds,
     previewUris,
     isProcessed = false,
+    protectedCount = 0,
+    onIgnore,
     onPress,
 }: SimilarGroupCardProps) {
     const { colors } = useThemeColor();
@@ -69,13 +73,17 @@ export function SimilarGroupCard({
         };
     }, [loadThumbnails]);
 
-    return (
+    const cardButton = (
         <Pressable
             ref={containerRef}
             collapsable={false}
             accessibilityRole="button"
             accessibilityLabel={`${t('similar_group_detail_title')}, ${t('scan_photo_count', { count: memberCount })}${isProcessed ? `, ${t('similar_group_processed')}` : ''}`}
-            style={({ pressed }) => [styles.container, { borderBottomColor: colors.divider, backgroundColor: pressed ? colors.surfaceHover : 'transparent' }]}
+            style={({ pressed }) => [
+                styles.container,
+                onIgnore ? styles.containerInRow : { borderBottomColor: colors.divider },
+                { backgroundColor: pressed ? colors.surfaceHover : 'transparent' },
+            ]}
             onPress={handlePress}
         >
             <View style={styles.previews}>
@@ -88,6 +96,12 @@ export function SimilarGroupCard({
             <View style={styles.info}>
                 <Text style={[styles.title, { color: colors.text }]}>{t('similar_group_detail_title')}</Text>
                 <Text style={[styles.count, { color: colors.textSecondary }]}>{t('scan_photo_count', { count: memberCount })}</Text>
+                {protectedCount > 0 && (
+                    <View style={styles.processed}>
+                        <Ionicons name="shield-checkmark-outline" size={14} color={colors.primary} />
+                        <Text style={[styles.count, { color: colors.primary }]}>{t('similar_protected_count', { count: protectedCount })}</Text>
+                    </View>
+                )}
                 {isProcessed && (
                     <View style={styles.processed}>
                         <Ionicons name="checkmark" size={14} color={colors.success} />
@@ -98,9 +112,37 @@ export function SimilarGroupCard({
             <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
         </Pressable>
     );
+
+    if (!onIgnore) {
+        return cardButton;
+    }
+
+    return (
+        <View style={[styles.rowWrapper, { borderBottomColor: colors.divider }]}>
+            {cardButton}
+            <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t('similar_not_similar_hide')}
+                onPress={onIgnore}
+                style={({ pressed }) => [
+                    styles.ignoreButton,
+                    { backgroundColor: pressed ? colors.surfaceHover : colors.surface },
+                ]}
+            >
+                <Ionicons name="eye-off-outline" size={16} color={colors.textSecondary} />
+                <Text style={[styles.ignoreLabel, { color: colors.textSecondary }]}>{t('similar_not_similar_short')}</Text>
+            </Pressable>
+        </View>
+    );
 }
 
 const styles = StyleSheet.create({
+    rowWrapper: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
     container: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -108,6 +150,26 @@ const styles = StyleSheet.create({
         paddingVertical: 16,
         gap: 12,
         borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    containerInRow: {
+        flex: 1,
+        minWidth: 0,
+        borderBottomWidth: 0,
+    },
+    ignoreButton: {
+        minHeight: UI_METRICS.touchTarget,
+        minWidth: UI_METRICS.touchTarget,
+        paddingHorizontal: 10,
+        paddingVertical: 8,
+        borderRadius: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        flexShrink: 0,
+    },
+    ignoreLabel: {
+        ...TYPOGRAPHY.caption,
     },
     previews: { flexDirection: 'row', gap: 4, flexShrink: 0 },
     thumbnail: { width: 48, height: 64, borderRadius: 8, overflow: 'hidden' },

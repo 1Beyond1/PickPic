@@ -3,12 +3,19 @@ import { ActivityIndicator, AppState, KeyboardAvoidingView, Platform, Pressable,
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import type { BackupPayload, RestorePreview } from '../services/backup/payload';
+import {
+    BACKUP_REMINDER_THRESHOLD,
+    markBackupCompleted,
+    useBackupReminderStore,
+} from '../services/backup/changeTracker';
 import { BottomSheet } from './BottomSheet';
 import { SettingsRow } from './SettingsRow';
 
 export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) {
     const { colors } = useThemeColor();
     const { t } = useI18n();
+    const pendingBackupChanges = useBackupReminderStore(state => state.pendingChanges);
+    const showBackupReminder = pendingBackupChanges >= BACKUP_REMINDER_THRESHOLD;
     const [mode, setMode] = useState<'export' | 'import' | null>(null);
     const [password, setPassword] = useState('');
     const [repeat, setRepeat] = useState('');
@@ -94,6 +101,9 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
                 let saved: boolean;
                 try { saved = await saveEncryptedFile(output.bytes); }
                 finally { externalUI.current = false; }
+                if (saved) {
+                    await markBackupCompleted().catch(() => undefined);
+                }
                 if (!cancelled()) setMessage(saved
                     ? t(Platform.OS === 'ios' ? 'backup_save_ios' : 'backup_save_android', { saved: output.saved, skipped: output.skipped })
                     : t('backup_save_cancelled'));
@@ -129,12 +139,19 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
             editable={!busy} maxLength={256} style={[styles.input, { color: colors.text, backgroundColor: colors.surfaceHover }]} />
     );
     return <>
+        {showBackupReminder && (
+            <View testID="backup-change-reminder-badge" style={[styles.reminderBanner, { backgroundColor: colors.surfaceHover }]}>
+                <Text style={[styles.reminderText, { color: colors.text }]}>
+                    {t('backup_unsaved_changes_reminder', { count: pendingBackupChanges })}
+                </Text>
+            </View>
+        )}
         <SettingsRow label={t('backup_export_label')} detail={t('backup_export_detail')} disabled={disabled || Platform.OS === 'web'} onPress={() => { clear(); setMode('export'); }} />
         <SettingsRow label={t('backup_import_label')} disabled={disabled || Platform.OS === 'web'} onPress={() => { clear(); setMode('import'); }} />
         <BottomSheet visible={mode !== null} title={t(mode === 'export' ? 'backup_export_title' : 'backup_import_title')} onClose={clear}>
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flexShrink: 1 }}>
                 <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-                    <Text style={[styles.copy, { color: colors.textSecondary }]}>{t('backup_scope_desc')}</Text>
+                    <Text style={[styles.copy, { color: colors.textSecondary }]}>{t('backup_scope_desc_v2')}</Text>
                     {mode === 'export' && <>
                         <Text style={[styles.copy, { color: colors.textSecondary }]}>{t('backup_password_warning')}</Text>
                         {input(password, setPassword, t('backup_password_placeholder'))}
@@ -149,13 +166,25 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
                         </>}
                     </>}
                     {preview && <>
-                        <Text style={[styles.copy, { color: colors.text }]}>{t('backup_preview_summary', {
-                            kept: preview.kept,
-                            collected: preview.collected,
-                            pending: preview.pendingDeletion,
-                            existing: preview.existing,
-                            skipped: preview.skipped,
-                        })}</Text>
+                        <Text style={[styles.copy, { color: colors.text }]}>{payload.current?.version === 2
+                            ? t('backup_preview_summary_v2', {
+                                kept: preview.kept,
+                                collected: preview.collected,
+                                pending: preview.pendingDeletion,
+                                rebound: preview.rebound ?? 0,
+                                protectedAlbums: preview.protectedAlbums ?? 0,
+                                reviewIgnores: preview.reviewIgnores ?? 0,
+                                existing: preview.existing,
+                                ambiguousSkipped: preview.ambiguousSkipped ?? 0,
+                                skipped: preview.skipped,
+                            })
+                            : t('backup_preview_summary', {
+                                kept: preview.kept,
+                                collected: preview.collected,
+                                pending: preview.pendingDeletion,
+                                existing: preview.existing,
+                                skipped: preview.skipped,
+                            })}</Text>
                         <View style={styles.toggle}>
                             <Text style={[styles.copy, { flex: 1, color: colors.text }]}>{t('backup_include_pending')}</Text>
                             <Switch accessibilityLabel={t('backup_include_pending')} value={includePending} onValueChange={setIncludePending} disabled={busy} />
@@ -177,4 +206,6 @@ const styles = StyleSheet.create({
     button: { minHeight: 48, borderRadius: 24, padding: 12, alignItems: 'center', justifyContent: 'center' },
     buttonLabel: { fontSize: 15, fontWeight: '600', textAlign: 'center' },
     toggle: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    reminderBanner: { paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, marginBottom: 8 },
+    reminderText: { fontSize: 13, lineHeight: 19 },
 });

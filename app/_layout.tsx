@@ -13,8 +13,14 @@ import { useThemeColor } from '../hooks/useThemeColor';
 import { syncModalAppearance } from '../services/modalAppearance';
 import { AssetRepository, closeDatabase, getDatabase } from '../database';
 import { flushMediaProgress } from '../services/mediaProgressStorage';
+import { loadBackupChangeState } from '../services/backup/changeTracker';
 import { flushSettings } from '../services/privacy/settingsStorage';
 import { clearLegacyMediaCache } from '../services/privacy/mediaCache';
+import {
+  recoverFromEncryptedBackup,
+  resetLocalPrivacyIndex,
+  resolvePrimaryFailureDomain,
+} from '../services/privacy/recovery';
 import { LocalPrivacyError, usePrivacyStore } from '../stores/usePrivacyStore';
 import { isScanning, start as startScanner, stop as stopScanner } from '../services/scanner';
 import { useMediaStore } from '../stores/useMediaStore';
@@ -32,6 +38,7 @@ export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
   const privacyFailures = usePrivacyStore(state => state.failures);
+  const privacyReasons = usePrivacyStore(state => state.reasons);
   const mediaHydrated = useMediaStore(state => state.hasHydrated);
   const [privacyRetrying, setPrivacyRetrying] = useState(false);
   const [mediaPermission, , getMediaPermission] = MediaLibrary.usePermissions({
@@ -299,6 +306,8 @@ export default function RootLayout() {
       try {
         await clearLegacyMediaCache();
         await getDatabase(); // Migrate/validate the protected scanner index before showing the app.
+        void useMediaStore.getState().loadProtectedAlbums?.();
+        void loadBackupChangeState().catch(() => undefined);
         // Refresh media counts on app start
         await useMediaStore.getState().refreshTotalCounts();
       } catch {
@@ -416,9 +425,17 @@ export default function RootLayout() {
   const failureKinds = Object.values(privacyFailures);
   if (!privacyReady) {
     const failure = failureKinds.includes('read') ? 'read' : failureKinds.length ? 'write' : null;
+    const failureDomain = resolvePrimaryFailureDomain(privacyFailures, privacyReasons ?? {});
     return <GestureHandlerRootView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <PrivacyRecoveryScreen failure={failure} busy={privacyRetrying} onRetry={() => { void retryPrivacy(); }} />
+      <PrivacyRecoveryScreen
+        failure={failure}
+        failureDomain={failureDomain}
+        busy={privacyRetrying}
+        onRetry={() => { void retryPrivacy(); }}
+        onResetLocalIndex={resetLocalPrivacyIndex}
+        onRecoverFromBackup={recoverFromEncryptedBackup}
+      />
     </GestureHandlerRootView>;
   }
 

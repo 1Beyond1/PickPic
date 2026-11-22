@@ -7,14 +7,31 @@ import { Platform } from 'react-native';
 import { openEncryptedDatabase, withEncryptedTransaction } from '../../database/encryptedDatabase';
 import { runMigrations } from '../../database/migrations';
 import { closeDatabase, getDatabase, withTransaction } from '../../database/db';
-import { usePrivacyStore } from '../../stores/usePrivacyStore';
+import { LocalPrivacyError, usePrivacyStore } from '../../stores/usePrivacyStore';
 
-beforeEach(() => { Platform.OS = 'web'; usePrivacyStore.setState({ failures: {} }); });
+beforeEach(() => { Platform.OS = 'web'; usePrivacyStore.setState({ failures: {}, reasons: {} }); });
 afterEach(async () => { await closeDatabase(); });
 it('does not open a plaintext browser database when native protection is unavailable', async () => {
     await expect(getDatabase()).rejects.toThrow('original data was preserved');
     expect(SQLite.openDatabaseAsync).not.toHaveBeenCalled(); expect(openEncryptedDatabase).not.toHaveBeenCalled();
     expect(usePrivacyStore.getState().failures.scanner).toBe('read');
+    expect(usePrivacyStore.getState().reasons.scanner).toBe('keystore_unavailable');
+});
+it('classifies keystore, sqlcipher decrypt, and schema migration failures into distinct domains', async () => {
+    Platform.OS = 'android';
+    jest.mocked(openEncryptedDatabase).mockRejectedValueOnce(new LocalPrivacyError('keystore_unavailable'));
+    await expect(getDatabase()).rejects.toThrow('original data was preserved');
+    expect(usePrivacyStore.getState().reasons.scanner).toBe('keystore_unavailable');
+
+    jest.mocked(openEncryptedDatabase).mockRejectedValueOnce(new Error('SQLCipher decrypt failed'));
+    await expect(getDatabase()).rejects.toThrow('original data was preserved');
+    expect(usePrivacyStore.getState().reasons.scanner).toBe('cipher_decrypt_failed');
+
+    const db = { execAsync: jest.fn().mockResolvedValue(undefined), closeAsync: jest.fn().mockResolvedValue(undefined) } as any;
+    jest.mocked(openEncryptedDatabase).mockResolvedValueOnce(db);
+    jest.mocked(runMigrations).mockRejectedValueOnce(new Error('schema mismatch'));
+    await expect(getDatabase()).rejects.toThrow('original data was preserved');
+    expect(usePrivacyStore.getState().reasons.scanner).toBe('schema_corrupt');
 });
 it('closes failed native initialization, reports a non-sensitive gate and permits explicit retry', async () => {
     Platform.OS = 'android';

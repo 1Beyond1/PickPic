@@ -23,42 +23,47 @@ export function markEncryptedStorageHydrated(scope: DeviceKeyScope, name: string
     usePrivacyStore.getState().clear(scope);
 }
 function validateState(value: string): void {
-    const parsed: unknown = JSON.parse(value);
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(value);
+    } catch {
+        throw new LocalPrivacyError('schema_corrupt');
+    }
     if (!parsed || typeof parsed !== 'object' || !('state' in parsed)
-        || !parsed.state || typeof parsed.state !== 'object' || Array.isArray(parsed.state)) throw new LocalPrivacyError();
+        || !parsed.state || typeof parsed.state !== 'object' || Array.isArray(parsed.state)) throw new LocalPrivacyError('schema_corrupt');
     // Zustand silently falls back to defaults for an unsupported persisted
     // version without a migration function. Never remove that source first.
-    if ('version' in parsed && parsed.version !== 0) throw new LocalPrivacyError();
+    if ('version' in parsed && parsed.version !== 0) throw new LocalPrivacyError('schema_corrupt');
     const state = parsed.state as Record<string, unknown>;
-    if ('recentDecisions' in state && !isRecentDecisions(state.recentDecisions)) throw new LocalPrivacyError();
+    if ('recentDecisions' in state && !isRecentDecisions(state.recentDecisions)) throw new LocalPrivacyError('schema_corrupt');
     for (const name of ['photoProcessedIds', 'videoProcessedIds', 'selectedAlbumIds', 'activeCollectionIds']) {
-        if (name in state && (!Array.isArray(state[name]) || !(state[name] as unknown[]).every(id => typeof id === 'string' && id.length > 0))) throw new LocalPrivacyError();
+        if (name in state && (!Array.isArray(state[name]) || !(state[name] as unknown[]).every(id => typeof id === 'string' && id.length > 0))) throw new LocalPrivacyError('schema_corrupt');
     }
     for (const name of ['deleteQueue', 'collectionQueue', 'videoTrashBin']) {
         if (name in state && (!Array.isArray(state[name]) || !(state[name] as unknown[]).every(item =>
-            !!item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' && item.id.length > 0))) throw new LocalPrivacyError();
+            !!item && typeof item === 'object' && 'id' in item && typeof item.id === 'string' && item.id.length > 0))) throw new LocalPrivacyError('schema_corrupt');
     }
     if ('pendingDeletionInfo' in state) {
         const info = state.pendingDeletionInfo;
-        if (!info || typeof info !== 'object' || Array.isArray(info)) throw new LocalPrivacyError();
+        if (!info || typeof info !== 'object' || Array.isArray(info)) throw new LocalPrivacyError('schema_corrupt');
         for (const value of Object.values(info)) {
             if (!value || typeof value !== 'object' || !('source' in value) || !('addedAt' in value)
                 || !['photos', 'videos', 'blur', 'similar', 'classification', 'unknown'].includes(String(value.source))
-                || !Number.isSafeInteger(value.addedAt) || Number(value.addedAt) < 0) throw new LocalPrivacyError();
+                || !Number.isSafeInteger(value.addedAt) || Number(value.addedAt) < 0) throw new LocalPrivacyError('schema_corrupt');
         }
     }
     if ('deletedCounts' in state) {
         const counts = state.deletedCounts;
         if (!counts || typeof counts !== 'object' || !('photos' in counts) || !('videos' in counts)
-            || ![counts.photos, counts.videos].every(value => Number.isSafeInteger(value) && Number(value) >= 0)) throw new LocalPrivacyError();
+            || ![counts.photos, counts.videos].every(value => Number.isSafeInteger(value) && Number(value) >= 0)) throw new LocalPrivacyError('schema_corrupt');
     }
     if ('organizingSessions' in state) {
         const sessions = state.organizingSessions;
         if (!sessions || typeof sessions !== 'object' || Array.isArray(sessions)
-            || Object.keys(sessions).sort().join(',') !== 'photo,video') throw new LocalPrivacyError();
+            || Object.keys(sessions).sort().join(',') !== 'photo,video') throw new LocalPrivacyError('schema_corrupt');
         for (const kind of ['photo', 'video'] as const) {
             const session = (sessions as Record<string, unknown>)[kind];
-            if (session !== null && (!isOrganizingSession(session) || session.kind !== kind)) throw new LocalPrivacyError();
+            if (session !== null && (!isOrganizingSession(session) || session.kind !== kind)) throw new LocalPrivacyError('schema_corrupt');
         }
     }
 }
@@ -69,20 +74,29 @@ async function seal(name: string, value: string, scope: DeviceKeyScope, exists: 
     const clear = new TextEncoder().encode(value);
     try {
         const nonce = await getRandomBytesAsync(12);
-        if (!(nonce instanceof Uint8Array) || nonce.length !== 12) throw new LocalPrivacyError();
+        if (!(nonce instanceof Uint8Array) || nonce.length !== 12) throw new LocalPrivacyError('keystore_unavailable');
         const cipher = gcm(key, nonce, aad(name)).encrypt(clear);
         return `${prefix}${bytesToHex(nonce)}:${fromByteArray(cipher)}`;
     } finally { key.fill(0); clear.fill(0); }
 }
 async function unseal(name: string, value: string, scope: DeviceKeyScope): Promise<string> {
-    if (!value.startsWith(prefix)) throw new LocalPrivacyError();
+    if (!value.startsWith(prefix)) throw new LocalPrivacyError('cipher_decrypt_failed');
     const parts = value.slice(prefix.length).split(':');
-    if (parts.length !== 2 || !/^[a-f0-9]{24}$/.test(parts[0]) || !/^[A-Za-z0-9+/]+={0,2}$/.test(parts[1])) throw new LocalPrivacyError();
+    if (parts.length !== 2 || !/^[a-f0-9]{24}$/.test(parts[0]) || !/^[A-Za-z0-9+/]+={0,2}$/.test(parts[1])) throw new LocalPrivacyError('cipher_decrypt_failed');
     const key = hexToBytes(await getDeviceKeyHex(scope, true));
     let clear: Uint8Array | undefined;
     try {
-        clear = gcm(key, hexToBytes(parts[0]), aad(name)).decrypt(toByteArray(parts[1]));
-        const decoded = new TextDecoder('utf-8', { fatal: true }).decode(clear);
+        try {
+            clear = gcm(key, hexToBytes(parts[0]), aad(name)).decrypt(toByteArray(parts[1]));
+        } catch {
+            throw new LocalPrivacyError('cipher_decrypt_failed');
+        }
+        let decoded: string;
+        try {
+            decoded = new TextDecoder('utf-8', { fatal: true }).decode(clear);
+        } catch {
+            throw new LocalPrivacyError('cipher_decrypt_failed');
+        }
         validateState(decoded);
         return decoded;
     } finally { key.fill(0); clear?.fill(0); }
@@ -116,32 +130,45 @@ export function createEncryptedStorage(
                 if (legacy !== null) await AsyncStorage.removeItem(name);
                 ready.add(name);
                 return decoded;
-            } catch {
+            } catch (error) {
                 ready.delete(name);
-                usePrivacyStore.getState().block(scope, 'read');
-                throw new LocalPrivacyError();
+                const reason = error instanceof LocalPrivacyError ? error.reason : 'storage_io';
+                usePrivacyStore.getState().block(scope, 'read', reason);
+                throw new LocalPrivacyError(reason);
             }
         },
         async setItem(name, value) {
             try {
-                if (!ready.has(name)) throw new LocalPrivacyError();
+                if (!ready.has(name)) throw new LocalPrivacyError('storage_io');
                 const exists = await AsyncStorage.getItem(name + suffix) !== null;
                 await AsyncStorage.setItem(name + suffix, await seal(name, value, scope, exists));
                 if (clearOnWrite) {
                     usePrivacyStore.getState().clear(scope);
                 }
-            } catch {
-                usePrivacyStore.getState().block(scope, 'write');
-                throw new LocalPrivacyError();
+            } catch (error) {
+                const reason = error instanceof LocalPrivacyError ? error.reason : 'storage_io';
+                usePrivacyStore.getState().block(scope, 'write', reason);
+                throw new LocalPrivacyError(reason);
             }
         },
         async removeItem(name) {
             // There is no UI clear-storage escape hatch during a failed read.
-            if (!ready.has(name)) throw new LocalPrivacyError();
+            if (!ready.has(name)) throw new LocalPrivacyError('storage_io');
             await AsyncStorage.removeItem(name + suffix);
             await AsyncStorage.removeItem(name);
         },
     };
+}
+
+/** Explicit user-confirmed self-rescue only: removes encrypted/legacy AsyncStorage
+ * records for the listed store keys and clears in-memory hydration markers. */
+export async function resetEncryptedStorageKeys(names: readonly string[] = ['photoapp-media-progress', 'photoapp-settings']): Promise<void> {
+    for (const name of names) {
+        await AsyncStorage.removeItem(name + suffix);
+        await AsyncStorage.removeItem(name);
+    }
+    for (const set of readyNames.values()) set.clear();
+    for (const set of hydratedNames.values()) set.clear();
 }
 // Records span both AsyncStorage metadata and SQLCipher collections; let
 // mediaProgressStorage clear the 'records' write gate only once both stores

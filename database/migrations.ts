@@ -20,7 +20,11 @@ import {
     SQL_CREATE_MEDIA_PENDING_QUEUE_INDEXES,
     SQL_CREATE_MEDIA_PROCESSED_RECORDS,
     SQL_CREATE_MEDIA_PROCESSED_RECORDS_INDEXES,
+    SQL_CREATE_MEDIA_REVIEW_IGNORES,
+    SQL_CREATE_MEDIA_REVIEW_IGNORES_INDEXES,
     SQL_CREATE_META,
+    SQL_CREATE_PROTECTED_ALBUMS,
+    SQL_CREATE_PROTECTED_ALBUMS_INDEXES,
     SQL_CREATE_AI_ANALYSIS,
     AI_ALGO_VERSION,
     SQL_CREATE_SIMILAR_REVIEWS,
@@ -28,7 +32,7 @@ import {
     SQL_INDEX_DUP_GROUPS_CREATED,
 } from './schema';
 
-const CURRENT_SCHEMA_VERSION = 7;
+const CURRENT_SCHEMA_VERSION = 8;
 
 /**
  * Run all migrations to bring database to current version
@@ -100,6 +104,19 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
             await db.execAsync(SQL_INDEX_ASSETS_STATUS_BLUR);
             await db.execAsync(SQL_INDEX_DUP_GROUPS_CREATED);
             await setSchemaVersion(db, 7);
+        });
+    }
+    if (schemaVersion < 8) {
+        await db.withTransactionAsync(async () => {
+            await db.execAsync(SQL_CREATE_MEDIA_REVIEW_IGNORES);
+            for (const indexSql of SQL_CREATE_MEDIA_REVIEW_IGNORES_INDEXES) {
+                await db.execAsync(indexSql);
+            }
+            await db.execAsync(SQL_CREATE_PROTECTED_ALBUMS);
+            for (const indexSql of SQL_CREATE_PROTECTED_ALBUMS_INDEXES) {
+                await db.execAsync(indexSql);
+            }
+            await setSchemaVersion(db, 8);
         });
     }
 }

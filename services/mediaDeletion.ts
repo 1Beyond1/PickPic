@@ -15,6 +15,34 @@ export function getDeletionFailureKind(error: unknown): 'cancelled' | 'failed' {
     return 'failed';
 }
 
+export interface DeleteAssetsProtectionOptions {
+    protectedAssetIds?: ReadonlySet<string>;
+    protectedAlbumIds?: ReadonlySet<string>;
+    onProtectedSkipped?: (skippedIds: string[]) => void;
+}
+
+function getAssetId<T extends MediaLibrary.Asset | string>(item: T): string {
+    return typeof item === 'string' ? item : item.id;
+}
+
+function isProtectedItem<T extends MediaLibrary.Asset | string>(
+    item: T,
+    options?: DeleteAssetsProtectionOptions,
+): boolean {
+    if (!options) return false;
+    const id = getAssetId(item);
+    if (options.protectedAssetIds?.has(id)) return true;
+    if (
+        typeof item !== 'string'
+        && typeof item.albumId === 'string'
+        && item.albumId.length > 0
+        && options.protectedAlbumIds?.has(item.albumId)
+    ) {
+        return true;
+    }
+    return false;
+}
+
 /**
  * MediaStore.createDeleteRequest limits each request to 2000 URIs on
  * Android 16+ for apps targeting API 36+. Our target SDK is 36.
@@ -25,14 +53,28 @@ export function getDeletionFailureKind(error: unknown): 'cancelled' | 'failed' {
 export async function deleteAssetsInBatches<T extends MediaLibrary.Asset | string>(
     assets: readonly T[],
     onBatchDeleted: (batch: T[]) => void | Promise<void>,
+    protection?: DeleteAssetsProtectionOptions,
 ): Promise<void> {
+    const safeAssets: T[] = [];
+    const skippedProtectedIds: string[] = [];
+    for (const item of assets) {
+        if (isProtectedItem(item, protection)) {
+            skippedProtectedIds.push(getAssetId(item));
+        } else {
+            safeAssets.push(item);
+        }
+    }
+    if (skippedProtectedIds.length > 0) {
+        protection?.onProtectedSkipped?.(skippedProtectedIds);
+    }
+
     const batchSize = Platform.OS === 'android' && Number(Platform.Version) >= 36
         ? 2000
-        : assets.length;
-    if (assets.length === 0) return;
+        : safeAssets.length;
+    if (safeAssets.length === 0) return;
 
-    for (let offset = 0; offset < assets.length; offset += batchSize) {
-        const batch = assets.slice(offset, offset + batchSize);
+    for (let offset = 0; offset < safeAssets.length; offset += batchSize) {
+        const batch = safeAssets.slice(offset, offset + batchSize);
         try {
             if (!await MediaLibrary.deleteAssetsAsync(batch)) throw new MediaDeletionError('cancelled');
         } catch (error) { throw new MediaDeletionError(getDeletionFailureKind(error)); }
