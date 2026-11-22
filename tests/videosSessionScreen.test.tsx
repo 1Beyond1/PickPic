@@ -16,7 +16,7 @@ jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({
 jest.mock('../components/AlbumSelector', () => ({ AlbumSelector: () => null }));
 jest.mock('../components/VideoFeedItem', () => ({ VideoFeedItem: ({ video, onDelete }: any) => {
     const { Pressable, Text } = require('react-native');
-    return <Pressable accessibilityRole="button" accessibilityLabel={`queue:${video.id}`} onPress={onDelete}><Text>{video.id}</Text></Pressable>;
+    return <Pressable accessibilityRole="button" accessibilityLabel={`queue:${video.id}`} onPress={() => onDelete(video)}><Text>{video.id}</Text></Pressable>;
 } }));
 jest.mock('../hooks/useThemeColor', () => ({ useThemeColor: () => ({ isDark: false, colors: require('../constants/theme').COLORS }) }));
 jest.mock('../hooks/useI18n', () => ({ useI18n: () => ({ language: 'zh', t: (key: string, params: Record<string, string | number> = {}) => {

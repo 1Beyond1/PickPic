@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { useFocusEffect } from 'expo-router';
 import * as MediaLibrary from 'expo-media-library';
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, AppState, BackHandler, FlatList, Linking, NativeScrollEvent, NativeSyntheticEvent, Pressable, ScrollView, StyleSheet, Text, View, ViewToken } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
@@ -354,10 +354,14 @@ export default function VideosScreen() {
         itemVisiblePercentThreshold: 50,
     }).current;
 
-    const handleFavorite = (video: any) => {
+    const handleFavorite = useCallback((video: any) => {
         setSelectedVideoForCollection(video);
         setShowAlbumSelector(true);
-    };
+    }, []);
+
+    const handleToggleMute = useCallback(() => {
+        setIsMuted(prev => !prev);
+    }, []);
 
     const handleConfirmCollection = async (ids: string[]) => {
         if (selectedVideoForCollection && ids.length > 0) {
@@ -451,9 +455,10 @@ export default function VideosScreen() {
         }
     };
 
+    const videoProcessedIdSet = useMemo(() => new Set(videoProcessedIds), [videoProcessedIds]);
     const unavailable = videoSessionRecoveryStatus === 'unavailable'
         || (!!session && !batchFinished && videoSessionUnavailableCount > 0
-            && !videos.some(asset => !videoProcessedIds.includes(asset.id)));
+            && !videos.some(asset => !videoProcessedIdSet.has(asset.id)));
     const readFailed = videoLoadFailed || videoSessionRecoveryStatus === 'failed';
     const permissionRequired = videoSessionRecoveryStatus === 'permission';
     const emptyTitle = readFailed ? 'video_load_failed' : permissionRequired ? 'video_session_permission' : unavailable ? 'session_unavailable'
@@ -465,11 +470,43 @@ export default function VideosScreen() {
     const scopeText = scope ? t(scope.albumIds.length ? 'session_album_scope' : 'session_all_scope', {
         count: scope.albumIds.length, order: t(`session_order_${scope.order}`),
     }) + (scope.date !== undefined ? ` · ${scope.date === 'unknown' ? t('scope_unknown_date') : t('scope_month_value', { year: scope.date.year, month: scope.date.month })}` : '') : null;
-    const activeIsProcessed = !!activeId && videoProcessedIds.includes(activeId);
+    const activeIsProcessed = !!activeId && videoProcessedIdSet.has(activeId);
     const resolvedActiveIndex = activeId ? videos.findIndex(video => video.id === activeId) : -1;
     const activeIndex = resolvedActiveIndex >= 0
         ? resolvedActiveIndex
         : Math.max(0, Math.min(videoCurrentIndex ?? 0, Math.max(0, videos.length - 1)));
+
+    const renderVideoItem = useCallback(({ item, index }: { item: any; index: number }) => (
+        <VideoFeedItem
+            video={item}
+            isActive={item.id === activeId}
+            shouldLoadSource={Math.abs(index - activeIndex) <= 1}
+            isScreenFocused={isScreenFocused}
+            shouldPlay={item.id === activeId && isScreenFocused && !showTrash && !showAlbumSelector}
+            isMuted={isMuted}
+            toggleMute={handleToggleMute}
+            onDelete={markVideoForTrash}
+            onFavorite={handleFavorite}
+            t={t}
+            colors={colors}
+            itemHeight={feedHeight}
+            onScrubbingChange={item.id === activeId ? handleScrubbingChange : undefined}
+        />
+    ), [
+        activeId,
+        activeIndex,
+        colors,
+        feedHeight,
+        handleFavorite,
+        handleScrubbingChange,
+        handleToggleMute,
+        isMuted,
+        isScreenFocused,
+        markVideoForTrash,
+        showAlbumSelector,
+        showTrash,
+        t,
+    ]);
 
     if (!videoPermissionChecked) {
         return (
@@ -569,23 +606,7 @@ export default function VideosScreen() {
                     maxToRenderPerBatch={2}
                     initialNumToRender={2}
                     removeClippedSubviews
-                    renderItem={({ item, index }) => (
-                        <VideoFeedItem
-                            video={item}
-                            isActive={item.id === activeId}
-                            shouldLoadSource={Math.abs(index - activeIndex) <= 1}
-                            isScreenFocused={isScreenFocused}
-                            shouldPlay={item.id === activeId && isScreenFocused && !showTrash && !showAlbumSelector}
-                            isMuted={isMuted}
-                            toggleMute={() => setIsMuted(prev => !prev)}
-                            onDelete={() => markVideoForTrash(item)}
-                            onFavorite={() => handleFavorite(item)}
-                            t={t}
-                            colors={colors}
-                            itemHeight={feedHeight}
-                            onScrubbingChange={item.id === activeId ? handleScrubbingChange : undefined}
-                        />
-                    )}
+                    renderItem={renderVideoItem}
                     pagingEnabled
                     scrollEnabled={!isScrubbing}
                     showsVerticalScrollIndicator={false}

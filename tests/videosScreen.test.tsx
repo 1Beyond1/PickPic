@@ -488,6 +488,17 @@ describe('VideosScreen processing behavior', () => {
       { id: 'video-3', shouldLoadSource: true, isActive: false },
       { id: 'video-4', shouldLoadSource: false, isActive: false },
     ]);
+
+    // Verify stable callback references across re-renders so React.memo(VideoFeedItem) stays effective.
+    const firstEl = updatedList.props.renderItem({ item: fiveVideos[1], index: 1, separators: {} });
+    act(() => {
+      updatedList.props.onViewableItemsChanged({ viewableItems: [{ key: 'video-3' }] });
+    });
+    const secondList = screen.UNSAFE_getByType(ReactNative.FlatList);
+    const secondEl = secondList.props.renderItem({ item: fiveVideos[1], index: 1, separators: {} });
+    expect(secondEl.props.toggleMute).toBe(firstEl.props.toggleMute);
+    expect(secondEl.props.onDelete).toBe(firstEl.props.onDelete);
+    expect(secondEl.props.onFavorite).toBe(firstEl.props.onFavorite);
     await screen.unmountAsync();
   });
 });

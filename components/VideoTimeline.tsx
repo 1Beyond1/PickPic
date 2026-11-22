@@ -11,6 +11,22 @@ function formatTime(value: number) {
     return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+function readPlayerDuration(player: VideoPlayer): number {
+    try {
+        return validDuration(player.duration);
+    } catch {
+        return 0;
+    }
+}
+
+function readPlayerCurrentTime(player: VideoPlayer, duration: number): number {
+    try {
+        return clampTime(player.currentTime, duration);
+    } catch {
+        return 0;
+    }
+}
+
 /** Playback only: moving this control never makes an organizing decision. */
 export function VideoTimeline({ player, sourceKey, active, colors, t, onScrubbingChange }: {
     player: VideoPlayer; sourceKey: string; active: boolean; colors: any; t: (key: string) => string;
@@ -32,22 +48,43 @@ export function VideoTimeline({ player, sourceKey, active, colors, t, onScrubbin
         scrubbing.current = false;
         callback.current(false);
         setFailed(false);
-        setProgress({ sourceKey, duration: validDuration(player.duration), time: clampTime(player.currentTime, validDuration(player.duration)) });
-        player.timeUpdateEventInterval = active ? 0.25 : 0;
-        const source = player.addListener('sourceLoad', event => {
-            if (!current) return;
-            setProgress({ sourceKey, duration: validDuration(event.duration), time: clampTime(player.currentTime, validDuration(event.duration)) });
-        });
-        const update = player.addListener('timeUpdate', event => {
-            if (!current || scrubbing.current) return;
-            setProgress(previous => {
-                const length = validDuration(player.duration) || previous.duration;
-                return { sourceKey, duration: length, time: clampTime(event.currentTime, length || previous.duration) };
+
+        const initialDuration = readPlayerDuration(player);
+        const initialTime = readPlayerCurrentTime(player, initialDuration);
+        setProgress({ sourceKey, duration: initialDuration, time: initialTime });
+
+        let sourceSub: { remove: () => void } | null = null;
+        let updateSub: { remove: () => void } | null = null;
+        try {
+            player.timeUpdateEventInterval = active ? 0.25 : 0;
+            sourceSub = player.addListener('sourceLoad', event => {
+                if (!current) return;
+                const nextDuration = validDuration(event.duration);
+                setProgress({
+                    sourceKey,
+                    duration: nextDuration,
+                    time: readPlayerCurrentTime(player, nextDuration),
+                });
             });
-        });
+            updateSub = player.addListener('timeUpdate', event => {
+                if (!current || scrubbing.current) return;
+                setProgress(previous => {
+                    const length = readPlayerDuration(player) || previous.duration;
+                    return {
+                        sourceKey,
+                        duration: length,
+                        time: clampTime(event.currentTime, length || previous.duration),
+                    };
+                });
+            });
+        } catch {
+            // Native SharedObject may already be releasing during fast-swipe unmount.
+        }
+
         return () => {
             current = false;
-            source.remove(); update.remove();
+            try { sourceSub?.remove(); } catch { /* ignore released listener */ }
+            try { updateSub?.remove(); } catch { /* ignore released listener */ }
             scrubbing.current = false;
             callback.current(false);
         };
@@ -68,16 +105,14 @@ export function VideoTimeline({ player, sourceKey, active, colors, t, onScrubbin
         } catch {
             // A rejected seek must not leave the preview target presented as
             // the actual playback position, including to accessibility APIs.
-            let actual = 0;
-            try { actual = clampTime(player.currentTime, duration); } catch { /* player may be released */ }
+            const actual = readPlayerCurrentTime(player, duration);
             setProgress({ sourceKey, duration, time: actual });
             setFailed(true);
         }
     };
     const endScrub = () => { scrubbing.current = false; callback.current(false); };
     const cancelScrub = () => {
-        let actual = 0;
-        try { actual = clampTime(player.currentTime, duration); } catch { /* player may be released */ }
+        const actual = readPlayerCurrentTime(player, duration);
         setProgress({ sourceKey, duration, time: actual });
         endScrub();
     };

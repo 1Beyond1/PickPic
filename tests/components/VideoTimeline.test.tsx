@@ -92,3 +92,14 @@ it('reports seek failure without leaving the playback/paging lock held', () => {
     expect(screen.getByTestId('video-timeline').props.accessibilityValue.now).toBe(0);
     expect(onScrubbingChange).toHaveBeenLastCalledWith(false);
 });
+it('handles a released native player throwing during mount or unmount without crashing', () => {
+    const releasedPlayer = {
+        get duration() { throw new Error('SharedObject released'); },
+        get currentTime() { throw new Error('SharedObject released'); },
+        set timeUpdateEventInterval(_value: number) { throw new Error('SharedObject released'); },
+        addListener: () => { throw new Error('SharedObject released'); },
+    } as any;
+    const view = render(<VideoTimeline {...props} player={releasedPlayer} />);
+    expect(screen.getByText('video_duration_unknown')).toBeTruthy();
+    expect(() => view.unmount()).not.toThrow();
+});
