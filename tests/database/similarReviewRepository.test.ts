@@ -171,11 +171,11 @@ it('upgrades V4 without touching existing data, and rejects future schemas', asy
     await db.execAsync('DROP TABLE similar_reviews');
     await db.runAsync("INSERT INTO meta (key, value) VALUES ('schema_version', '4')");
     await runMigrations(db as any);
-    expect(await db.getFirstAsync('SELECT value FROM meta WHERE key = ?', ['schema_version'])).toEqual({ value: '7' });
+    expect(await db.getFirstAsync('SELECT value FROM meta WHERE key = ?', ['schema_version'])).toEqual({ value: '8' });
     expect(await db.getAllAsync('SELECT * FROM assets ORDER BY asset_id')).toEqual(before);
     await runMigrations(db as any);
     expect(await db.getAllAsync('SELECT * FROM similar_reviews')).toEqual([]);
-    await db.runAsync("UPDATE meta SET value = '8' WHERE key = 'schema_version'");
+    await db.runAsync("UPDATE meta SET value = '9' WHERE key = 'schema_version'");
     await expect(runMigrations(db as any)).rejects.toThrow('newer than supported');
 });
 
@@ -188,7 +188,7 @@ it('does not advance the migration version when its commit cannot be recorded', 
     expect(await db.getFirstAsync("SELECT name FROM sqlite_master WHERE name = 'similar_reviews'")).toBeNull();
     db.setFailurePredicate(null);
     await runMigrations(db as any);
-    expect(await db.getFirstAsync("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: '7' });
+    expect(await db.getFirstAsync("SELECT value FROM meta WHERE key = 'schema_version'")).toEqual({ value: '8' });
 });
 
 it('batch-loads snapshots and reviews for multiple groups in O(1) SQL queries', async () => {

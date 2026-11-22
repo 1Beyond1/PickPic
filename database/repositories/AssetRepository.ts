@@ -14,6 +14,7 @@ import {
     repairFaceDataInDatabase,
 } from './FaceRepository';
 import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
+import { removeBlurIgnoresForAssetsInDatabase } from './ReviewIgnoreRepository';
 import { removeSimilarReviewsForAssets } from './SimilarReviewRepository';
 import { DEFAULT_BLUR_CONFIG } from '../../services/imageOps/IImageOps';
 
@@ -137,6 +138,7 @@ async function removeAssetsAndDerivedDataInDatabase(
         const placeholders = batch.map(() => '?').join(', ');
 
         await removeSimilarReviewsForAssets(db, batch);
+        await removeBlurIgnoresForAssetsInDatabase(db, batch);
         await db.runAsync(
             `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
             batch
@@ -527,6 +529,7 @@ export const AssetRepository = {
 
                 // Remove dependent scan results before removing the asset rows.
                 await removeSimilarReviewsForAssets(transactionDb, batch);
+                await removeBlurIgnoresForAssetsInDatabase(transactionDb, batch);
                 await transactionDb.runAsync(
                     `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
                     batch
@@ -1152,7 +1155,12 @@ export const AssetRepository = {
                      WHEN mean_luma IS NOT NULL AND mean_luma < ? THEN ?
                      WHEN mean_luma IS NOT NULL AND mean_luma > ? THEN ?
                      ELSE ?
-                 END`;
+                 END
+                 AND NOT EXISTS (
+                     SELECT 1 FROM media_review_ignores AS ign
+                     WHERE ign.ignore_type = 'blur'
+                       AND ign.target_key = assets.asset_id
+                 )`;
         const adaptiveParams: (string | number)[] = [
             AssetStatus.DONE,
             baseThreshold,

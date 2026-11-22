@@ -14,6 +14,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { isAssetProtected } from '../../services/protectedAlbums';
 import { useShallow } from 'zustand/react/shallow';
 
 
@@ -34,6 +35,7 @@ export default function PhotosScreen() {
         permissionRefreshVersion, organizingSessions, startOrganizingSession,
         resumeOrganizingSession, deferSessionMedia, revisitSessionDeferred,
         photoSessionRecoveryStatus, photoSessionUnavailableCount,
+        protectedAlbums, protectedAssetIds,
     } = useMediaStore(useShallow(state => ({
         photos: state.photos,
         loadPhotos: state.loadPhotos,
@@ -56,6 +58,8 @@ export default function PhotosScreen() {
         revisitSessionDeferred: state.revisitSessionDeferred,
         photoSessionRecoveryStatus: state.photoSessionRecoveryStatus,
         photoSessionUnavailableCount: state.photoSessionUnavailableCount,
+        protectedAlbums: state.protectedAlbums,
+        protectedAssetIds: state.protectedAssetIds,
     })));
 
     const {
@@ -129,6 +133,14 @@ export default function PhotosScreen() {
     }, [displayOrder, groupSize, loadAlbums, loadPhotos, managingPhotoAccess, router, selectedAlbumIds]);
 
     const processedIds = useMemo(() => new Set(photoProcessedIds), [photoProcessedIds]);
+    const protectedAlbumIdSet = useMemo(
+        () => new Set((protectedAlbums ?? []).map(album => album.albumId)),
+        [protectedAlbums],
+    );
+    const protectedAssetIdSet = useMemo(
+        () => new Set(protectedAssetIds ?? []),
+        [protectedAssetIds],
+    );
     const deferredIds = useMemo(() => new Set(session?.deferredIds ?? []), [session?.deferredIds]);
     const visiblePhotos = useMemo(
         () => photos.filter(p => !processedIds.has(p.id) && !deferredIds.has(p.id)),
@@ -206,7 +218,12 @@ export default function PhotosScreen() {
     }, [mediaLibraryRefreshVersion, permissionRefreshVersion, hasHydrated, settingsHydrated, loadPhotos, groupSize, displayOrder, selectedAlbumIds]);
 
     const handleSwipeUp = (photo: any) => {
-        markForDeletion(photo);
+        const result = markForDeletion(photo);
+        if (result && result.protectedSkipped > 0) {
+            showToast(t('protected_delete_blocked'));
+            return false;
+        }
+        return true;
     };
 
     const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -511,6 +528,7 @@ export default function PhotosScreen() {
                             onSwipeDown={() => handleSwipeDown(photo)}
                             onTap={() => handleTap(photo)}
                             enableCollections={false}
+                            isProtected={isAssetProtected(photo, protectedAlbumIdSet, protectedAssetIdSet)}
                         />
                     );
                 })}

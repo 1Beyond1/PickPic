@@ -49,6 +49,8 @@ export const MetaKeys = {
   SCAN_CURSOR_TAKEN_AT: 'scan_cursor_taken_at',
   SCAN_CURSOR_ASSET_ID: 'scan_cursor_asset_id',
   MEDIA_PROGRESS_SQLITE_MIGRATED: 'media_progress_sqlite_migrated',
+  BACKUP_PENDING_CHANGES: 'backup_pending_changes',
+  BACKUP_LAST_EXPORTED_AT: 'backup_last_exported_at',
 } as const;
 
 // Table creation SQL
@@ -176,4 +178,33 @@ export const SQL_CREATE_MEDIA_PENDING_QUEUE = `
 
 export const SQL_CREATE_MEDIA_PENDING_QUEUE_INDEXES = [
   'CREATE INDEX IF NOT EXISTS idx_media_pending_queue_order ON media_pending_queue(queue_type, seq);',
+];
+
+// Explicit user review ignores (blur false-positives and non-similar groups)
+// stored inside the encrypted SQLCipher database so they survive rescans and
+// can be included in encrypted backups.
+export const SQL_CREATE_MEDIA_REVIEW_IGNORES = `
+  CREATE TABLE IF NOT EXISTS media_review_ignores (
+    ignore_type TEXT NOT NULL,
+    target_key TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (ignore_type, target_key)
+  );
+`;
+
+export const SQL_CREATE_MEDIA_REVIEW_IGNORES_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS idx_media_review_ignores_type_created ON media_review_ignores(ignore_type, created_at DESC, target_key ASC);',
+];
+
+// Albums explicitly protected from accidental queuing or physical deletion.
+export const SQL_CREATE_PROTECTED_ALBUMS = `
+  CREATE TABLE IF NOT EXISTS protected_albums (
+    album_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`;
+
+export const SQL_CREATE_PROTECTED_ALBUMS_INDEXES = [
+  'CREATE INDEX IF NOT EXISTS idx_protected_albums_created ON protected_albums(created_at ASC, album_id ASC);',
 ];

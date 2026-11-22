@@ -32,5 +32,9 @@ export type {
 } from './repositories/MediaProgressRepository';
 export { MetaRepository } from './repositories/MetaRepository';
 export type { ScanCursor } from './repositories/MetaRepository';
+export { ReviewIgnoreRepository } from './repositories/ReviewIgnoreRepository';
+export type { MediaReviewIgnore, ReviewIgnoreType } from './repositories/ReviewIgnoreRepository';
+export { ProtectedAlbumRepository } from './repositories/ProtectedAlbumRepository';
+export type { ProtectedAlbumRecord } from './repositories/ProtectedAlbumRepository';
 export * from './schema';
 

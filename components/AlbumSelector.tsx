@@ -18,6 +18,7 @@ interface AlbumSelectorProps {
     maxSelection?: number; // Optional max selection limit
     editableOnly?: boolean; // Hide read-only system albums such as iOS smart albums
     titleKey?: string; // Optional custom title key
+    clearLabelKey?: string; // Optional custom clear-selection label key
 }
 
 export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
@@ -28,6 +29,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
     maxSelection,
     editableOnly = false,
     titleKey = 'album_selector_title',
+    clearLabelKey = 'album_filter_all',
 }) => {
     const { albums, loadAlbums } = useMediaStore(useShallow(state => ({
         albums: state.albums,
@@ -118,7 +120,7 @@ export const AlbumSelector: React.FC<AlbumSelectorProps> = ({
             {selectedIds.length > 0 && (
                 <Pressable accessibilityRole="button" style={styles.clearButton} onPress={handleClearAll}>
                     <Text style={[styles.clearButtonText, { color: colors.textSecondary }]}>
-                        {t('album_filter_all' as any)}
+                        {t(clearLabelKey as any)}
                     </Text>
                 </Pressable>
             )}

@@ -13,6 +13,7 @@ import { useThemeColor } from '../hooks/useThemeColor';
 import { syncModalAppearance } from '../services/modalAppearance';
 import { AssetRepository, closeDatabase, getDatabase } from '../database';
 import { flushMediaProgress } from '../services/mediaProgressStorage';
+import { loadBackupChangeState } from '../services/backup/changeTracker';
 import { flushSettings } from '../services/privacy/settingsStorage';
 import { clearLegacyMediaCache } from '../services/privacy/mediaCache';
 import { LocalPrivacyError, usePrivacyStore } from '../stores/usePrivacyStore';
@@ -299,6 +300,8 @@ export default function RootLayout() {
       try {
         await clearLegacyMediaCache();
         await getDatabase(); // Migrate/validate the protected scanner index before showing the app.
+        void useMediaStore.getState().loadProtectedAlbums?.();
+        void loadBackupChangeState().catch(() => undefined);
         // Refresh media counts on app start
         await useMediaStore.getState().refreshTotalCounts();
       } catch {

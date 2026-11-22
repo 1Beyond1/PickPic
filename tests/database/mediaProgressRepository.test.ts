@@ -317,7 +317,7 @@ describe('MediaProgressRepository (SQLCipher row-level storage V7)', () => {
     try {
       await runMigrations(adapter);
       const version = rawDb.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string };
-      expect(version.value).toBe('7');
+      expect(version.value).toBe('8');
       const tables = rawDb.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('media_processed_records', 'media_pending_queue') ORDER BY name"
       ).all() as { name: string }[];
@@ -359,7 +359,7 @@ describe('MediaProgressRepository (SQLCipher row-level storage V7)', () => {
       `);
       await runMigrations(v6Adapter);
       const version = v6Db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string };
-      expect(version.value).toBe('7');
+      expect(version.value).toBe('8');
       const cols = v6Db.prepare('PRAGMA table_info(media_pending_queue)').all() as { name: string }[];
       expect(cols.map(c => c.name)).toEqual(expect.arrayContaining(['source', 'added_at']));
       const row = v6Db.prepare("SELECT asset_id, source, added_at FROM media_pending_queue WHERE asset_id = 'p-1'").get() as any;

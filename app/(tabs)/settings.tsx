@@ -19,6 +19,7 @@ import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { APP_VERSION, useSettingsStore } from '../../stores/useSettingsStore';
 import { useScannerStore } from '../../stores/useScannerStore';
+import { BACKUP_REMINDER_THRESHOLD, useBackupReminderStore } from '../../services/backup/changeTracker';
 import { useShallow } from 'zustand/react/shallow';
 
 const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [], colors, isDark, fonts, formatOption = (option: any) => option }: any) => {
@@ -69,6 +70,7 @@ export default function SettingsScreen() {
         totalPhotos, totalVideos, refreshTotalCounts,
         hasHydrated: mediaHydrated, getVisibleProcessedCounts, mediaLibraryRefreshVersion,
         isConfirmingDeletion, isConfirmingVideoTrash,
+        albums, protectedAlbums, setProtectedAlbums,
     } = useMediaStore(useShallow(state => ({
         photoProcessedIds: state.photoProcessedIds,
         videoProcessedIds: state.videoProcessedIds,
@@ -82,9 +84,17 @@ export default function SettingsScreen() {
         mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion,
         isConfirmingDeletion: state.isConfirmingDeletion,
         isConfirmingVideoTrash: state.isConfirmingVideoTrash,
+        albums: state.albums,
+        protectedAlbums: state.protectedAlbums,
+        setProtectedAlbums: state.setProtectedAlbums,
     })));
+    const safeProtectedAlbums = protectedAlbums ?? [];
+    const safeAlbums = albums ?? [];
+    const pendingBackupChanges = useBackupReminderStore(state => state.pendingChanges);
+    const showBackupReminder = pendingBackupChanges >= BACKUP_REMINDER_THRESHOLD;
 
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
+    const [showProtectedAlbumSelector, setShowProtectedAlbumSelector] = useState(false);
     const [showScanBatchModal, setShowScanBatchModal] = useState(false);
     const [page, setPage] = useState<'main' | 'scanner' | 'data' | 'help'>('main');
     const [choice, setChoice] = useState<'order' | 'theme' | 'language' | null>(null);
@@ -113,6 +123,24 @@ export default function SettingsScreen() {
     const handleAlbumConfirm = (ids: string[]) => {
         setSelectedAlbums(ids);
         setShowAlbumSelector(false);
+    };
+
+    const handleProtectedAlbumsConfirm = (ids: string[]) => {
+        const albumTitleById = new Map<string, string>();
+        for (const album of safeAlbums) albumTitleById.set(album.id, album.title);
+        for (const existing of safeProtectedAlbums) {
+            if (!albumTitleById.has(existing.albumId)) {
+                albumTitleById.set(existing.albumId, existing.title);
+            }
+        }
+        const nextProtected = ids.map(albumId => ({
+            albumId,
+            title: albumTitleById.get(albumId) ?? albumId,
+        }));
+        setShowProtectedAlbumSelector(false);
+        void setProtectedAlbums?.(nextProtected).catch(() => {
+            console.error('[Settings] Failed to update protected albums.');
+        });
     };
 
     const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -292,6 +320,13 @@ export default function SettingsScreen() {
                     <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
                     <SettingsRow label={t('settings_album_filter')} value={selectedAlbumIds.length === 0 ? t('album_filter_all') : t('album_filter_selected', { count: selectedAlbumIds.length })} onPress={() => setShowAlbumSelector(true)} />
                     <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
+                    <SettingsRow
+                        label={t('settings_protected_albums')}
+                        detail={t('settings_protected_albums_hint')}
+                        value={safeProtectedAlbums.length === 0 ? t('protected_albums_none') : t('protected_albums_count', { count: safeProtectedAlbums.length })}
+                        onPress={() => setShowProtectedAlbumSelector(true)}
+                    />
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
                     <SettingsRow label={t('settings_display_order')} value={t(`display_order_${displayOrder}`)} onPress={() => setChoice('order')} />
                 </GlassContainer>
 
@@ -317,7 +352,12 @@ export default function SettingsScreen() {
 
                 <Text style={[styles.groupCaption, { color: colors.textSecondary }]}>{t('settings_records_maintenance')}</Text>
                 <GlassContainer style={styles.section} elevated={false}>
-                    <SettingsRow label={t('settings_data_management')} detail={t('settings_data_management_hint')} onPress={() => setPage('data')} />
+                    <SettingsRow
+                        label={t('settings_data_management')}
+                        detail={t('settings_data_management_hint')}
+                        value={showBackupReminder ? t('backup_reminder_badge', { count: pendingBackupChanges }) : undefined}
+                        onPress={() => setPage('data')}
+                    />
                 </GlassContainer>
                 </>}
 
@@ -519,6 +559,16 @@ export default function SettingsScreen() {
                 onClose={() => setShowAlbumSelector(false)}
                 onConfirm={handleAlbumConfirm}
                 initialSelection={selectedAlbumIds}
+            />
+
+            {/* Protected Albums Selector Modal */}
+            <AlbumSelector
+                visible={showProtectedAlbumSelector}
+                onClose={() => setShowProtectedAlbumSelector(false)}
+                onConfirm={handleProtectedAlbumsConfirm}
+                initialSelection={safeProtectedAlbums.map(album => album.albumId)}
+                titleKey="protected_albums_selector_title"
+                clearLabelKey="protected_albums_clear"
             />
 
             {/* Scan Batch Modal */}

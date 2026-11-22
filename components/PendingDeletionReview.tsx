@@ -11,6 +11,7 @@ import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { getPendingDeletionEntries } from '../services/pendingDeletion';
 import { getReadableMediaInfo, getReadableMediaInfos } from '../services/readableMedia';
+import { isAssetProtected } from '../services/protectedAlbums';
 import type { PendingDeletionEntry } from '../services/pendingDeletion';
 import { useMediaStore } from '../stores/useMediaStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -40,7 +41,11 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
         permissionScope: store.permissionScope,
         hiddenPhotoQueuedAssetIds: store.hiddenPhotoQueuedAssetIds,
         hiddenVideoQueuedAssetIds: store.hiddenVideoQueuedAssetIds,
+        protectedAlbums: store.protectedAlbums,
+        protectedAssetIds: store.protectedAssetIds,
     })));
+    const protectedAlbumIdSet = new Set((state.protectedAlbums ?? []).map(album => album.albumId));
+    const protectedAssetIdSet = new Set(state.protectedAssetIds ?? []);
     const { t } = useI18n();
     const { colors } = useThemeColor();
     const [filter, setFilter] = useState<Filter>(initialFilter);
@@ -117,6 +122,11 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
                 ]} />
                 <Text style={[styles.secondary, { color: colors.textSecondary }]}>{t('pending_keep_hint')}</Text>
                 {resultText && <Text testID="pending-result" accessibilityRole={result?.status === 'success' ? 'text' : 'alert'} accessibilityLiveRegion="polite" style={[styles.secondary, { color: result?.status === 'success' ? colors.text : colors.danger }]}>{resultText}</Text>}
+                {!!result?.protectedSkippedIds?.length && (
+                    <Text testID="pending-protected-warning" accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.secondary, { color: colors.danger }]}>
+                        {t('pending_protected_skipped_warning', { count: result.protectedSkippedIds.length })}
+                    </Text>
+                )}
                 {filtered.length === 0 ? <Text style={[styles.empty, { color: colors.textSecondary }]}>{t('pending_empty')}</Text> : <>
                     {!currentRead && <ActivityIndicator color={colors.primary} />}
                     <View style={styles.grid}>
@@ -131,6 +141,11 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
                                         : <Ionicons name={entry.type === 'video' ? 'play-circle-outline' : 'image-outline'} size={28} color={colors.textSecondary} />}
                                 </Pressable>
                                 <Text style={[styles.caption, { color: colors.textSecondary }]}>{t(entry.type === 'photo' ? 'tab_photos' : 'tab_videos')} · {t(`pending_source_${entry.source}`)}</Text>
+                                {isAssetProtected(entry.asset, protectedAlbumIdSet, protectedAssetIdSet) && (
+                                    <Text testID={`pending-protected-badge-${entry.asset.id}`} style={[styles.caption, { color: colors.primary, fontWeight: '600' }]}>
+                                        {t('protected_badge')}
+                                    </Text>
+                                )}
                                 {!!currentRead && !uri && <Text style={[styles.caption, { color: colors.textSecondary }]}>{t('pending_unavailable')}</Text>}
                                 <Pressable accessibilityRole="button" accessibilityLabel={t('pending_keep', { number })} accessibilityState={{ disabled: busy }} disabled={busy} onPress={() => keep(entry.asset.id)}
                                     style={({ pressed }) => [styles.keep, { backgroundColor: pressed ? colors.selectionBackground : colors.surface, borderColor: colors.divider, opacity: busy ? 0.5 : 1 }]}>
