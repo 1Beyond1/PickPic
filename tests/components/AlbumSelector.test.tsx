@@ -120,3 +120,28 @@ it('keeps the final album in a long list selectable without applying its draft o
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
 });
+
+it('displays unavailable/deleted protected albums and allows removing them individually without clearing valid ones', async () => {
+    const onConfirm = jest.fn();
+    render(
+        <AlbumSelector
+            visible
+            onClose={jest.fn()}
+            onConfirm={onConfirm}
+            initialSelection={['photos', 'deleted-vault']}
+            unavailableSelectionItems={[
+                { id: 'photos', title: 'Camera' },
+                { id: 'deleted-vault', title: 'Deleted Vault' },
+            ]}
+        />,
+    );
+    const unavailableRow = await screen.findByTestId('album-unavailable-deleted-vault');
+    expect(screen.getByText('Deleted Vault')).toBeTruthy();
+    expect(screen.getByText('protected_album_unavailable_tag')).toBeTruthy();
+
+    // Removing the single unavailable item keeps the valid 'photos' album selected.
+    fireEvent.press(unavailableRow);
+    expect(screen.queryByTestId('album-unavailable-deleted-vault')).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: 'confirm' }));
+    expect(onConfirm).toHaveBeenCalledWith(['photos']);
+});

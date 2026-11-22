@@ -1,3 +1,4 @@
+import * as MediaLibrary from 'expo-media-library';
 import { closeDatabase, getDatabase } from '../../database/db';
 import { resetEncryptedDatabaseFiles } from '../../database/encryptedDatabase';
 import {
@@ -7,16 +8,17 @@ import {
     usePrivacyStore,
 } from '../../stores/usePrivacyStore';
 import { useMediaStore } from '../../stores/useMediaStore';
-import { useSettingsStore } from '../../stores/useSettingsStore';
+import { DEFAULT_SETTINGS_STATE, useSettingsStore } from '../../stores/useSettingsStore';
 import { resetMediaProgressPersistenceState } from '../mediaProgressStorage';
 import { isScanning, stop as stopScanner } from '../scanner';
-import type { BackupCancellation } from '../backup/crypto';
+import { BackupError, type BackupCancellation } from '../backup/crypto';
 import type { BackupPayload, RestorePreview } from '../backup/payload';
 import { restoreEncryptedRecords } from '../backup/records';
 import { resetBackupChangeState } from '../backup/changeTracker';
-import { deleteDeviceKey } from './deviceKey';
+import { deleteDeviceKey, probeDeviceKeystore } from './deviceKey';
 import { resetEncryptedStorageKeys } from './encryptedStorage';
 import { clearLegacyMediaCache } from './mediaCache';
+import { resetSettingsPersistenceState } from './settingsStorage';
 
 const DOMAIN_PRIORITY: readonly PrivacyFailureReason[] = [
     'keystore_unavailable',
@@ -59,63 +61,112 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
         if (isScanning()) throw new LocalPrivacyError('storage_io');
     }
 
-    await clearLegacyMediaCache().catch(() => undefined);
-    await closeDatabase();
-    await resetEncryptedDatabaseFiles();
-    await resetEncryptedStorageKeys();
-    for (const scope of ['scanner', 'records', 'settings'] as const) {
-        await deleteDeviceKey(scope);
+    // Verify device keystore health BEFORE destroying any recoverable local ciphertext.
+    if (typeof probeDeviceKeystore === 'function') {
+        await probeDeviceKeystore();
     }
-    await resetMediaProgressPersistenceState();
-    resetBackupChangeState();
 
-    useMediaStore.setState({
-        photos: [],
-        videos: [],
-        albums: [],
-        currentIndex: 0,
-        videoCurrentIndex: 0,
-        deleteQueue: [],
-        collectionQueue: [],
-        videoTrashBin: [],
-        pendingDeletionInfo: {},
-        deletedCounts: { photos: 0, videos: 0 },
-        lastDeletionResult: null,
-        recentDecisions: [],
-        organizingSessions: { photo: null, video: null },
-        photoSessionRecoveryStatus: null,
-        photoSessionUnavailableCount: 0,
-        videoSessionRecoveryStatus: null,
-        videoSessionUnavailableCount: 0,
-        photoProcessedIds: [],
-        videoProcessedIds: [],
-        protectedAlbums: [],
-        protectedAssetIds: [],
-        hiddenPhotoQueuedAssetIds: null,
-        hiddenVideoQueuedAssetIds: null,
-        hasHydrated: false,
-    });
+    const endRecovery = usePrivacyStore.getState().beginRecovery?.();
+    try {
+        await clearLegacyMediaCache().catch(() => undefined);
+        await closeDatabase();
+        await resetEncryptedDatabaseFiles();
+        await resetEncryptedStorageKeys();
+        for (const scope of ['scanner', 'records', 'settings'] as const) {
+            await deleteDeviceKey(scope);
+        }
+        await resetMediaProgressPersistenceState();
+        if (typeof resetSettingsPersistenceState === 'function') {
+            await resetSettingsPersistenceState();
+        }
+        resetBackupChangeState();
 
-    usePrivacyStore.getState().clearAll();
+        useSettingsStore.setState?.({
+            ...(DEFAULT_SETTINGS_STATE ?? {}),
+            hasHydrated: false,
+        });
 
-    // Open a clean freshly keyed SQLCipher database and rehydrate both stores.
-    await getDatabase();
-    await useSettingsStore.persist.rehydrate();
-    await useMediaStore.persist.rehydrate();
-    await useMediaStore.getState().loadProtectedAlbums?.();
-    await useMediaStore.getState().refreshTotalCounts?.().catch(() => undefined);
+        useMediaStore.setState({
+            photos: [],
+            videos: [],
+            albums: [],
+            currentIndex: 0,
+            videoCurrentIndex: 0,
+            deleteQueue: [],
+            collectionQueue: [],
+            videoTrashBin: [],
+            pendingDeletionInfo: {},
+            deletedCounts: { photos: 0, videos: 0 },
+            lastDeletionResult: null,
+            recentDecisions: [],
+            organizingSessions: { photo: null, video: null },
+            photoSessionRecoveryStatus: null,
+            photoSessionUnavailableCount: 0,
+            videoSessionRecoveryStatus: null,
+            videoSessionUnavailableCount: 0,
+            photoProcessedIds: [],
+            videoProcessedIds: [],
+            protectedAlbums: [],
+            protectedAssetIds: [],
+            missingProtectedAlbumIds: [],
+            hiddenPhotoQueuedAssetIds: null,
+            hiddenVideoQueuedAssetIds: null,
+            hasHydrated: false,
+        });
+
+        usePrivacyStore.getState().clearAll();
+
+        // Open a clean freshly keyed SQLCipher database and rehydrate both stores
+        // while the recovery gate lock remains active.
+        await getDatabase();
+        await useSettingsStore.persist.rehydrate();
+        await useMediaStore.persist.rehydrate();
+        await useMediaStore.getState().loadProtectedAlbums?.();
+        await useMediaStore.getState().refreshTotalCounts?.().catch(() => undefined);
+    } finally {
+        endRecovery?.();
+    }
+}
+
+async function assertMediaAccessForRecoveryBackup(payload: BackupPayload): Promise<void> {
+    if (typeof MediaLibrary.getPermissionsAsync !== 'function') return;
+    const needsPhoto = payload.records.some(record => record.kind === 'photo')
+        || (payload.version === 2 && payload.reviewIgnores.some(ignore => ignore.ignoreType === 'blur'));
+    const needsVideo = payload.records.some(record => record.kind === 'video');
+    if (needsPhoto) {
+        const photoPermission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+        if (!photoPermission.granted) {
+            throw new BackupError('unavailable');
+        }
+    } else if (needsVideo) {
+        const videoPermission = await MediaLibrary.getPermissionsAsync(false, ['video']);
+        if (!videoPermission.granted) {
+            throw new BackupError('unavailable');
+        }
+    }
 }
 
 /**
  * Self-rescue from a verified `.pickpic` backup payload (v1 or v2).
  * Caller MUST decrypt and validate `payload` BEFORE calling this function so
  * wrong passwords or damaged files never wipe existing local storage.
+ * Keeps the privacy recovery gate closed until local reset AND backup restore
+ * both finish so RootLayout cannot unmount the recovery wizard mid-restore.
  */
 export async function recoverFromEncryptedBackup(
     payload: BackupPayload,
     includePending: boolean,
     cancelled?: BackupCancellation,
 ): Promise<RestorePreview> {
-    await resetLocalPrivacyIndex();
-    return restoreEncryptedRecords(payload, includePending, cancelled);
+    await assertMediaAccessForRecoveryBackup(payload);
+    const endRecovery = usePrivacyStore.getState().beginRecovery?.();
+    try {
+        await resetLocalPrivacyIndex();
+        const result = await restoreEncryptedRecords(payload, includePending, cancelled);
+        await useMediaStore.getState().loadProtectedAlbums?.();
+        await useMediaStore.getState().refreshTotalCounts?.().catch(() => undefined);
+        return result;
+    } finally {
+        endRecovery?.();
+    }
 }

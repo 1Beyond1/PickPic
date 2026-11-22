@@ -74,3 +74,13 @@ it('unsupported native builds/platforms do not claim the library is empty', asyn
     await expect(loadLargestMedia('photo', 2, [], new Set())).rejects.toMatchObject({ reason: 'unavailable' });
     expect(MediaLibrary.getAssetsAsync).not.toHaveBeenCalled();
 });
+it('excludes assets belonging to excludedAlbumIds in largest-first mode', async () => {
+    jest.mocked(MediaLibrary.getAssetsAsync).mockResolvedValue(page([
+        { ...asset('1'), albumId: 'protected-vault' },
+        { ...asset('2'), albumId: 'camera' },
+    ]));
+    read.mockImplementation(async (_, ids: string[]) => ids.map(id => ({ id, bytes: id === '1' ? 999999 : 500 })));
+    const result = await loadLargestMedia('photo', 5, [], new Set(), undefined, () => true, new Set(['protected-vault']));
+    expect(result.assets.map(item => item.id)).toEqual(['2']);
+    expect(read).toHaveBeenCalledWith('photo', ['2']);
+});

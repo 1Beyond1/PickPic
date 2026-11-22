@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import type { Asset } from 'expo-media-library';
+import { isAssetProtected } from '../protectedAlbumsCore';
 import { BackupError } from './crypto';
 
 export type Decision = 'keep' | 'collect' | 'delete';
@@ -303,6 +304,7 @@ export interface RestorePreview {
     ambiguousSkipped: number;
     protectedAlbums: number;
     reviewIgnores: number;
+    unmatchedProtectedAlbums?: number;
 }
 
 export interface PlanRestoreOptions {
@@ -311,7 +313,12 @@ export interface PlanRestoreOptions {
     existingProtectedAlbumIds?: ReadonlySet<string>;
     existingReviewIgnores?: ReadonlySet<string>;
     timeToleranceMs?: number;
+    targetPlatform?: 'android' | 'ios';
+    protectedAssetIds?: ReadonlySet<string>;
+    blockPendingDeletions?: boolean;
 }
+
+const EMPTY_STRING_SET: ReadonlySet<string> = new Set();
 
 /** Current decisions always win. Excluded pending deletions never become processed-only IDs.
  * Cross-device v2 rebinding succeeds ONLY on a strict 1-to-1 unique content-fingerprint match;
@@ -339,6 +346,66 @@ export function planRestore(
 
     const toleranceMs = options.timeToleranceMs ?? CONTENT_FINGERPRINT_TIME_TOLERANCE_MS;
     const localSizes = options.localSizes;
+    const samePlatform = !options.targetPlatform || payload.platform === options.targetPlatform;
+
+    // Resolve v2 protected albums FIRST so pending deletion restoration below
+    // enforces protection against both existing AND newly-restored protected albums.
+    const protectedAlbumsToMerge: BackupProtectedAlbum[] = [];
+    const reviewIgnoresToMerge: { ignoreType: 'blur' | 'similar_group'; targetKey: string; createdAt: number }[] = [];
+    let unmatchedProtectedAlbumsCount = 0;
+
+    if (payload.version === 2) {
+        const existingProtected = new Set(options.existingProtectedAlbumIds ?? []);
+        const localAlbums = options.localAlbums;
+        const localById = new Map<string, { id: string; title: string }>();
+        const localByTitle = new Map<string, { id: string; title: string }[]>();
+        if (localAlbums) {
+            for (const album of localAlbums) {
+                localById.set(album.id, album);
+                const key = album.title.trim();
+                const list = localByTitle.get(key);
+                if (list) list.push(album);
+                else localByTitle.set(key, [album]);
+            }
+        }
+        const plannedAlbumIds = new Set<string>();
+        for (const album of payload.protectedAlbums) {
+            let resolved: BackupProtectedAlbum | null = null;
+            if (localAlbums) {
+                const directAlbum = samePlatform ? localById.get(album.albumId) : undefined;
+                if (directAlbum) {
+                    resolved = { albumId: directAlbum.id, title: directAlbum.title || album.title, createdAt: album.createdAt };
+                } else {
+                    const titleMatches = localByTitle.get(album.title.trim()) ?? [];
+                    if (titleMatches.length === 1) {
+                        resolved = { albumId: titleMatches[0].id, title: titleMatches[0].title, createdAt: album.createdAt };
+                    }
+                }
+            } else if (samePlatform) {
+                resolved = { ...album };
+            }
+            if (!resolved) {
+                unmatchedProtectedAlbumsCount++;
+                continue;
+            }
+            if (existingProtected.has(resolved.albumId) || plannedAlbumIds.has(resolved.albumId)) {
+                continue;
+            }
+            plannedAlbumIds.add(resolved.albumId);
+            protectedAlbumsToMerge.push(resolved);
+            preview.protectedAlbums++;
+        }
+    }
+
+    if (unmatchedProtectedAlbumsCount > 0) {
+        preview.unmatchedProtectedAlbums = unmatchedProtectedAlbumsCount;
+    }
+
+    const effectiveProtectedAlbumIds = new Set<string>([
+        ...(options.existingProtectedAlbumIds ?? []),
+        ...protectedAlbumsToMerge.map(album => album.albumId),
+    ]);
+    const effectiveProtectedAssetIds = options.protectedAssetIds ?? EMPTY_STRING_SET;
 
     // Index visible local assets by baseSignature for O(1) cross-device lookup when v2.
     const localByBaseSig = new Map<string, { asset: Asset; fp: BackupContentFingerprint }[]>();
@@ -365,6 +432,14 @@ export function planRestore(
 
     const resolutions: Resolution[] = [];
     const targetHitCount = new Map<string, number>();
+    let missingDirectIdCount = 0;
+    if (payload.version === 2) {
+        for (const record of payload.records) {
+            if (!visible.has(`${record.kind}:${record.id}`)) {
+                missingDirectIdCount++;
+            }
+        }
+    }
 
     for (const record of payload.records) {
         const directKey = `${record.kind}:${record.id}`;
@@ -378,14 +453,28 @@ export function planRestore(
         if (payload.version === 2) {
             const v2Record = record as BackupRecordV2;
             const directFp = direct ? localFpByKey.get(directKey) : undefined;
-            if (
-                direct
+            const directContentMatches = !!direct
                 && direct.mediaType === v2Record.kind
-                && directFp
-                && contentFingerprintsMatch(v2Record.contentFingerprint, directFp, toleranceMs)
-            ) {
-                // Same ID and same content metadata on the same device, only modificationTime
-                // changed -> file was edited in place. Never rebind an edited file.
+                && !!directFp
+                && contentFingerprintsMatch(v2Record.contentFingerprint, directFp, toleranceMs);
+
+            // Treat a matching-ID, differing-modificationTime asset as a same-device
+            // in-place edit ONLY when platform matches, verified fileSize isn't identical,
+            // and we have same-device provenance (iOS globally-unique UUID, or same-Android
+            // restore with no missing IDs and unchanged creationTime). Cross-device copies
+            // that update mtime while preserving exact content metadata will still rebind.
+            const bothHaveVerifiedFileSize = !!directFp
+                && v2Record.contentFingerprint.hasFileSize
+                && directFp.hasFileSize;
+            const isSameDeviceInPlaceEdit = directContentMatches
+                && samePlatform
+                && !bothHaveVerifiedFileSize
+                && (
+                    payload.platform === 'ios'
+                    || (missingDirectIdCount === 0 && direct!.creationTime === v2Record.contentFingerprint.creationTime)
+                );
+
+            if (isSameDeviceInPlaceEdit) {
                 resolutions.push({ status: 'unmatched', record: v2Record });
                 continue;
             }
@@ -409,7 +498,8 @@ export function planRestore(
         }
     }
 
-    // Apply resolutions, rejecting any many-to-one rebound collision as ambiguous.
+    // Apply resolutions, rejecting any many-to-one rebound collision as ambiguous
+    // and blocking protected-album assets from entering pending deletion queues.
     for (const item of resolutions) {
         if (item.status === 'unmatched') {
             preview.skipped++;
@@ -430,65 +520,39 @@ export function planRestore(
             preview.existing++;
             continue;
         }
-        existing.add(targetKey);
-        if (item.status === 'rebound') {
-            preview.rebound++;
-        }
         if (item.record.decision === 'delete') {
+            if (
+                options.blockPendingDeletions
+                || isAssetProtected(item.asset, effectiveProtectedAlbumIds, effectiveProtectedAssetIds)
+            ) {
+                preview.skipped++;
+                continue;
+            }
+            existing.add(targetKey);
+            if (item.status === 'rebound') {
+                preview.rebound++;
+            }
             preview.pendingDeletion++;
             if (!includePending) continue;
             (item.record.kind === 'photo' ? merged.deleteQueue : merged.videoTrashBin).push(item.asset);
-        } else if (item.record.decision === 'collect') {
-            preview.collected++;
-            merged.collectionQueue.push(item.asset);
         } else {
-            preview.kept++;
+            existing.add(targetKey);
+            if (item.status === 'rebound') {
+                preview.rebound++;
+            }
+            if (item.record.decision === 'collect') {
+                preview.collected++;
+                merged.collectionQueue.push(item.asset);
+            } else {
+                preview.kept++;
+            }
         }
         (item.record.kind === 'photo' ? merged.photoProcessedIds : merged.videoProcessedIds).push(item.asset.id);
     }
 
-    // V2 protected albums & review ignores planning.
-    const protectedAlbumsToMerge: BackupProtectedAlbum[] = [];
-    const reviewIgnoresToMerge: { ignoreType: 'blur' | 'similar_group'; targetKey: string; createdAt: number }[] = [];
-
+    // V2 review ignores planning (blur ignores MUST verify contentFingerprint
+    // when available so Android small-integer _ID collisions never mis-bind).
     if (payload.version === 2) {
-        const existingProtected = new Set(options.existingProtectedAlbumIds ?? []);
-        const localAlbums = options.localAlbums;
-        const localById = new Map<string, { id: string; title: string }>();
-        const localByTitle = new Map<string, { id: string; title: string }[]>();
-        if (localAlbums) {
-            for (const album of localAlbums) {
-                localById.set(album.id, album);
-                const key = album.title.trim();
-                const list = localByTitle.get(key);
-                if (list) list.push(album);
-                else localByTitle.set(key, [album]);
-            }
-        }
-        const plannedAlbumIds = new Set<string>();
-        for (const album of payload.protectedAlbums) {
-            let resolved: BackupProtectedAlbum | null = null;
-            if (localAlbums) {
-                const directAlbum = localById.get(album.albumId);
-                if (directAlbum) {
-                    resolved = { albumId: directAlbum.id, title: directAlbum.title || album.title, createdAt: album.createdAt };
-                } else {
-                    const titleMatches = localByTitle.get(album.title.trim()) ?? [];
-                    if (titleMatches.length === 1) {
-                        resolved = { albumId: titleMatches[0].id, title: titleMatches[0].title, createdAt: album.createdAt };
-                    }
-                }
-            } else {
-                resolved = { ...album };
-            }
-            if (!resolved || existingProtected.has(resolved.albumId) || plannedAlbumIds.has(resolved.albumId)) {
-                continue;
-            }
-            plannedAlbumIds.add(resolved.albumId);
-            protectedAlbumsToMerge.push(resolved);
-            preview.protectedAlbums++;
-        }
-
         const existingIgnores = new Set(options.existingReviewIgnores ?? []);
         const plannedIgnores = new Set<string>();
         for (const ignore of payload.reviewIgnores) {
@@ -497,16 +561,27 @@ export function planRestore(
                 resolvedTargetKey = ignore.targetKey;
             } else {
                 const directPhotoKey = `photo:${ignore.targetKey}`;
-                if (visible.has(directPhotoKey)) {
-                    resolvedTargetKey = ignore.targetKey;
-                } else if (ignore.contentFingerprint) {
-                    const matches = (localByBaseSig.get(ignore.contentFingerprint.baseSignature) ?? []).filter(
-                        entry => entry.asset.mediaType === 'photo'
-                            && contentFingerprintsMatch(ignore.contentFingerprint!, entry.fp, toleranceMs),
-                    );
-                    if (matches.length === 1) {
-                        resolvedTargetKey = matches[0].asset.id;
+                const directPhoto = visible.get(directPhotoKey);
+                if (ignore.contentFingerprint) {
+                    const directFp = localFpByKey.get(directPhotoKey);
+                    if (
+                        directPhoto
+                        && directPhoto.mediaType === 'photo'
+                        && directFp
+                        && contentFingerprintsMatch(ignore.contentFingerprint, directFp, toleranceMs)
+                    ) {
+                        resolvedTargetKey = ignore.targetKey;
+                    } else {
+                        const matches = (localByBaseSig.get(ignore.contentFingerprint.baseSignature) ?? []).filter(
+                            entry => entry.asset.mediaType === 'photo'
+                                && contentFingerprintsMatch(ignore.contentFingerprint!, entry.fp, toleranceMs),
+                        );
+                        if (matches.length === 1) {
+                            resolvedTargetKey = matches[0].asset.id;
+                        }
                     }
+                } else if (directPhoto && directPhoto.mediaType === 'photo' && samePlatform) {
+                    resolvedTargetKey = ignore.targetKey;
                 }
             }
             if (!resolvedTargetKey) continue;

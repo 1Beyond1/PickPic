@@ -18,6 +18,13 @@ export const settingsStorage: StateStorage = {
     },
     async removeItem(name) { await queue; await encryptedSettingsStorage.removeItem(name); },
 };
+export async function resetSettingsPersistenceState(): Promise<void> {
+    let observed;
+    do { observed = queue; await observed.catch(() => undefined); } while (observed !== queue);
+    failed = false;
+    latest = null;
+}
+
 export async function flushSettings(): Promise<void> {
     let observed;
     do { observed = queue; await observed; } while (observed !== queue);

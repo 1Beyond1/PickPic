@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { getDatabase, withTransaction } from '../../database/db';
 import { MetaKeys } from '../../database/schema';
+import { usePrivacyStore } from '../../stores/usePrivacyStore';
 
 export const BACKUP_REMINDER_THRESHOLD = 20;
 
@@ -32,6 +33,10 @@ function scheduleFlush(): Promise<void> {
     flushPromise = Promise.resolve()
         .then(async () => {
             while (pendingDelta > 0) {
+                if (Object.keys(usePrivacyStore.getState().failures).length > 0) {
+                    pendingDelta = 0;
+                    break;
+                }
                 const delta = pendingDelta;
                 pendingDelta = 0;
                 const nextCount = await withTransaction(async db => {
@@ -46,7 +51,7 @@ function scheduleFlush(): Promise<void> {
                         [MetaKeys.BACKUP_PENDING_CHANGES, String(updated)],
                     );
                     return updated;
-                });
+                }, { blockOnFailure: false });
                 useBackupReminderStore.setState({
                     pendingChanges: nextCount + pendingDelta,
                     loaded: true,
@@ -113,7 +118,7 @@ export async function markBackupCompleted(timestamp = Date.now()): Promise<void>
             'INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)',
             [MetaKeys.BACKUP_LAST_EXPORTED_AT, String(safeTimestamp)],
         );
-    });
+    }, { blockOnFailure: false });
     useBackupReminderStore.setState({
         pendingChanges: 0,
         lastBackupAt: safeTimestamp,

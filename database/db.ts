@@ -110,15 +110,22 @@ export async function closeDatabase(): Promise<void> {
  * Execute a transaction with automatic rollback on error
  */
 export function withTransaction<T>(
-    fn: (db: SQLite.SQLiteDatabase) => Promise<T>
+    fn: (db: SQLite.SQLiteDatabase) => Promise<T>,
+    options: { blockOnFailure?: boolean } = {},
 ): Promise<T> {
     const operation = transactionQueue.then(async () => {
-        await getDatabase();
+        if (options.blockOnFailure === false) {
+            if (Object.keys(usePrivacyStore.getState().failures).length > 0 || !dbInstance) {
+                throw new LocalPrivacyError('storage_io');
+            }
+        } else {
+            await getDatabase();
+        }
 
         // Expo's regular async transaction is not exclusive: unrelated async
         // queries can run between BEGIN and COMMIT. Use a separately keyed
         // connection so UI deletes and scanner writes cannot interleave.
-        return withEncryptedTransaction(fn);
+        return withEncryptedTransaction(fn, options);
     });
 
     // Keep the queue usable after a failed transaction while preserving the

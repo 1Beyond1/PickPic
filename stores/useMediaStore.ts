@@ -23,7 +23,7 @@ import { readRecentDecisionMedia } from '../services/recentDecisionMedia';
 import { isMediaDateFilter, mediaDateQuery, mediaMatchesDate } from '../services/mediaMonth';
 import type { MediaDateFilter } from '../services/mediaMonth';
 import {
-    fetchProtectedAssetIdsForAlbums,
+    fetchProtectedAlbumsSnapshot,
     isAssetProtected,
     loadProtectedAlbums as loadPersistedProtectedAlbums,
     resolveProtectedIdsBeforeDeletion,
@@ -183,6 +183,7 @@ interface MediaState {
     hiddenVideoQueuedAssetIds: string[] | null;
     protectedAlbums: ProtectedAlbumRecord[];
     protectedAssetIds: string[];
+    missingProtectedAlbumIds: string[];
     hasHydrated: boolean;
 
     // Actions
@@ -535,7 +536,7 @@ async function loadAssetsForReview(
     isCurrent: () => boolean = () => true,
     excludedAlbumIds?: ReadonlySet<string>,
 ): Promise<{ assets: MediaLibrary.Asset[]; totalCount: number | null }> {
-    if (displayOrder === 'largest') return loadLargestMedia(mediaType, count, albumIds, new Set(processedIds), date, isCurrent);
+    if (displayOrder === 'largest') return loadLargestMedia(mediaType, count, albumIds, new Set(processedIds), date, isCurrent, excludedAlbumIds);
     if (count <= 0) {
         return { assets: [], totalCount: 0 };
     }
@@ -707,6 +708,41 @@ let organizingSessionSequence = 0; // Identity only, never a cryptographic key.
 let recentDecisionSequence = 0; // Local event identity, not a key or media identifier.
 let recentDecisionRequest = 0;
 
+function filterUnscopedFeedsForProtection(
+    state: MediaState,
+    protectedAlbums: readonly ProtectedAlbumRecord[],
+    protectedAssetIds: readonly string[],
+): Partial<MediaState> {
+    if (protectedAlbums.length === 0 && protectedAssetIds.length === 0) return {};
+    const selectedAlbumIds = useSettingsStore.getState().selectedAlbumIds ?? [];
+    if (selectedAlbumIds.length > 0) return {};
+    const protectedAlbumIdSet = new Set(protectedAlbums.map(album => album.albumId));
+    const protectedAssetIdSet = new Set(protectedAssetIds);
+    const patch: Partial<MediaState> = {};
+
+    if (!state.organizingSessions.photo?.scope.albumIds.length && state.photos.length > 0) {
+        const filteredPhotos = state.photos.filter(
+            asset => !isAssetProtected(asset, protectedAlbumIdSet, protectedAssetIdSet),
+        );
+        if (filteredPhotos.length !== state.photos.length) {
+            patch.photos = filteredPhotos;
+            patch.currentIndex = Math.max(0, Math.min(state.currentIndex, Math.max(0, filteredPhotos.length - 1)));
+        }
+    }
+
+    if (!state.organizingSessions.video?.scope.albumIds.length && state.videos.length > 0) {
+        const filteredVideos = state.videos.filter(
+            asset => !isAssetProtected(asset, protectedAlbumIdSet, protectedAssetIdSet),
+        );
+        if (filteredVideos.length !== state.videos.length) {
+            patch.videos = filteredVideos;
+            patch.videoCurrentIndex = currentVideoIndex(filteredVideos, state.organizingSessions.video, state.videoCurrentIndex);
+        }
+    }
+
+    return patch;
+}
+
 export const useMediaStore = create<MediaState>()(
     persist(
         (set, get) => ({
@@ -747,6 +783,7 @@ export const useMediaStore = create<MediaState>()(
     hiddenVideoQueuedAssetIds: null,
     protectedAlbums: [],
     protectedAssetIds: [],
+    missingProtectedAlbumIds: [],
     hasHydrated: false,
 
     loadProtectedAlbums: async () => {
@@ -754,15 +791,23 @@ export const useMediaStore = create<MediaState>()(
         try {
             const albums = await loadPersistedProtectedAlbums();
             if (requestId !== protectedAlbumsRequestId) return;
-            set({ protectedAlbums: albums });
+            set(state => ({
+                protectedAlbums: albums,
+                ...filterUnscopedFeedsForProtection(state, albums, state.protectedAssetIds ?? []),
+            }));
             if (albums.length === 0) {
-                set({ protectedAssetIds: [] });
+                set({ protectedAssetIds: [], missingProtectedAlbumIds: [] });
                 return;
             }
             try {
-                const assetIds = await fetchProtectedAssetIdsForAlbums(albums.map(album => album.albumId));
+                const snapshot = await fetchProtectedAlbumsSnapshot(albums.map(album => album.albumId));
                 if (requestId !== protectedAlbumsRequestId) return;
-                set({ protectedAssetIds: Array.from(assetIds) });
+                const nextAssetIds = Array.from(snapshot.assetIds);
+                set(state => ({
+                    protectedAssetIds: nextAssetIds,
+                    missingProtectedAlbumIds: snapshot.missingAlbumIds,
+                    ...filterUnscopedFeedsForProtection(state, albums, nextAssetIds),
+                }));
             } catch {
                 // Keep album-level protection active even if asset enumeration is temporarily unavailable.
             }
@@ -775,15 +820,23 @@ export const useMediaStore = create<MediaState>()(
         const requestId = ++protectedAlbumsRequestId;
         const saved = await savePersistedProtectedAlbums(albums);
         if (requestId !== protectedAlbumsRequestId) return;
-        set({ protectedAlbums: saved });
+        set(state => ({
+            protectedAlbums: saved,
+            ...filterUnscopedFeedsForProtection(state, saved, state.protectedAssetIds ?? []),
+        }));
         if (saved.length === 0) {
-            set({ protectedAssetIds: [] });
+            set({ protectedAssetIds: [], missingProtectedAlbumIds: [] });
             return;
         }
         try {
-            const assetIds = await fetchProtectedAssetIdsForAlbums(saved.map(album => album.albumId));
+            const snapshot = await fetchProtectedAlbumsSnapshot(saved.map(album => album.albumId));
             if (requestId !== protectedAlbumsRequestId) return;
-            set({ protectedAssetIds: Array.from(assetIds) });
+            const nextAssetIds = Array.from(snapshot.assetIds);
+            set(state => ({
+                protectedAssetIds: nextAssetIds,
+                missingProtectedAlbumIds: snapshot.missingAlbumIds,
+                ...filterUnscopedFeedsForProtection(state, saved, nextAssetIds),
+            }));
         } catch {
             // Preserve previously known protected asset IDs until next refresh; albumId checks remain active.
         }
@@ -1009,6 +1062,20 @@ export const useMediaStore = create<MediaState>()(
             const added = await MediaLibrary.addAssetsToAlbumAsync([asset], albumId);
             if (!added) {
                 throw new Error('Media library did not confirm adding the asset to the album');
+            }
+
+            const currentProtectedAlbums = get().protectedAlbums ?? [];
+            if (currentProtectedAlbums.some(album => album.albumId === albumId)) {
+                set(state => {
+                    const nextIds = state.protectedAssetIds.includes(asset.id)
+                        ? state.protectedAssetIds
+                        : [...state.protectedAssetIds, asset.id];
+                    return {
+                        protectedAssetIds: nextIds,
+                        ...filterUnscopedFeedsForProtection(state, state.protectedAlbums ?? [], nextIds),
+                    };
+                });
+                void get().loadProtectedAlbums();
             }
         } catch (e) {
             console.error('[MediaStore] Failed to add asset to album.');
@@ -1279,7 +1346,10 @@ export const useMediaStore = create<MediaState>()(
             const photoProcessed = new Set(state.photoProcessedIds), videoProcessed = new Set(state.videoProcessedIds);
             const pendingDeletionInfo = { ...state.pendingDeletionInfo };
             const newlyQueued = new Set<string>();
+            const newlyQueuedPhotos: PhotoAsset[] = [];
+            const newlyQueuedVideos: PhotoAsset[] = [];
             const seenProtected = new Set<string>();
+            const now = Date.now();
             for (const asset of assets) {
                 if (!asset.id || (asset.mediaType !== 'photo' && asset.mediaType !== 'video')) continue;
                 if (isAssetProtected(asset, protectedAlbumIds, protectedAssetIds)) {
@@ -1294,27 +1364,97 @@ export const useMediaStore = create<MediaState>()(
                     continue;
                 }
                 alreadyQueued.add(asset.id); newlyQueued.add(asset.id); added++;
-                pendingDeletionInfo[asset.id] = { source, addedAt: Date.now() };
-                if (asset.mediaType === 'video') { videoTrashBin.push(asset); videoProcessed.add(asset.id); }
-                else { deleteQueue.push(asset); photoProcessed.add(asset.id); }
+                pendingDeletionInfo[asset.id] = { source, addedAt: now };
+                if (asset.mediaType === 'video') {
+                    videoTrashBin.push(asset);
+                    videoProcessed.add(asset.id);
+                    newlyQueuedVideos.push(asset);
+                } else {
+                    deleteQueue.push(asset);
+                    photoProcessed.add(asset.id);
+                    newlyQueuedPhotos.push(asset);
+                }
             }
             if (!added) return state;
+            const orderedNewlyQueued = [...newlyQueuedPhotos, ...newlyQueuedVideos];
             let clearedSessions = state.organizingSessions;
-            for (const asset of [...deleteQueue, ...videoTrashBin]) if (newlyQueued.has(asset.id)) {
+            for (const asset of orderedNewlyQueued) {
                 clearedSessions = clearDeferredDecision(clearedSessions, asset.mediaType === 'video' ? 'video' : 'photo', asset.id);
             }
             const photoSessions = advancePhotoSession({ ...state, organizingSessions: clearedSessions }, photoProcessed);
             const sessions = advanceVideoSession({ ...state, organizingSessions: photoSessions }, videoProcessed);
             const videos = state.videos.filter(asset => !newlyQueued.has(asset.id));
-            let next: Partial<MediaState> = { deleteQueue, videoTrashBin, pendingDeletionInfo, lastDeletionResult: null,
-                organizingSessions: sessions,
-                collectionQueue: state.collectionQueue.filter(asset => !newlyQueued.has(asset.id)),
-                videos, videoCurrentIndex: currentVideoIndex(videos, sessions.video, state.videoCurrentIndex),
-                photoProcessedIds: [...photoProcessed], videoProcessedIds: [...videoProcessed] };
-            for (const asset of [...deleteQueue, ...videoTrashBin]) if (newlyQueued.has(asset.id)) {
-                next = withRecentDecision(state, next, asset.mediaType === 'video' ? 'video' : 'photo', asset.id);
+            const nextCollectionQueue = state.collectionQueue.filter(asset => !newlyQueued.has(asset.id));
+
+            // Prebuild O(1) membership sets once to avoid O(K * P) linear scans during large batch queues.
+            const prevPhotoProcessedSet = new Set(state.photoProcessedIds);
+            const prevVideoProcessedSet = new Set(state.videoProcessedIds);
+            const prevDeleteQueueIds = new Set(state.deleteQueue.map(item => item.id));
+            const prevVideoTrashIds = new Set(state.videoTrashBin.map(item => item.id));
+            const prevCollectionQueueIds = new Set(state.collectionQueue.map(item => item.id));
+            const prevPhotoDeferredSet = new Set(state.organizingSessions.photo?.deferredIds ?? []);
+            const prevVideoDeferredSet = new Set(state.organizingSessions.video?.deferredIds ?? []);
+            const nextPhotoDeferredSet = new Set(sessions.photo?.deferredIds ?? []);
+            const nextVideoDeferredSet = new Set(sessions.video?.deferredIds ?? []);
+            const photoSessionAssetSet = state.organizingSessions.photo
+                ? new Set(state.organizingSessions.photo.assetIds)
+                : null;
+            const videoSessionAssetSet = state.organizingSessions.video
+                ? new Set(state.organizingSessions.video.assetIds)
+                : null;
+            const existingEventIds = new Set(state.recentDecisions.map(entry => entry.eventId));
+
+            let recentDecisions = state.recentDecisions;
+            for (const asset of orderedNewlyQueued) {
+                const kind: MediaType = asset.mediaType === 'video' ? 'video' : 'photo';
+                const before: DecisionSnapshot = {
+                    processed: (kind === 'photo' ? prevPhotoProcessedSet : prevVideoProcessedSet).has(asset.id),
+                    pending: (kind === 'photo' ? prevDeleteQueueIds : prevVideoTrashIds).has(asset.id)
+                        ? state.pendingDeletionInfo[asset.id] ?? { source: 'unknown', addedAt: 0 }
+                        : null,
+                    collected: kind === 'photo' && prevCollectionQueueIds.has(asset.id),
+                    deferred: (kind === 'photo' ? prevPhotoDeferredSet : prevVideoDeferredSet).has(asset.id),
+                };
+                const after: DecisionSnapshot = {
+                    processed: true,
+                    pending: pendingDeletionInfo[asset.id] ?? { source: 'unknown', addedAt: 0 },
+                    collected: false,
+                    deferred: (kind === 'photo' ? nextPhotoDeferredSet : nextVideoDeferredSet).has(asset.id),
+                };
+                if (sameDecisionSnapshot(before, after)) continue;
+                const session = state.organizingSessions[kind];
+                const inSession = !!(kind === 'photo' ? photoSessionAssetSet : videoSessionAssetSet)?.has(asset.id);
+                const at = Date.now();
+                let eventId: string;
+                do { eventId = `decision-${at}-${++recentDecisionSequence}`; } while (existingEventIds.has(eventId));
+                existingEventIds.add(eventId);
+                recentDecisions = appendRecentDecision(recentDecisions, {
+                    version: 1,
+                    eventId,
+                    assetId: asset.id,
+                    kind,
+                    action: 'pending',
+                    before,
+                    after,
+                    at,
+                    sessionId: inSession ? session!.sessionId : null,
+                    position: inSession ? session!.position : null,
+                });
             }
-            return next;
+
+            return {
+                deleteQueue,
+                videoTrashBin,
+                pendingDeletionInfo,
+                lastDeletionResult: null,
+                organizingSessions: sessions,
+                collectionQueue: nextCollectionQueue,
+                videos,
+                videoCurrentIndex: currentVideoIndex(videos, sessions.video, state.videoCurrentIndex),
+                photoProcessedIds: [...photoProcessed],
+                videoProcessedIds: [...videoProcessed],
+                recentDecisions,
+            };
         });
         return {
             added,
@@ -1455,11 +1595,11 @@ export const useMediaStore = create<MediaState>()(
         if (read.status !== 'ready') return 'unavailable';
         const asset = read.assets.get(entry.assetId);
         if (!asset) return 'unavailable';
-        if (action === 'pending' && get().isAssetProtected(asset)) {
-            return 'unchanged';
-        }
         const target: DecisionSnapshot = action === 'undo' ? entry.before
             : { processed: true, pending: action === 'pending' ? { source: 'unknown', addedAt: Date.now() } : null, collected: false, deferred: false };
+        if (target.pending !== null && get().isAssetProtected(asset)) {
+            return 'unchanged';
+        }
         const actual = decisionSnapshot(get(), entry.kind, entry.assetId);
         if (action !== 'undo' && (action === 'pending' ? !!actual.pending : sameDecisionSnapshot(actual, target))) return 'unchanged';
         let applied = false;

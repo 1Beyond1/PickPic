@@ -41,6 +41,34 @@ export function getDeviceKeyHex(scope: DeviceKeyScope, existingCiphertext: boole
     return operation;
 }
 
+const PROBE_SLOT = 'pickpic.keystore-probe.v1';
+
+/** Non-destructive keystore health probe run BEFORE wiping local ciphertext:
+ * verifies CSPRNG + SecureStore write/read/delete on an isolated probe slot so
+ * a temporarily locked/broken Keystore never destroys recoverable local data. */
+export async function probeDeviceKeystore(): Promise<void> {
+    let bytes: Uint8Array | undefined;
+    try {
+        bytes = await getRandomBytesAsync(32);
+        if (!(bytes instanceof Uint8Array) || bytes.length !== 32) {
+            throw new LocalPrivacyError('keystore_unavailable');
+        }
+        const probeValue = bytesToHex(bytes);
+        await SecureStore.setItemAsync(PROBE_SLOT, probeValue, options);
+        const readBack = await SecureStore.getItemAsync(PROBE_SLOT, options);
+        if (readBack !== probeValue) {
+            throw new LocalPrivacyError('keystore_unavailable');
+        }
+    } catch (error) {
+        throw error instanceof LocalPrivacyError ? error : new LocalPrivacyError('keystore_unavailable');
+    } finally {
+        bytes?.fill(0);
+        if (typeof SecureStore.deleteItemAsync === 'function') {
+            await SecureStore.deleteItemAsync(PROBE_SLOT, options).catch(() => undefined);
+        }
+    }
+}
+
 /** Explicit user-confirmed self-rescue only: removes the device key for a scope
  * so a fresh encrypted store can be initialized after irrecoverable key/DB loss. */
 export function deleteDeviceKey(scope: DeviceKeyScope): Promise<void> {

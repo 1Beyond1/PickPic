@@ -371,3 +371,18 @@ it('does not start another scan from either control while finalizing', async () 
   expect(mockScanner.resumeOnce).not.toHaveBeenCalled();
   expectNoReset();
 });
+
+it('displays a gentle warning when protected albums are missing or renamed on the device', async () => {
+  Object.assign(mockMedia, {
+    protectedAlbums: [{ albumId: 'missing-1', title: 'Old Folder', createdAt: 1 }],
+    missingProtectedAlbumIds: ['missing-1'],
+  });
+  try {
+    render(<SettingsScreen />);
+    await waitFor(() => expect(mockMedia.getVisibleProcessedCounts).toHaveBeenCalled());
+    expect(screen.getByTestId('protected-albums-missing-warning')).toBeTruthy();
+    expect(screen.getByText(/有 1 个保护相册已不存在或已改名/)).toBeTruthy();
+  } finally {
+    Object.assign(mockMedia, { protectedAlbums: [], missingProtectedAlbumIds: [] });
+  }
+});

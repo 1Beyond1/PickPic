@@ -59,7 +59,11 @@ export default function VideosScreen() {
 
     const [activeId, setActiveId] = useState<string | null>(null);
     const [isScrubbing, setIsScrubbing] = useState(false);
-    useEffect(() => { setIsScrubbing(false); }, [activeId, isFocused]);
+    const [protectedFeedback, setProtectedFeedback] = useState<string | null>(null);
+    useEffect(() => {
+        setIsScrubbing(false);
+        setProtectedFeedback(null);
+    }, [activeId, isFocused]);
     const [isMuted, setIsMuted] = useState(true);
     const [showTrash, setShowTrash] = useState(false);
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
@@ -414,6 +418,7 @@ export default function VideosScreen() {
             mediaStore.refreshQueuedAssetVisibility(scope, 'video');
             mediaStore.pruneUnavailableQueuedAssets(scope, 'video');
             if (permission.granted && isFocusedRef.current) {
+                await mediaStore.loadProtectedAlbums?.();
                 await loadVideos(50, displayOrder, selectedAlbumIds);
             }
         } catch {
@@ -429,6 +434,7 @@ export default function VideosScreen() {
         try {
             const permission = await refreshVideoPermission();
             if (permission?.granted && isFocusedRef.current) {
+                await useMediaStore.getState().loadProtectedAlbums?.();
                 await loadVideos(50, displayOrder, selectedAlbumIds);
             }
         } finally {
@@ -446,6 +452,7 @@ export default function VideosScreen() {
             await MediaLibrary.presentPermissionsPickerAsync(['video']);
             const permission = await refreshVideoPermission();
             if (permission?.granted && isFocusedRef.current) {
+                await useMediaStore.getState().loadProtectedAlbums?.();
                 await loadVideos(50, displayOrder, selectedAlbumIds);
             }
         } catch {
@@ -476,6 +483,19 @@ export default function VideosScreen() {
         ? resolvedActiveIndex
         : Math.max(0, Math.min(videoCurrentIndex ?? 0, Math.max(0, videos.length - 1)));
 
+    const translationRef = useRef(t);
+    translationRef.current = t;
+
+    const handleMarkVideoForTrash = useCallback((video: any) => {
+        const result = markVideoForTrash(video);
+        if (result && result.protectedSkipped > 0) {
+            setProtectedFeedback(translationRef.current('protected_delete_blocked'));
+        } else {
+            setProtectedFeedback(null);
+        }
+        return result;
+    }, [markVideoForTrash]);
+
     const renderVideoItem = useCallback(({ item, index }: { item: any; index: number }) => (
         <VideoFeedItem
             video={item}
@@ -485,7 +505,7 @@ export default function VideosScreen() {
             shouldPlay={item.id === activeId && isScreenFocused && !showTrash && !showAlbumSelector}
             isMuted={isMuted}
             toggleMute={handleToggleMute}
-            onDelete={markVideoForTrash}
+            onDelete={handleMarkVideoForTrash}
             onFavorite={handleFavorite}
             t={t}
             colors={colors}
@@ -498,11 +518,11 @@ export default function VideosScreen() {
         colors,
         feedHeight,
         handleFavorite,
+        handleMarkVideoForTrash,
         handleScrubbingChange,
         handleToggleMute,
         isMuted,
         isScreenFocused,
-        markVideoForTrash,
         showAlbumSelector,
         showTrash,
         t,
@@ -679,6 +699,16 @@ export default function VideosScreen() {
             </View>
             {videos.length > 0 && !isLoading && !showHome && (
                 <View style={styles.feedHint}>
+                    {!!protectedFeedback && (
+                        <Text
+                            testID="video-protected-feedback"
+                            accessibilityRole="alert"
+                            accessibilityLiveRegion="polite"
+                            style={[styles.feedHintText, { color: colors.danger, fontWeight: '600', marginBottom: 4 }]}
+                        >
+                            {protectedFeedback}
+                        </Text>
+                    )}
                     {!!videoSessionUnavailableCount && <Text style={[styles.feedHintText, { color: colors.textSecondary }]}>
                         {t('video_partial_hint', { count: videoSessionUnavailableCount })}
                     </Text>}

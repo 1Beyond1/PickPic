@@ -58,6 +58,9 @@ jest.mock('../hooks/useThemeColor', () => ({
   } }),
 }));
 jest.mock('../hooks/useAICategories', () => ({ useAICategories: () => mockCategories }));
+jest.mock('../services/mediaProgressStorage', () => ({
+  flushMediaProgress: jest.fn(async () => {}),
+}));
 jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: () => ({ enableAIClassification: mockClassificationEnabled }) }));
 jest.mock('../stores/useMediaStore', () => ({
   useMediaStore: Object.assign((selector: any) => selector(mockMediaState), { getState: () => mockMediaState }),

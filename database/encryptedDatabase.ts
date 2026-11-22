@@ -144,7 +144,10 @@ export async function resetEncryptedDatabaseFiles(): Promise<void> {
 
 /** Expo's exclusive helper opens an unkeyed connection and runs BEGIN before
  * its callback. Open and key our own isolated connection before BEGIN IMMEDIATE. */
-export async function withEncryptedTransaction<T>(fn: (db: SQLite.SQLiteDatabase) => Promise<T>): Promise<T> {
+export async function withEncryptedTransaction<T>(
+    fn: (db: SQLite.SQLiteDatabase) => Promise<T>,
+    options: { blockOnFailure?: boolean } = {},
+): Promise<T> {
     let connection: SQLite.SQLiteDatabase | null = null;
     let begun = false;
     let phase: 'open' | 'callback' | 'commit' = 'open';
@@ -162,7 +165,9 @@ export async function withEncryptedTransaction<T>(fn: (db: SQLite.SQLiteDatabase
         if (begun) await connection?.execAsync('ROLLBACK;').catch(() => undefined);
         if (phase === 'callback') throw error; // A cancelled application action is not a lost key.
         const reason = error instanceof LocalPrivacyError ? error.reason : 'storage_io';
-        usePrivacyStore.getState().block('scanner', 'write', reason);
+        if (options.blockOnFailure !== false) {
+            usePrivacyStore.getState().block('scanner', 'write', reason);
+        }
         throw new LocalPrivacyError(reason);
     } finally { await connection?.closeAsync().catch(() => undefined); }
 }

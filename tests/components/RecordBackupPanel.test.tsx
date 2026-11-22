@@ -118,3 +118,16 @@ it('shows a gentle unbacked-up changes reminder badge when threshold is exceeded
 
     await waitFor(() => expect(screen.queryByTestId('backup-change-reminder-badge')).toBeNull());
 });
+
+it('displays an explicit Chinese size-limit message when BackupError("size") occurs', async () => {
+    const { BackupError } = require('../../services/backup/crypto');
+    jest.mocked(createEncryptedRecords).mockRejectedValueOnce(new BackupError('size'));
+
+    render(<RecordBackupPanel />);
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    fireEvent.changeText(screen.getByLabelText('备份密码（至少 12 个字符）'), 'long-test-passphrase');
+    fireEvent.changeText(screen.getByLabelText('再次输入密码'), 'long-test-passphrase');
+    fireEvent.press(screen.getByRole('button', { name: '加密并选择保存位置' }));
+
+    await waitFor(() => expect(screen.getByText(/备份文件过大或记录数量超出当前上限/)).toBeTruthy());
+});

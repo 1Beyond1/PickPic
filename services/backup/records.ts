@@ -4,7 +4,7 @@ import { useMediaStore } from '../../stores/useMediaStore';
 import { acquireRecordOperation } from '../recordOperationLock';
 import { flushMediaProgress } from '../mediaProgressStorage';
 import { retainPendingDeletionInfo } from '../pendingDeletion';
-import { loadProtectedAlbums, mergeProtectedAlbums } from '../protectedAlbums';
+import { fetchProtectedAlbumsSnapshot, loadProtectedAlbums, mergeProtectedAlbums } from '../protectedAlbums';
 import { getAllReviewIgnores, mergeReviewIgnores } from '../reviewIgnores';
 import { readMediaSizes, supportsIndexedMediaSizes } from '../mediaSizes';
 import { BackupCancellation, BackupError, BackupKeyProgress, decryptBackup, encryptBackup } from './crypto';
@@ -236,6 +236,62 @@ export async function decryptAndParseBackup(
     return parseBackupPayload(await decryptBackup(bytes, password, cancelled, onProgress), Platform.OS);
 }
 
+function getCurrentTargetPlatform(): 'android' | 'ios' | undefined {
+    return Platform.OS === 'android' || Platform.OS === 'ios' ? Platform.OS : undefined;
+}
+
+async function resolveProtectedRestoreGuard(
+    payload: BackupPayload,
+    localAlbums: readonly { id: string; title: string }[] | undefined,
+    existingProtected: readonly { albumId: string; title: string }[],
+    targetPlatform: 'android' | 'ios' | undefined,
+): Promise<{ protectedAssetIds: Set<string>; blockPendingDeletions: boolean }> {
+    const candidateAlbumIds = new Set<string>(existingProtected.map(item => item.albumId));
+    if (payload.version === 2) {
+        const samePlatform = !targetPlatform || payload.platform === targetPlatform;
+        const localById = new Map((localAlbums ?? []).map(album => [album.id, album]));
+        const localByTitle = new Map<string, { id: string; title: string }[]>();
+        for (const album of localAlbums ?? []) {
+            const key = album.title.trim();
+            const list = localByTitle.get(key);
+            if (list) list.push(album);
+            else localByTitle.set(key, [album]);
+        }
+        for (const album of payload.protectedAlbums) {
+            if (localAlbums) {
+                const direct = samePlatform ? localById.get(album.albumId) : undefined;
+                if (direct) {
+                    candidateAlbumIds.add(direct.id);
+                } else {
+                    const matches = localByTitle.get(album.title.trim()) ?? [];
+                    if (matches.length === 1) candidateAlbumIds.add(matches[0].id);
+                }
+            } else if (samePlatform) {
+                candidateAlbumIds.add(album.albumId);
+            }
+        }
+    }
+
+    const protectedAssetIds = new Set<string>(useMediaStore.getState().protectedAssetIds ?? []);
+    if (candidateAlbumIds.size === 0) {
+        return { protectedAssetIds, blockPendingDeletions: false };
+    }
+
+    const hasPendingDeletes = payload.records.some(record => record.decision === 'delete');
+    if (!hasPendingDeletes) {
+        return { protectedAssetIds, blockPendingDeletions: false };
+    }
+
+    try {
+        const snapshot = await fetchProtectedAlbumsSnapshot(Array.from(candidateAlbumIds), ['photo', 'video']);
+        return { protectedAssetIds: snapshot.assetIds, blockPendingDeletions: false };
+    } catch {
+        // Fail-closed: protected albums exist, but live verification failed, so
+        // never enqueue restored pending deletions until protection can be verified.
+        return { protectedAssetIds, blockPendingDeletions: true };
+    }
+}
+
 export async function openEncryptedRecords(
     bytes: Uint8Array,
     password: string,
@@ -244,22 +300,32 @@ export async function openEncryptedRecords(
 ) {
     return withTransfer(async () => {
         const payload = parseBackupPayload(await decryptBackup(bytes, password, cancelled, onProgress), Platform.OS);
+        const targetPlatform = getCurrentTargetPlatform();
         const includeAllOfKinds = payload.version === 2 ? getKindsForPayload(payload) : undefined;
         const visible = await readVisible(payload.records, cancelled, { includeAllOfKinds });
         const localSizes = payload.version === 2 ? await readSizesForVisible(visible, cancelled) : undefined;
-        const [localAlbums, existingProtected, existingIgnores] = payload.version === 2
+        const existingProtected = await loadProtectedAlbums();
+        const [localAlbums, existingIgnores] = payload.version === 2
             ? await Promise.all([
                 readLocalAlbumsSafe(),
-                loadProtectedAlbums(),
                 getAllReviewIgnores(),
             ])
-            : [undefined, [], []];
+            : [undefined, []];
+        const { protectedAssetIds, blockPendingDeletions } = await resolveProtectedRestoreGuard(
+            payload,
+            localAlbums,
+            existingProtected,
+            targetPlatform,
+        );
         check(cancelled);
         const { preview } = planRestore(payload, useMediaStore.getState(), visible, false, {
             localSizes,
             localAlbums,
             existingProtectedAlbumIds: new Set(existingProtected.map(item => item.albumId)),
             existingReviewIgnores: new Set(existingIgnores.map(item => `${item.ignoreType}:${item.targetKey}`)),
+            targetPlatform,
+            protectedAssetIds,
+            blockPendingDeletions,
         });
         return { payload, preview };
     });
@@ -272,18 +338,25 @@ export async function restoreEncryptedRecords(
 ) {
     return withTransfer(async () => {
         parseBackupPayload(payload, Platform.OS);
+        const targetPlatform = getCurrentTargetPlatform();
         // Revalidate on confirm: previews can remain open while the gallery
         // or permissions change. Never trust URIs from a backup file.
         const includeAllOfKinds = payload.version === 2 ? getKindsForPayload(payload) : undefined;
         const visible = await readVisible(payload.records, cancelled, { includeAllOfKinds });
         const localSizes = payload.version === 2 ? await readSizesForVisible(visible, cancelled) : undefined;
-        const [localAlbums, existingProtected, existingIgnores] = payload.version === 2
+        const existingProtected = await loadProtectedAlbums();
+        const [localAlbums, existingIgnores] = payload.version === 2
             ? await Promise.all([
                 readLocalAlbumsSafe(),
-                loadProtectedAlbums(),
                 getAllReviewIgnores(),
             ])
-            : [undefined, [], []];
+            : [undefined, []];
+        const { protectedAssetIds, blockPendingDeletions } = await resolveProtectedRestoreGuard(
+            payload,
+            localAlbums,
+            existingProtected,
+            targetPlatform,
+        );
         check(cancelled);
         const current = useMediaStore.getState();
         if (current.isConfirmingDeletion || current.isConfirmingVideoTrash) throw new BackupError('unavailable');
@@ -298,6 +371,9 @@ export async function restoreEncryptedRecords(
                 localAlbums,
                 existingProtectedAlbumIds: new Set(existingProtected.map(item => item.albumId)),
                 existingReviewIgnores: new Set(existingIgnores.map(item => `${item.ignoreType}:${item.targetKey}`)),
+                targetPlatform,
+                protectedAssetIds,
+                blockPendingDeletions,
             },
         );
         const mergedPhotoQueuedIds = new Set([...merged.deleteQueue, ...merged.collectionQueue].map(asset => asset.id));

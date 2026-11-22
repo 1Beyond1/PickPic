@@ -18,7 +18,7 @@ import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import type { BackupPayload, RestorePreview } from '../services/backup/payload';
-import type { PrivacyFailureReason } from '../stores/usePrivacyStore';
+import { type PrivacyFailureReason, usePrivacyStore } from '../stores/usePrivacyStore';
 import { BottomSheet } from './BottomSheet';
 
 export interface PrivacyRecoveryScreenProps {
@@ -81,6 +81,7 @@ export function PrivacyRecoveryScreen({
 
     const [wizardMode, setWizardMode] = useState<'import' | 'reset' | null>(null);
     const [working, setWorking] = useState(false);
+    const [irreversibleWorking, setIrreversibleWorking] = useState(false);
     const [wizardMessage, setWizardMessage] = useState('');
     const [resetAck, setResetAck] = useState(false);
 
@@ -95,18 +96,29 @@ export function PrivacyRecoveryScreen({
         protectedAlbums: number;
         reviewIgnores: number;
     } | null>(null);
+    const [restoreResult, setRestoreResult] = useState<RestorePreview | null>(null);
 
     const bytesRef = useRef<Uint8Array | null>(null);
     const payloadRef = useRef<BackupPayload | null>(null);
     const generationRef = useRef(0);
     const externalUIRef = useRef(false);
     const runningRef = useRef(false);
+    const irreversibleWorkingRef = useRef(false);
+    const uiRecoveryReleaseRef = useRef<(() => void) | null>(null);
+
+    const releaseUiRecovery = () => {
+        const release = uiRecoveryReleaseRef.current;
+        uiRecoveryReleaseRef.current = null;
+        release?.();
+    };
 
     const closeWizard = () => {
         generationRef.current++;
         bytesRef.current?.fill(0);
         bytesRef.current = null;
         payloadRef.current = null;
+        irreversibleWorkingRef.current = false;
+        setIrreversibleWorking(false);
         setWizardMode(null);
         setWorking(false);
         setWizardMessage('');
@@ -116,9 +128,15 @@ export function PrivacyRecoveryScreen({
         setKeyProgress(null);
         setIncludePending(false);
         setVerifiedSummary(null);
+        setRestoreResult(null);
+        releaseUiRecovery();
     };
-    const closeRef = useRef(closeWizard);
-    closeRef.current = closeWizard;
+    const handleRequestCloseWizard = () => {
+        if (irreversibleWorkingRef.current) return;
+        closeWizard();
+    };
+    const closeRef = useRef(handleRequestCloseWizard);
+    closeRef.current = handleRequestCloseWizard;
 
     useEffect(() => {
         const gen = generationRef;
@@ -127,7 +145,9 @@ export function PrivacyRecoveryScreen({
         const subscription = AppState.addEventListener('change', state => {
             if (state !== 'active') {
                 setPassword('');
-                if (!externalUIRef.current) closeRef.current();
+                if (!externalUIRef.current && !irreversibleWorkingRef.current) {
+                    closeRef.current();
+                }
             }
         });
         return () => {
@@ -135,16 +155,24 @@ export function PrivacyRecoveryScreen({
             gen.current++;
             encrypted.current?.fill(0);
             decrypted.current = null;
+            const release = uiRecoveryReleaseRef.current;
+            uiRecoveryReleaseRef.current = null;
+            release?.();
         };
     }, []);
 
     const runWizardTask = async (
         task: (cancelled: () => boolean, onProgress: (fraction: number) => void) => Promise<void>,
         fallbackErrorKey: 'privacy_wizard_restore_failed' | 'privacy_wizard_reset_failed',
+        options: { irreversible?: boolean } = {},
     ) => {
         if (runningRef.current) return;
         runningRef.current = true;
         setWorking(true);
+        if (options.irreversible) {
+            irreversibleWorkingRef.current = true;
+            setIrreversibleWorking(true);
+        }
         setWizardMessage('');
         setKeyProgress(null);
         const ticket = generationRef.current;
@@ -160,15 +188,22 @@ export function PrivacyRecoveryScreen({
         try {
             await task(cancelled, onProgress);
         } catch (error) {
-            if (!cancelled()) {
+            if (options.irreversible || !cancelled()) {
                 const code = error && typeof error === 'object' && 'code' in error ? error.code : '';
                 if (code === 'password') setWizardMessage(t('backup_error_password'));
                 else if (code === 'invalid') setWizardMessage(t('backup_error_invalid'));
-                else setWizardMessage(t(fallbackErrorKey));
+                else if (code === 'size') setWizardMessage(t('backup_error_size'));
+                else if (code === 'unavailable' && fallbackErrorKey === 'privacy_wizard_restore_failed') {
+                    setWizardMessage(t('privacy_wizard_restore_no_permission'));
+                } else setWizardMessage(t(fallbackErrorKey));
             }
         } finally {
             runningRef.current = false;
-            if (!cancelled()) {
+            if (options.irreversible) {
+                irreversibleWorkingRef.current = false;
+                setIrreversibleWorking(false);
+            }
+            if (options.irreversible || !cancelled()) {
                 setWorking(false);
                 setKeyProgress(null);
                 setPassword('');
@@ -188,6 +223,7 @@ export function PrivacyRecoveryScreen({
         bytesRef.current = picked;
         setSelectedFile(!!picked);
         setVerifiedSummary(null);
+        setRestoreResult(null);
         payloadRef.current = null;
     }, 'privacy_wizard_restore_failed');
 
@@ -199,6 +235,7 @@ export function PrivacyRecoveryScreen({
         bytesRef.current.fill(0);
         bytesRef.current = null;
         payloadRef.current = parsed;
+        setRestoreResult(null);
         setVerifiedSummary({
             version: parsed.version,
             records: parsed.records.length,
@@ -207,21 +244,30 @@ export function PrivacyRecoveryScreen({
         });
     }, 'privacy_wizard_restore_failed');
 
-    const handleConfirmRestore = () => void runWizardTask(async cancelled => {
+    const handleConfirmRestore = () => void runWizardTask(async () => {
         if (!payloadRef.current || !onRecoverFromBackup) return;
-        await onRecoverFromBackup(payloadRef.current, includePending, cancelled);
-        if (!cancelled()) {
-            closeWizard();
+        const payloadToRestore = payloadRef.current;
+        if (!uiRecoveryReleaseRef.current) {
+            uiRecoveryReleaseRef.current = usePrivacyStore.getState?.().beginRecovery?.() ?? null;
         }
-    }, 'privacy_wizard_restore_failed');
+        // Post-confirmation restore must not bind cancellation to component unmount.
+        const neverCancel = () => false;
+        try {
+            const result = await onRecoverFromBackup(payloadToRestore, includePending, neverCancel);
+            payloadRef.current = null;
+            setVerifiedSummary(null);
+            setRestoreResult(result);
+        } catch (error) {
+            releaseUiRecovery();
+            throw error;
+        }
+    }, 'privacy_wizard_restore_failed', { irreversible: true });
 
-    const handleConfirmReset = () => void runWizardTask(async cancelled => {
+    const handleConfirmReset = () => void runWizardTask(async () => {
         if (!resetAck || !onResetLocalIndex) return;
         await onResetLocalIndex();
-        if (!cancelled()) {
-            closeWizard();
-        }
-    }, 'privacy_wizard_reset_failed');
+        closeWizard();
+    }, 'privacy_wizard_reset_failed', { irreversible: true });
 
     const domainCopy = failure ? getDomainCopyKeys(failure, failureDomain) : null;
     const isBusy = busy || working;
@@ -310,7 +356,8 @@ export function PrivacyRecoveryScreen({
             <BottomSheet
                 visible={wizardMode === 'import'}
                 title={t('privacy_wizard_import_btn')}
-                onClose={closeWizard}
+                onClose={irreversibleWorking ? () => undefined : handleRequestCloseWizard}
+                dismissOnBackdrop={!working}
             >
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flexShrink: 1 }}>
                     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.sheetContent}>
@@ -318,7 +365,7 @@ export function PrivacyRecoveryScreen({
                             {t('privacy_wizard_import_desc')}
                         </Text>
 
-                        {!verifiedSummary && (
+                        {!verifiedSummary && !restoreResult && (
                             <>
                                 <Pressable
                                     testID="privacy-import-choose-file"
@@ -372,7 +419,7 @@ export function PrivacyRecoveryScreen({
                             </>
                         )}
 
-                        {verifiedSummary && (
+                        {verifiedSummary && !restoreResult && (
                             <>
                                 <View testID="privacy-import-verified-summary" style={[styles.summaryCard, { backgroundColor: colors.surfaceHover }]}>
                                     <Text style={[styles.sheetCopy, { color: colors.text }]}>
@@ -410,6 +457,39 @@ export function PrivacyRecoveryScreen({
                             </>
                         )}
 
+                        {restoreResult && (
+                            <>
+                                <View testID="privacy-import-restore-result" style={[styles.summaryCard, { backgroundColor: colors.surfaceHover }]}>
+                                    <Text style={[styles.buttonText, { color: colors.text, textAlign: 'left', marginBottom: 6 }]}>
+                                        {t('privacy_wizard_restore_done_title')}
+                                    </Text>
+                                    <Text style={[styles.sheetCopy, { color: colors.textSecondary }]}>
+                                        {t('privacy_wizard_restore_done_summary', {
+                                            kept: restoreResult.kept ?? 0,
+                                            collected: restoreResult.collected ?? 0,
+                                            pending: includePending ? (restoreResult.pendingDeletion ?? 0) : 0,
+                                            protectedAlbums: restoreResult.protectedAlbums ?? 0,
+                                            reviewIgnores: restoreResult.reviewIgnores ?? 0,
+                                            skipped: restoreResult.skipped ?? 0,
+                                        })}
+                                    </Text>
+                                </View>
+                                <Pressable
+                                    testID="privacy-import-finish-btn"
+                                    accessibilityRole="button"
+                                    onPress={closeWizard}
+                                    style={({ pressed }) => [styles.button, {
+                                        backgroundColor: colors.actionBackground,
+                                        opacity: pressed ? 0.6 : 1,
+                                    }]}
+                                >
+                                    <Text style={[styles.buttonText, { color: colors.actionForeground }]}>
+                                        {t('privacy_wizard_enter_app')}
+                                    </Text>
+                                </Pressable>
+                            </>
+                        )}
+
                         {working && <ActivityIndicator accessibilityLabel={t('backup_working')} color={colors.text} />}
                         {working && keyProgress !== null && (
                             <Text accessibilityLiveRegion="polite" style={[styles.sheetCopy, { color: colors.textSecondary }]}>
@@ -429,7 +509,8 @@ export function PrivacyRecoveryScreen({
             <BottomSheet
                 visible={wizardMode === 'reset'}
                 title={t('privacy_wizard_reset_title')}
-                onClose={closeWizard}
+                onClose={irreversibleWorking ? () => undefined : handleRequestCloseWizard}
+                dismissOnBackdrop={!working}
             >
                 <ScrollView contentContainerStyle={styles.sheetContent}>
                     <Text style={[styles.sheetCopy, { color: colors.textSecondary }]}>

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as MediaLibrary from 'expo-media-library';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -44,8 +44,14 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
         protectedAlbums: store.protectedAlbums,
         protectedAssetIds: store.protectedAssetIds,
     })));
-    const protectedAlbumIdSet = new Set((state.protectedAlbums ?? []).map(album => album.albumId));
-    const protectedAssetIdSet = new Set(state.protectedAssetIds ?? []);
+    const protectedAlbumIdSet = useMemo(
+        () => new Set((state.protectedAlbums ?? []).map(album => album.albumId)),
+        [state.protectedAlbums],
+    );
+    const protectedAssetIdSet = useMemo(
+        () => new Set(state.protectedAssetIds ?? []),
+        [state.protectedAssetIds],
+    );
     const { t } = useI18n();
     const { colors } = useThemeColor();
     const [filter, setFilter] = useState<Filter>(initialFilter);

@@ -501,4 +501,19 @@ describe('VideosScreen processing behavior', () => {
     expect(secondEl.props.onFavorite).toBe(firstEl.props.onFavorite);
     await screen.unmountAsync();
   });
+
+  it('shows protected_delete_blocked feedback when markVideoForTrash skips a protected video', async () => {
+    mockMediaState.markVideoForTrash.mockReturnValueOnce({ added: 0, protectedSkipped: 1 });
+    const screen = await renderScreen();
+    const list = screen.UNSAFE_getByType(ReactNative.FlatList);
+    const firstEl = list.props.renderItem({ item: videoOne, index: 0, separators: {} });
+
+    act(() => {
+      firstEl.props.onDelete(videoOne);
+    });
+
+    expect(screen.getByTestId('video-protected-feedback')).toBeTruthy();
+    expect(screen.getByText('protected_delete_blocked')).toBeTruthy();
+    await screen.unmountAsync();
+  });
 });

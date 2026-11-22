@@ -69,7 +69,9 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
                     ? t('backup_error_password')
                     : code === 'invalid'
                         ? t('backup_error_invalid')
-                        : t('backup_error_generic'));
+                        : code === 'size'
+                            ? t('backup_error_size')
+                            : t('backup_error_generic'));
             }
         } finally {
             running.current = false;
@@ -185,6 +187,11 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
                                 existing: preview.existing,
                                 skipped: preview.skipped,
                             })}</Text>
+                        {!!preview.unmatchedProtectedAlbums && (
+                            <Text style={[styles.copy, { color: colors.warning }]}>
+                                {t('backup_unmatched_protected_albums_hint', { count: preview.unmatchedProtectedAlbums })}
+                            </Text>
+                        )}
                         <View style={styles.toggle}>
                             <Text style={[styles.copy, { flex: 1, color: colors.text }]}>{t('backup_include_pending')}</Text>
                             <Switch accessibilityLabel={t('backup_include_pending')} value={includePending} onValueChange={setIncludePending} disabled={busy} />

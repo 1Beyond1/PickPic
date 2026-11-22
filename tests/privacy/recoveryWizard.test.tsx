@@ -109,9 +109,38 @@ describe('PrivacyRecoveryScreen actionable self-rescue wizard', () => {
     expect(screen.UNSAFE_getByType(Switch).props.value).toBe(false);
     expect(onRecoverFromBackup).not.toHaveBeenCalled();
 
-    // Explicit confirmation invokes recovery callback.
+    // Explicit confirmation invokes recovery callback and presents restore summary before closing.
     fireEvent.press(screen.getByTestId('privacy-import-confirm-btn'));
     await waitFor(() => expect(onRecoverFromBackup).toHaveBeenCalledWith(v2Payload, false, expect.any(Function)));
+    await waitFor(() => expect(screen.getByTestId('privacy-import-restore-result')).toBeTruthy());
+    fireEvent.press(screen.getByTestId('privacy-import-finish-btn'));
+    await waitFor(() => expect(screen.queryByTestId('privacy-import-restore-result')).toBeNull());
+  });
+
+  it('prevents closing the reset sheet via backdrop while working is true', async () => {
+    let resolveReset!: () => void;
+    const onResetLocalIndex = jest.fn(() => new Promise<void>(resolve => { resolveReset = resolve; }));
+    render(
+      <PrivacyRecoveryScreen
+        failure="read"
+        failureDomain="schema_corrupt"
+        busy={false}
+        onRetry={jest.fn()}
+        onResetLocalIndex={onResetLocalIndex}
+      />,
+    );
+
+    fireEvent.press(screen.getByTestId('privacy-wizard-open-reset'));
+    fireEvent.press(screen.getByTestId('privacy-wizard-reset-ack'));
+    fireEvent.press(screen.getByTestId('privacy-wizard-reset-confirm'));
+    await waitFor(() => expect(onResetLocalIndex).toHaveBeenCalledTimes(1));
+
+    // Backdrop must not be a dismissible Pressable while working.
+    const backdrop = screen.getByTestId('sheet-backdrop', { includeHiddenElements: true });
+    expect(backdrop.props.onPress).toBeUndefined();
+
+    resolveReset();
+    await waitFor(() => expect(screen.queryByTestId('privacy-wizard-reset-confirm')).toBeNull());
   });
 
   it('requires explicit secondary checkbox acknowledgment before resetting local privacy index', async () => {

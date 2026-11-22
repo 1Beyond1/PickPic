@@ -13,8 +13,15 @@ export class MediaSizeReadError extends Error {
  * for cross-album deduplication (not a full library of assets or file bytes).
  * Unknown sizes are not zero and cannot participate in a largest-first claim.
  * Neither this ranking nor its transient counts are persisted. */
-export async function loadLargestMedia(kind: 'photo' | 'video', count: number, albumIds: readonly string[],
-    excludedIds: ReadonlySet<string>, date?: MediaDateFilter, isCurrent: () => boolean = () => true) {
+export async function loadLargestMedia(
+    kind: 'photo' | 'video',
+    count: number,
+    albumIds: readonly string[],
+    excludedIds: ReadonlySet<string>,
+    date?: MediaDateFilter,
+    isCurrent: () => boolean = () => true,
+    excludedAlbumIds?: ReadonlySet<string>,
+) {
     if (!Number.isSafeInteger(count) || count <= 0 || count > 1000) throw new MediaSizeReadError('failed');
     if (!supportsIndexedMediaSizes()) throw new MediaSizeReadError('unavailable');
     const check = () => { if (!isCurrent()) throw new MediaSizeReadError('stale'); };
@@ -39,6 +46,7 @@ export async function loadLargestMedia(kind: 'photo' | 'video', count: number, a
                 check();
                 const eligible = page.assets.filter(asset => {
                     if (asset.mediaType !== kind || !asset.uri || seen.has(asset.id) || excludedIds.has(asset.id)
+                        || (excludedAlbumIds && asset.albumId && excludedAlbumIds.has(asset.albumId))
                         || !mediaMatchesDate(asset.creationTime, date)) return false;
                     seen.add(asset.id); return true;
                 });

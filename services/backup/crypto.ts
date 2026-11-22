@@ -7,8 +7,8 @@ import { deriveBackupKey } from './keyDerivation';
 const MAGIC = new Uint8Array([80, 75, 80, 73, 67, 48, 48, 49]); // PKPIC001
 const HEADER_SIZE = 52; // magic + 32-byte salt + 12-byte GCM nonce
 const BLOCK_SIZE = 65536;
-export const MAX_BACKUP_BYTES = 8 * 1024 * 1024 + HEADER_SIZE + 16;
-const MAX_JSON_BYTES = 8 * 1024 * 1024 - 4;
+export const MAX_BACKUP_BYTES = 32 * 1024 * 1024 + HEADER_SIZE + 16;
+const MAX_JSON_BYTES = 32 * 1024 * 1024 - 4;
 export type BackupCancellation = () => boolean;
 export type BackupKeyProgress = (fraction: number) => void;
 

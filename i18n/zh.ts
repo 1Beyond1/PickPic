@@ -442,6 +442,7 @@ export default {
     backup_restore_success: '已恢复 {count} 条记录。现有决定已保留，原照片和视频未改动。',
     backup_error_password: '请使用 12–128 个字符的密码，建议使用较长且不重复的口令。',
     backup_error_invalid: '密码不正确，或文件损坏、版本不兼容。没有恢复任何记录。',
+    backup_error_size: '备份文件过大或记录数量超出当前上限，无法完成操作。',
     backup_error_generic: '操作未完成。请检查存储空间、相册权限并重试；恢复未提示成功时请保持应用开启。',
     backup_error_password_mismatch: '两次输入的密码不一致。',
 
@@ -489,6 +490,9 @@ export default {
     protected_albums_count: '已保护 {count} 个相册',
     protected_albums_selector_title: '选择要保护的相册',
     protected_albums_clear: '清空保护',
+    protected_albums_missing_warning: '有 {count} 个保护相册已不存在或已改名，建议打开保护相册移除失效项或重新选择。',
+    protected_album_unavailable_tag: '已失效',
+    protected_album_remove_action: '移除失效保护相册 {title}',
     protected_badge: '已保护',
     protected_delete_blocked: '该照片位于保护相册，已拦截加入待删。',
     protected_batch_skipped_feedback: '已加入 {added} 项待删；{skipped} 项位于保护相册已自动跳过。',
@@ -512,10 +516,15 @@ export default {
     privacy_wizard_resetting: '正在重建本地隐私索引…',
     privacy_wizard_reset_failed: '重建本地隐私索引失败，请检查存储空间并重试。',
     privacy_wizard_restore_failed: '未能完成备份恢复。请确认密码正确并重试，原照片未改动。',
+    privacy_wizard_restore_no_permission: '未获得相册访问权限，无法匹配备份记录；本地原数据未被清除，请授权后重试。',
+    privacy_wizard_restore_done_title: '加密备份已恢复',
+    privacy_wizard_restore_done_summary: '已恢复保留 {kept} · 收藏 {collected} · 待删除 {pending}\n保护相册 {protectedAlbums} · 忽略记录 {reviewIgnores} · 未匹配 {skipped}',
+    privacy_wizard_enter_app: '进入应用',
 
     backup_scope_desc_v2: '包含整理决定、保护相册与忽略清单（不含原照片、视频或扫描缓存）。支持本机与跨设备唯一内容指纹自动重绑定；歧义照片将安全跳过。',
     backup_preview_summary_v2: '可恢复保留 {kept} · 收藏 {collected}\n待删除 {pending} · 跨设备重绑定 {rebound}\n保护相册 {protectedAlbums} · 忽略记录 {reviewIgnores}\n已有决定 {existing} · 歧义跳过 {ambiguousSkipped} · 未匹配 {skipped}',
     backup_reminder_badge: '{count} 项未备份',
     backup_unsaved_changes_reminder: '自上次备份以来新增 {count} 项整理变更，建议适时导出加密备份。',
+    backup_unmatched_protected_albums_hint: '另有 {count} 个保护相册未能自动匹配（如跨平台或相册改名/不可读），请恢复后在设置中手动核对。',
 
 };
