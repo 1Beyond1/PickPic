@@ -22,14 +22,19 @@ jest.mock('../../database/migrations', () => ({
 }));
 
 import { closeDatabase, getDatabase } from '../../database/db';
-import { recordBackupChanges, resetBackupChangeState } from '../../services/backup/changeTracker';
+import {
+  recordBackupChanges,
+  resetBackupChangeState,
+  suspendBackupChangeWrites,
+  useBackupReminderStore,
+} from '../../services/backup/changeTracker';
 import { usePrivacyStore } from '../../stores/usePrivacyStore';
 
 describe('changeTracker non-critical write failure isolation (P1-6)', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     await closeDatabase().catch(() => undefined);
-    resetBackupChangeState();
+    await resetBackupChangeState();
     usePrivacyStore.setState({ failures: {}, reasons: {}, recoveryDepth: 0, recovering: false });
   });
 
@@ -69,5 +74,53 @@ describe('changeTracker non-critical write failure isolation (P1-6)', () => {
 
     expect(mockOpenDatabaseAsync).not.toHaveBeenCalled();
     expect(usePrivacyStore.getState().failures).toEqual({});
+  });
+
+  it('P1-2: resetBackupChangeState awaits in-flight flushPromise and suspendBackupChangeWrites blocks new writes', async () => {
+    let releaseTx!: () => void;
+    let txStarted!: () => void;
+    const txStartedPromise = new Promise<void>(resolve => { txStarted = resolve; });
+    const slowConnection = {
+      execAsync: jest.fn(async () => undefined),
+      getFirstAsync: jest.fn(async (sql: string) => {
+        if (sql.includes('cipher_version')) return { cipher_version: '4.5.0' };
+        if (sql.includes('meta')) {
+          txStarted();
+          await new Promise<void>(resolve => { releaseTx = resolve; });
+          return { value: '0' };
+        }
+        return { 'count(*)': 0 };
+      }),
+      getAllAsync: jest.fn().mockResolvedValue([]),
+      runAsync: jest.fn().mockResolvedValue(undefined),
+      closeAsync: jest.fn().mockResolvedValue(undefined),
+    };
+    mockOpenDatabaseAsync.mockResolvedValue(slowConnection);
+    await getDatabase();
+
+    // Start an in-flight change write.
+    const writePromise = recordBackupChanges(3);
+    await txStartedPromise;
+
+    const resume = suspendBackupChangeWrites();
+    let resetFinished = false;
+    const resetPromise = resetBackupChangeState().then(() => { resetFinished = true; });
+
+    // A concurrent change while suspended must be ignored and must not reopen/enqueue.
+    await expect(recordBackupChanges(5)).resolves.toBe(0);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(resetFinished).toBe(false);
+
+    // Once the in-flight DB transaction completes, resetBackupChangeState resolves cleanly.
+    releaseTx();
+    await Promise.all([writePromise, resetPromise]);
+    resume();
+
+    expect(resetFinished).toBe(true);
+    expect(useBackupReminderStore.getState()).toEqual({
+      pendingChanges: 0,
+      lastBackupAt: null,
+      loaded: false,
+    });
   });
 });

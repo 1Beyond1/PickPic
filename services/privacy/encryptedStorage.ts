@@ -36,8 +36,8 @@ function validateState(value: string): void {
     if ('version' in parsed && parsed.version !== 0) throw new LocalPrivacyError('schema_corrupt');
     const state = parsed.state as Record<string, unknown>;
     if ('recentDecisions' in state && !isRecentDecisions(state.recentDecisions)) throw new LocalPrivacyError('schema_corrupt');
-    for (const name of ['photoProcessedIds', 'videoProcessedIds', 'selectedAlbumIds', 'activeCollectionIds']) {
-        if (name in state && (!Array.isArray(state[name]) || !(state[name] as unknown[]).every(id => typeof id === 'string' && id.length > 0))) throw new LocalPrivacyError('schema_corrupt');
+    for (const name of ['photoProcessedIds', 'videoProcessedIds', 'selectedAlbumIds', 'activeCollectionIds', 'ignoredSimilarGroupKeys']) {
+        if (name in state && (!Array.isArray(state[name]) || !(state[name] as unknown[]).every(id => typeof id === 'string' && id.length > 0 && id.length <= 512))) throw new LocalPrivacyError('schema_corrupt');
     }
     for (const name of ['deleteQueue', 'collectionQueue', 'videoTrashBin']) {
         if (name in state && (!Array.isArray(state[name]) || !(state[name] as unknown[]).every(item =>
@@ -48,7 +48,7 @@ function validateState(value: string): void {
         if (!info || typeof info !== 'object' || Array.isArray(info)) throw new LocalPrivacyError('schema_corrupt');
         for (const value of Object.values(info)) {
             if (!value || typeof value !== 'object' || !('source' in value) || !('addedAt' in value)
-                || !['photos', 'videos', 'blur', 'similar', 'classification', 'unknown'].includes(String(value.source))
+                || !['photos', 'videos', 'blur', 'similar', 'exact_duplicate', 'classification', 'unknown'].includes(String(value.source))
                 || !Number.isSafeInteger(value.addedAt) || Number(value.addedAt) < 0) throw new LocalPrivacyError('schema_corrupt');
         }
     }
@@ -160,15 +160,22 @@ export function createEncryptedStorage(
     };
 }
 
+/** Synchronously disables encrypted storage writes before draining in-flight
+ * persistence queues during explicit self-rescue recovery. */
+export function disableEncryptedStorageWrites(): void {
+    for (const set of readyNames.values()) set.clear();
+    for (const set of hydratedNames.values()) set.clear();
+}
+
 /** Explicit user-confirmed self-rescue only: removes encrypted/legacy AsyncStorage
  * records for the listed store keys and clears in-memory hydration markers. */
 export async function resetEncryptedStorageKeys(names: readonly string[] = ['photoapp-media-progress', 'photoapp-settings']): Promise<void> {
+    disableEncryptedStorageWrites();
     for (const name of names) {
         await AsyncStorage.removeItem(name + suffix);
         await AsyncStorage.removeItem(name);
     }
-    for (const set of readyNames.values()) set.clear();
-    for (const set of hydratedNames.values()) set.clear();
+    disableEncryptedStorageWrites();
 }
 // Records span both AsyncStorage metadata and SQLCipher collections; let
 // mediaProgressStorage clear the 'records' write gate only once both stores

@@ -583,7 +583,7 @@ describe('media visibility checks', () => {
       expect(useMediaStore.getState()[queueKey]).toEqual([asset]);
     });
 
-    describe('Android 16 deletion request limit', () => {
+    describe('Android 11+ (API 30+) deletion request batching', () => {
       const osDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS')!;
       const versionDescriptor = Object.getOwnPropertyDescriptor(Platform, 'Version')!;
       let assets: any[];
@@ -591,13 +591,13 @@ describe('media visibility checks', () => {
       beforeEach(() => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
         Object.defineProperty(Platform, 'Version', { configurable: true, value: 36 });
-        assets = Array.from({ length: 4001 }, (_, i) => ({ id: String(i + 1), mediaType }));
+        assets = Array.from({ length: 2501 }, (_, i) => ({ id: String(i + 1), mediaType }));
         getAssetInfoAsync.mockImplementation(async (id: string) => ({ id }));
         useMediaStore.setState({ [queueKey]: assets, [progressKey]: assets.map(a => a.id) });
         jest.spyOn(console, 'error').mockImplementation(() => undefined);
-        // Model the documented platform contract, not the desired implementation.
+        // Model the 1000-item safe batch limit across Android 11-16+.
         deleteAssetsAsync.mockImplementation(async (batch: unknown[]) => {
-          if (batch.length > 2000) throw new Error('IllegalArgumentException: too many URIs');
+          if (batch.length > 1000) throw new Error('TransactionTooLargeException: too many URIs');
           return true;
         });
       });
@@ -607,10 +607,10 @@ describe('media visibility checks', () => {
         Object.defineProperty(Platform, 'Version', versionDescriptor);
       });
 
-      it('deletes a large confirmed selection without exceeding the native limit or widening its scope', async () => {
+      it('deletes a large confirmed selection in 1000-item batches without widening its scope', async () => {
         const requested = assets.slice(0, 2001).map(a => a.id);
         await expect(confirm(requested)).resolves.toEqual(requested);
-        expect(deleteAssetsAsync.mock.calls.map(([batch]) => batch.length)).toEqual([2000, 1]);
+        expect(deleteAssetsAsync.mock.calls.map(([batch]) => batch.length)).toEqual([1000, 1000, 1]);
         expect(useMediaStore.getState()[queueKey]).toEqual(assets.slice(2001));
         expect(useMediaStore.getState()[progressKey]).toEqual(assets.slice(2001).map(a => a.id));
         expect(locked()).toBe(false);
@@ -618,7 +618,7 @@ describe('media visibility checks', () => {
 
       it.each(['cancelled', 'rejected'] as const)('stops after a %s second request and retains only the undeleted decisions', async outcome => {
         deleteAssetsAsync.mockImplementation(async (batch: unknown[]) => {
-          if (batch.length > 2000) throw new Error('IllegalArgumentException: too many URIs');
+          if (batch.length > 1000) throw new Error('TransactionTooLargeException: too many URIs');
           if (deleteAssetsAsync.mock.calls.length === 2) {
             if (outcome === 'cancelled') return false;
             throw new Error('Provider failure');
@@ -627,11 +627,11 @@ describe('media visibility checks', () => {
         });
         await expect(confirm()).rejects.toThrow();
         expect(deleteAssetsAsync).toHaveBeenCalledTimes(2);
-        expect(useMediaStore.getState()[queueKey]).toEqual(assets.slice(2000));
-        expect(useMediaStore.getState()[progressKey]).toEqual(assets.slice(2000).map(a => a.id));
+        expect(useMediaStore.getState()[queueKey]).toEqual(assets.slice(1000));
+        expect(useMediaStore.getState()[progressKey]).toEqual(assets.slice(1000).map(a => a.id));
         expect(mockRemoveAssetsAndDerivedData).toHaveBeenCalledTimes(mediaType === 'photo' ? 1 : 0);
         if (mediaType === 'photo') {
-          expect(mockRemoveAssetsAndDerivedData).toHaveBeenCalledWith(assets.slice(0, 2000).map(a => a.id));
+          expect(mockRemoveAssetsAndDerivedData).toHaveBeenCalledWith(assets.slice(0, 1000).map(a => a.id));
         }
         expect(mockRemoveAssetAndDerivedData).not.toHaveBeenCalled();
         expect(locked()).toBe(false);
@@ -641,7 +641,7 @@ describe('media visibility checks', () => {
         deleteAssetsAsync.mockResolvedValue(false);
         await expect(confirm()).rejects.toThrow();
         expect(deleteAssetsAsync).toHaveBeenCalledTimes(1);
-        expect(deleteAssetsAsync.mock.calls[0][0]).toHaveLength(2000);
+        expect(deleteAssetsAsync.mock.calls[0][0]).toHaveLength(1000);
         expect(useMediaStore.getState()[queueKey]).toEqual(assets);
         expect(useMediaStore.getState()[progressKey]).toEqual(assets.map(a => a.id));
         expect(locked()).toBe(false);

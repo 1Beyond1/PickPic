@@ -28,6 +28,9 @@ const FORBIDDEN_IMAGE_PATTERNS = [
   /^react-logo(?:@\dx)?\.png$/i,
   /^partial-react-logo\.png$/i,
   /^icon_new\.jpg$/i,
+  /^android-icon-(?:background|foreground|monochrome)\.png$/i,
+  /^splash-icon\.png$/i,
+  /^icon\.png$/i,
 ];
 
 function readJson(filePath, label, errors) {

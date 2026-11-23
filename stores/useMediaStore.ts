@@ -184,12 +184,14 @@ interface MediaState {
     protectedAlbums: ProtectedAlbumRecord[];
     protectedAssetIds: string[];
     missingProtectedAlbumIds: string[];
+    ignoredSimilarGroupKeys: string[];
     hasHydrated: boolean;
 
     // Actions
     loadProtectedAlbums: () => Promise<void>;
     setProtectedAlbums: (albums: readonly { albumId: string; title: string }[]) => Promise<void>;
     isAssetProtected: (asset: { id: string; albumId?: string } | null | undefined) => boolean;
+    addIgnoredSimilarGroupKeys: (keys: readonly string[]) => void;
     startOrganizingSession: (kind: MediaType, scope: SessionScope, assetIds: readonly string[]) => OrganizingSession | null;
     deferSessionMedia: (kind: MediaType, assetId: string) => boolean;
     continueSessionBatch: (kind: MediaType, assetIds: readonly string[]) => boolean;
@@ -784,6 +786,7 @@ export const useMediaStore = create<MediaState>()(
     protectedAlbums: [],
     protectedAssetIds: [],
     missingProtectedAlbumIds: [],
+    ignoredSimilarGroupKeys: [],
     hasHydrated: false,
 
     loadProtectedAlbums: async () => {
@@ -847,6 +850,23 @@ export const useMediaStore = create<MediaState>()(
         const protectedAlbumIds = new Set((state.protectedAlbums ?? []).map(album => album.albumId));
         const protectedAssetIds = new Set(state.protectedAssetIds ?? []);
         return isAssetProtected(asset, protectedAlbumIds, protectedAssetIds);
+    },
+
+    addIgnoredSimilarGroupKeys: (keys) => {
+        const cleaned = keys
+            .map(key => (typeof key === 'string' ? key.trim() : ''))
+            .filter(key => key.length > 0 && key.length <= 512);
+        if (cleaned.length === 0) return;
+        set(state => {
+            const existing = state.ignoredSimilarGroupKeys ?? [];
+            const seen = new Set(existing);
+            const added = cleaned.filter(key => !seen.has(key));
+            if (added.length === 0) return state;
+            // Keep AES-256-GCM AsyncStorage metadata bounded well below CursorWindow limits
+            // while SQLCipher `media_review_ignores` stores the full unbounded history.
+            const merged = [...existing, ...added].slice(-2000);
+            return { ignoredSimilarGroupKeys: merged };
+        });
     },
 
     setPermission: (status) => set({ hasPermission: status }),
@@ -1974,6 +1994,7 @@ export const useMediaStore = create<MediaState>()(
                 deletedCounts: state.deletedCounts,
                 organizingSessions: state.organizingSessions,
                 recentDecisions: state.recentDecisions,
+                ignoredSimilarGroupKeys: state.ignoredSimilarGroupKeys,
             }),
             onRehydrateStorage: () => (state, error) => {
                 if (error) { usePrivacyStore.getState().block('records', 'read'); return; }

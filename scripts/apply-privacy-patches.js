@@ -27,6 +27,13 @@ const patches = [
   { package: labels, file: `${kotlinRoot}imagelabeling/RNMLKitImageLabelingModule.kt`, replacements: [
     ['"addModel: Loading model \'${spec.modelName}\' from ${spec.modelPath}"', '"addModel: Loading bundled model"'],
   ] },
+  { package: labels, file: 'ios/RNMLKitImageLabelingModule.swift', replacements: [
+    ['logger.debug("RNMLKit", "addModel: Loading model \'\\(spec.modelName)\' from \\(spec.modelPath)")', 'logger.debug("RNMLKit", "addModel: Loading bundled model")'],
+    ['logger.info("RNMLKit", "classify image: Classifying image: \\(imagePath) ")', 'logger.info("RNMLKit", "classify image: Classifying image")'],
+  ] },
+  { package: faces, file: 'ios/RNMLKitFaceDetectionModule.swift', replacements: [
+    ['logger.debug(result)', 'logger.debug("RNMLKitFaceDetection: Face detection completed")'],
+  ] },
   { package: media, file: 'android/src/main/java/expo/modules/medialibrary/assets/AssetUtils.kt', replacements: [
     ['Log.w("expo-media-library", "Could not parse EXIF tags for $localUri")', 'Log.w("expo-media-library", "Could not parse EXIF tags")'],
     ['Log.w("expo-media-library", "Could not parse EXIF tags for $photoUri")', 'Log.w("expo-media-library", "Could not parse EXIF tags")'],
@@ -59,6 +66,8 @@ const reviewedSources = {
   [`${labels}/${kotlinRoot}imagelabeling/RNMLKitImageLabeler.kt`]: 'af46060e9a84797f66f5a28bb11ccaee7d66efa89ccfea89210d5c2ef5226652',
   [`${labels}/${kotlinRoot}imagelabeling/RNMLKitImageLabelerMap.kt`]: '1a8dc817154ab5883fcb22110568a5375901cb9a5856445a4fb95ccf6595ad6b',
   [`${labels}/${kotlinRoot}imagelabeling/RNMLKitImageLabelingModule.kt`]: '1400baa74adc85bd317fe3d81b70ee319f7290dfb81e2671dbfbd34304e88886',
+  [`${labels}/ios/RNMLKitImageLabelingModule.swift`]: 'ddecd5fe24600313759e9bfe5689332ddcd8c9f35c16ee4b28f77750396bc3f7',
+  [`${faces}/ios/RNMLKitFaceDetectionModule.swift`]: '3c9bd1ce16c6dd88e67a0ca5befa315a37508edb0d3ee0bc0b016ff39e6169b1',
   [`${media}/android/src/main/java/expo/modules/medialibrary/assets/AssetUtils.kt`]: '5ef935070a2365429f58d9467a6559428a665a3a57dd997bc2e4b1fb5c062db8',
   [`${labels}/src/module/RNMLKitImageLabeler.ts`]: 'dfe93d2165957e441f20818d62c113bb3f0b6d3e94950260998355b8949e9424',
   [`${labels}/build/module/RNMLKitImageLabeler.js`]: '29e8fd0c18bbfb9de6de8624c7835a7c531181c653efc3661a271641ac7bca80',
@@ -78,6 +87,18 @@ function redact(source, patch) {
   }
   if (patch.package === faces && /console\.error\(\s*e(?:\s|\))/.test(next)) {
     throw new Error('Face detector privacy redaction is incomplete');
+  }
+  if (
+    patch.file === 'ios/RNMLKitImageLabelingModule.swift'
+    && (next.includes('\\(imagePath)') || next.includes('\\(spec.modelPath)'))
+  ) {
+    throw new Error('iOS image labeler privacy redaction is incomplete');
+  }
+  if (
+    patch.file === 'ios/RNMLKitFaceDetectionModule.swift'
+    && /logger\.debug\(\s*result\s*\)/.test(next)
+  ) {
+    throw new Error('iOS face detector privacy redaction is incomplete');
   }
   return next;
 }

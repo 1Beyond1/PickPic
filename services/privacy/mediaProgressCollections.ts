@@ -10,6 +10,7 @@ export const VALID_PENDING_DELETION_SOURCES: ReadonlySet<PendingDeletionSource> 
     'videos',
     'blur',
     'similar',
+    'exact_duplicate',
     'classification',
     'unknown',
 ]);

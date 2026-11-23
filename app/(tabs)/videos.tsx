@@ -9,6 +9,7 @@ import { AlbumSelector } from '../../components/AlbumSelector';
 import { OrganizingScopeButton, OrganizingScopeModal } from '../../components/OrganizingScopeModal';
 import { PendingDeletionModal } from '../../components/PendingDeletionReview';
 import { RecentDecisionsButton, RecentUndoButton } from '../../components/RecentDecisionControls';
+import { isMediaOlderThanFilter } from '../../services/mediaMonth';
 import { getPendingDeletionEntries } from '../../services/pendingDeletion';
 import { VideoFeedItem } from '../../components/VideoFeedItem';
 import { COLORS, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
@@ -476,7 +477,13 @@ export default function VideosScreen() {
     const scope = session?.scope;
     const scopeText = scope ? t(scope.albumIds.length ? 'session_album_scope' : 'session_all_scope', {
         count: scope.albumIds.length, order: t(`session_order_${scope.order}`),
-    }) + (scope.date !== undefined ? ` · ${scope.date === 'unknown' ? t('scope_unknown_date') : t('scope_month_value', { year: scope.date.year, month: scope.date.month })}` : '') : null;
+    }) + (scope.date !== undefined ? ` · ${
+        scope.date === 'unknown'
+            ? t('scope_unknown_date')
+            : isMediaOlderThanFilter(scope.date)
+                ? t('scope_older_than_value', { days: scope.date.days })
+                : t('scope_month_value', { year: scope.date.year, month: scope.date.month })
+    }` : '') : null;
     const activeIsProcessed = !!activeId && videoProcessedIdSet.has(activeId);
     const resolvedActiveIndex = activeId ? videos.findIndex(video => video.id === activeId) : -1;
     const activeIndex = resolvedActiveIndex >= 0

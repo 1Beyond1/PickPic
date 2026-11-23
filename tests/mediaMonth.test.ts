@@ -1,4 +1,15 @@
-import { createMediaMonth, groupMediaByMonth, mediaMatchesMonth, mediaMonthQuery } from '../services/mediaMonth';
+import {
+    createMediaMonth,
+    createMediaOlderThan,
+    groupMediaByMonth,
+    isMediaDateFilter,
+    isMediaOlderThanFilter,
+    mediaDateQuery,
+    mediaMatchesDate,
+    mediaMatchesMonth,
+    mediaMonthQuery,
+    sameMediaDateFilter,
+} from '../services/mediaMonth';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 
@@ -59,4 +70,30 @@ it.each([
     const result = JSON.parse(execFileSync(process.execPath, ['-e', script, path.resolve(__dirname, '../services/mediaMonth.ts'), String(year), String(month)],
         { encoding: 'utf8', env: { ...process.env, TZ: zone } }));
     expect(result).toEqual({ year, month, startInclusive: start, endExclusive: end });
+});
+
+it('builds and validates older-than (30d / 90d) presets strictly and excludes unknown dates', () => {
+    const now = Date.UTC(2026, 10, 23, 12, 0, 0);
+    const older30 = createMediaOlderThan(30, now);
+    const older90 = createMediaOlderThan(90, now);
+
+    expect(older30).toEqual({ kind: 'older_than', days: 30, beforeExclusive: now - 30 * 86400000 });
+    expect(older90).toEqual({ kind: 'older_than', days: 90, beforeExclusive: now - 90 * 86400000 });
+    expect(isMediaOlderThanFilter(older30)).toBe(true);
+    expect(isMediaDateFilter(older30)).toBe(true);
+    expect(sameMediaDateFilter(older30, createMediaOlderThan(30, now))).toBe(true);
+    expect(sameMediaDateFilter(older30, older90)).toBe(false);
+
+    expect(mediaDateQuery(older30)).toEqual({ createdBefore: older30.beforeExclusive });
+    expect(mediaMatchesDate(older30.beforeExclusive - 1, older30)).toBe(true);
+    expect(mediaMatchesDate(older30.beforeExclusive, older30)).toBe(false);
+    expect(mediaMatchesDate(now - 5 * 86400000, older30)).toBe(false);
+    // Unknown date (0) must NEVER be treated as an old screenshot!
+    expect(mediaMatchesDate(0, older30)).toBe(false);
+    expect(mediaMatchesDate(NaN, older90)).toBe(false);
+
+    // Reject malformed older-than objects.
+    expect(isMediaOlderThanFilter({ kind: 'older_than', days: 15, beforeExclusive: 1000 })).toBe(false);
+    expect(isMediaOlderThanFilter({ kind: 'older_than', days: 30, beforeExclusive: 0 })).toBe(false);
+    expect(isMediaOlderThanFilter({ kind: 'older_than', days: 30, beforeExclusive: 1000, extra: 1 })).toBe(false);
 });

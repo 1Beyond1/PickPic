@@ -24,6 +24,7 @@ jest.mock('../services/privacy/encryptedStorage', () => {
   const storage = module.default ?? module;
   return { encryptedRecordStorage: storage, encryptedSettingsStorage: storage,
     canWriteEncryptedStorage: () => true, markEncryptedStorageHydrated: () => {},
+    disableEncryptedStorageWrites: jest.fn(),
     resetEncryptedStorageKeys: jest.fn(async () => {}) };
 });
 jest.mock('../services/privacy/mediaCollectionsStorage', () => {
@@ -76,6 +77,20 @@ jest.mock('../services/reviewIgnores', () => {
         if (entry.ignoreType === ignoreType) keys.add(entry.targetKey);
       }
       return keys;
+    }),
+    getAllIgnoredSimilarGroupKeys: jest.fn(async () => {
+      const keys = new Set<string>();
+      for (const entry of entries.values()) {
+        if (entry.ignoreType === 'similar_group') keys.add(entry.targetKey);
+      }
+      return keys;
+    }),
+    ignoreSimilarGroupKeys: jest.fn(async (targetKeys: readonly string[], createdAt = Date.now()) => {
+      const normalized = Array.from(new Set(targetKeys.map(k => k.trim()).filter(Boolean)));
+      for (const targetKey of normalized) {
+        entries.set(`similar_group:${targetKey}`, { ignoreType: 'similar_group', targetKey, createdAt });
+      }
+      return normalized;
     }),
     getAllReviewIgnores: jest.fn(async () => Array.from(entries.values())),
     addReviewIgnore: jest.fn(async (ignoreType: 'blur' | 'similar_group', targetKey: string, createdAt = Date.now()) => {
@@ -167,7 +182,8 @@ jest.mock('../services/backup/changeTracker', () => {
     markBackupCompleted: jest.fn(async (timestamp = Date.now()) => {
       useBackupReminderStore.setState({ pendingChanges: 0, lastBackupAt: timestamp, loaded: true });
     }),
-    resetBackupChangeState: jest.fn(() => {
+    suspendBackupChangeWrites: jest.fn(() => () => {}),
+    resetBackupChangeState: jest.fn(async () => {
       useBackupReminderStore.setState({ pendingChanges: 0, lastBackupAt: null, loaded: false });
     }),
   };

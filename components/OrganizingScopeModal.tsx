@@ -5,8 +5,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
-import { sameMediaDateFilter } from '../services/mediaMonth';
-import type { MediaDateFilter } from '../services/mediaMonth';
+import {
+    createMediaOlderThan,
+    isMediaOlderThanFilter,
+    sameMediaDateFilter,
+} from '../services/mediaMonth';
+import type { MediaDateFilter, OlderThanDays } from '../services/mediaMonth';
 import { readOrganizingMonths } from '../services/organizingMonths';
 import type { OrganizingMonthsResult } from '../services/organizingMonths';
 import { sameSessionScope } from '../services/organizingSession';
@@ -79,8 +83,39 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
         } finally { guard.current = false; if (mounted.current) setWorking(false); }
     };
     const chooseDate = (value?: MediaDateFilter) => { if (!busy) { setDate(value); setFeedback(null); } };
-    const dateLabel = (value?: MediaDateFilter) => value === 'unknown' ? t('scope_unknown_date') : value
-        ? t('scope_month_value', { year: value.year, month: value.month }) : t('scope_all_months');
+    const dateLabel = (value?: MediaDateFilter) => {
+        if (value === 'unknown') return t('scope_unknown_date');
+        if (isMediaOlderThanFilter(value)) return t('scope_older_than_value', { days: value.days });
+        if (value) return t('scope_month_value', { year: value.year, month: value.month });
+        return t('scope_all_months');
+    };
+    const sourceAlbumIds = useMemo(
+        () => (sources?.status === 'ready' ? sources.albums.map(album => album.id) : []),
+        [sources],
+    );
+    const hasScreenshotPresetAlbums = kind === 'photo' && sourceAlbumIds.length > 0;
+    const isOldScreenshotsPresetSelected = (days: OlderThanDays) => (
+        hasScreenshotPresetAlbums
+        && isMediaOlderThanFilter(date)
+        && date.days === days
+        && albumIds.length === sourceAlbumIds.length
+        && sourceAlbumIds.every(id => albumIds.includes(id))
+    );
+    const applyOldScreenshotsPreset = (days: OlderThanDays) => {
+        if (busy || !hasScreenshotPresetAlbums) return;
+        setAlbumIds(sourceAlbumIds);
+        setDate(createMediaOlderThan(days));
+        setOrder('oldest');
+        setFeedback(null);
+    };
+    const isLargeVideosPresetSelected = kind === 'video' && order === 'largest' && albumIds.length === 0 && date === undefined;
+    const applyLargeVideosPreset = () => {
+        if (busy || !sizeSupported) return;
+        setAlbumIds([]);
+        setDate(undefined);
+        setOrder('largest');
+        setFeedback(null);
+    };
     const row = (value: MediaDateFilter | undefined, count?: number) => {
         const label = dateLabel(value), selected = sameMediaDateFilter(date, value);
         return <Pressable key={label} accessibilityRole="radio" accessibilityLabel={label}
@@ -99,6 +134,64 @@ function ScopeContent({ kind, onClose, onStarted }: { kind: MediaType; onClose: 
                 <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>{t('scope_title')}</Text><PendingDeletionButton /></View>
             <ScrollView contentContainerStyle={styles.content}>
                 <Text style={[styles.secondary, { color: colors.textSecondary }]}>{t('scope_new_round_hint')}</Text>
+                <Text accessibilityRole="header" style={[styles.section, { color: colors.text }]}>{t('scope_presets_title')}</Text>
+                {kind === 'photo' ? (
+                    <View style={styles.presetBlock}>
+                        <View style={styles.presetRow}>
+                            {([30, 90] as const).map(days => {
+                                const selected = isOldScreenshotsPresetSelected(days);
+                                const disabled = busy || !hasScreenshotPresetAlbums;
+                                const label = t(days === 30 ? 'scope_preset_old_screenshots_30' : 'scope_preset_old_screenshots_90');
+                                return (
+                                    <Pressable
+                                        key={days}
+                                        testID={`scope-preset-old-screenshots-${days}`}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={label}
+                                        accessibilityState={{ selected, disabled }}
+                                        disabled={disabled}
+                                        onPress={() => applyOldScreenshotsPreset(days)}
+                                        style={[
+                                            styles.presetChip,
+                                            {
+                                                backgroundColor: selected ? colors.selectionBackground : colors.surface,
+                                                borderColor: selected ? colors.primary : colors.divider,
+                                                opacity: disabled ? 0.45 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <Text style={[styles.presetLabel, { color: colors.text }]}>{label}</Text>
+                                    </Pressable>
+                                );
+                            })}
+                        </View>
+                        <Text style={[styles.caption, { color: colors.textSecondary }]}>{t('scope_old_screenshots_hint')}</Text>
+                    </View>
+                ) : (
+                    <View style={styles.presetBlock}>
+                        <Pressable
+                            testID="scope-preset-large-videos"
+                            accessibilityRole="button"
+                            accessibilityLabel={t('scope_preset_large_videos')}
+                            accessibilityState={{ selected: isLargeVideosPresetSelected, disabled: busy || !sizeSupported }}
+                            disabled={busy || !sizeSupported}
+                            onPress={applyLargeVideosPreset}
+                            style={[
+                                styles.presetChip,
+                                {
+                                    backgroundColor: isLargeVideosPresetSelected ? colors.selectionBackground : colors.surface,
+                                    borderColor: isLargeVideosPresetSelected ? colors.primary : colors.divider,
+                                    opacity: busy || !sizeSupported ? 0.45 : 1,
+                                },
+                            ]}
+                        >
+                            <Text style={[styles.presetLabel, { color: colors.text }]}>{t('scope_preset_large_videos')}</Text>
+                        </Pressable>
+                        <Text style={[styles.caption, { color: colors.textSecondary }]}>
+                            {t(sizeSupported ? 'scope_large_videos_hint' : 'scope_size_unavailable')}
+                        </Text>
+                    </View>
+                )}
                 <Text accessibilityRole="header" style={[styles.section, { color: colors.text }]}>{t(kind === 'photo' ? 'tab_photos' : 'tab_videos')}</Text>
                 <Pressable accessibilityRole="button" accessibilityLabel={t('scope_albums')} disabled={busy} onPress={() => setShowAlbums(true)} style={[styles.row, { borderColor: colors.divider }]}>
                     <View style={styles.copy}><Text style={[styles.label, { color: colors.text }]}>{t('scope_albums')}</Text>
@@ -163,6 +256,17 @@ const styles = StyleSheet.create({
     secondary: { ...TYPOGRAPHY.secondary }, label: { ...TYPOGRAPHY.body }, caption: { ...TYPOGRAPHY.caption }, copy: { flex: 1, minWidth: 0, gap: 4 },
     row: { minHeight: 44, paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth,
         flexDirection: 'row', gap: 12, alignItems: 'center', borderRadius: 8 }, recovery: { gap: 8 },
+    presetBlock: { gap: 8 },
+    presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    presetChip: {
+        minHeight: UI_METRICS.touchTarget,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: UI_METRICS.buttonRadius,
+        borderWidth: StyleSheet.hairlineWidth,
+        justifyContent: 'center',
+    },
+    presetLabel: { ...TYPOGRAPHY.button },
     start: { minHeight: 48, borderRadius: UI_METRICS.buttonRadius, paddingHorizontal: 16, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
     scopeButton: { minHeight: 44, minWidth: 44, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 8 },
 });

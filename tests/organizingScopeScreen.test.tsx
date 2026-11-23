@@ -174,3 +174,65 @@ it('allows an empty unknown-date scope without guessing dates or processing othe
     expect(useMediaStore.getState().organizingSessions.photo).toMatchObject({ scope: { date: 'unknown' }, phase: 'complete', assetIds: [] });
     expect(useMediaStore.getState().photoProcessedIds).toEqual([]);
 });
+
+it.each([30, 90] as const)('applies the old screenshots (%id) quick preset combining screenshot albums and creation-time filter', async days => {
+    const now = Date.now();
+    const veryOldTime = now - (days + 10) * 86400000;
+    const recentTime = now - 5 * 86400000;
+    fixtures = [
+        asset('old-shot', veryOldTime, 'photo'),
+        asset('recent-shot', recentTime, 'photo'),
+        asset('unknown-shot', 0, 'photo'),
+    ];
+    jest.mocked(MediaLibrary.getAlbumsAsync).mockResolvedValue([
+        { id: 'alb-shots', title: 'Screenshots' },
+        { id: 'alb-cam', title: 'Camera' },
+    ] as any);
+
+    const { onStarted } = await open('photo');
+    await waitFor(() => expect(screen.getByTestId(`scope-preset-old-screenshots-${days}`)).toBeEnabled());
+    await fireEventAsync.press(screen.getByTestId(`scope-preset-old-screenshots-${days}`));
+    await waitFor(() => expect(startButton()).toBeEnabled());
+
+    expect(screen.getByText(`当前选择：${days} 天前`)).toBeTruthy();
+    expect(onStarted).not.toHaveBeenCalled();
+
+    await fireEventAsync.press(startButton());
+    expect(onStarted).toHaveBeenCalledTimes(1);
+    const session = useMediaStore.getState().organizingSessions.photo;
+    expect(session).toMatchObject({
+        scope: {
+            albumIds: ['alb-shots'],
+            order: 'oldest',
+            date: { kind: 'older_than', days },
+        },
+        assetIds: ['old-shot'],
+    });
+    expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+});
+
+it('applies the large videos quick preset using Android PickPicMediaIndex largest-first sorting', async () => {
+    const original = Platform.OS;
+    try {
+        Platform.OS = 'android';
+        fixtures = [asset('10', 1000, 'video'), asset('20', 2000, 'video'), asset('30', 3000, 'video')];
+        jest.mocked(requireOptionalNativeModule).mockReturnValue({
+            readSizes: jest.fn(async (_: string, ids: string[]) => ids.map(id => ({
+                id,
+                bytes: id === '10' ? 5_000_000 : id === '20' ? 250_000_000 : 12_000_000,
+            }))),
+        });
+        const { onStarted } = await open('video');
+        await fireEventAsync.press(screen.getByTestId('scope-preset-large-videos'));
+        await fireEventAsync.press(startButton());
+
+        expect(onStarted).toHaveBeenCalledTimes(1);
+        expect(useMediaStore.getState().organizingSessions.video).toMatchObject({
+            scope: { albumIds: [], order: 'largest' },
+            assetIds: ['20', '30', '10'],
+        });
+        expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    } finally {
+        Platform.OS = original;
+    }
+});

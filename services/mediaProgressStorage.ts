@@ -36,6 +36,7 @@ const ALLOWED_PERSISTED_MEDIA_KEYS = new Set<string>([
     'deletedCounts',
     'organizingSessions',
     'recentDecisions',
+    'ignoredSimilarGroupKeys',
 ]);
 
 function isEmptyCollections(collections: MediaProgressCollections): boolean {
@@ -102,9 +103,21 @@ let collectionsReady = false;
 let otherActiveWrite: { name: string; value: string } | null = null;
 let otherPendingWrite: { name: string; value: string } | null = null;
 let otherLatestWrite: { name: string; value: string } | null = null;
+let writeSuspendDepth = 0;
+
+/** Blocks new persistence writes during self-rescue reset until resumed. */
+export function suspendMediaProgressWrites(): () => void {
+    let released = false;
+    writeSuspendDepth++;
+    return () => {
+        if (released) return;
+        released = true;
+        writeSuspendDepth = Math.max(0, writeSuspendDepth - 1);
+    };
+}
 
 function scheduleWorker(): void {
-    if (workerPromise !== null) return;
+    if (workerPromise !== null || writeSuspendDepth > 0) return;
     workerPromise = Promise.resolve()
         .then(runWorker)
         .finally(() => {
@@ -114,10 +127,13 @@ function scheduleWorker(): void {
 
 async function runWorker(): Promise<void> {
     while (
-        otherActiveWrite !== null
-        || otherPendingWrite !== null
-        || pendingCollections !== null
-        || pendingMetadata !== null
+        writeSuspendDepth === 0
+        && (
+            otherActiveWrite !== null
+            || otherPendingWrite !== null
+            || pendingCollections !== null
+            || pendingMetadata !== null
+        )
     ) {
         if (otherActiveWrite !== null || otherPendingWrite !== null) {
             const job = otherActiveWrite ?? otherPendingWrite!;
@@ -299,9 +315,19 @@ async function loadMediaProgressEnvelope(
     }
 }
 
-/** Explicit user-confirmed self-rescue only: clears in-memory persistence queues
- * after the local encrypted index has been wiped for reinitialization. */
+/** Explicit user-confirmed self-rescue only: cancels queued writes, drains any
+ * in-flight worker, and clears in-memory persistence queues before wiping the
+ * local encrypted index for reinitialization. */
 export async function resetMediaProgressPersistenceState(): Promise<void> {
+    // Drop queued-but-unstarted slots immediately so an active worker exits
+    // after finishing its current in-flight operation.
+    latestMetadata = null;
+    pendingMetadata = null;
+    latestCollections = null;
+    pendingCollections = null;
+    collectionsReady = false;
+    otherPendingWrite = null;
+    otherLatestWrite = null;
     await drainQueue();
     lastWriteFailed = false;
     latestMetadata = null;
@@ -319,7 +345,7 @@ export async function resetMediaProgressPersistenceState(): Promise<void> {
 function enqueueMetadataWrite(name: string, value: string): void {
     // Permission/count setters can run before automatic hydration. Their
     // default snapshots are never allowed to replace a stored decision.
-    if (!canWriteEncryptedStorage('records', name)) return;
+    if (writeSuspendDepth > 0 || !canWriteEncryptedStorage('records', name)) return;
     if (name === MEDIA_PROGRESS_STORAGE_KEY) {
         const entry = { name, value };
         latestMetadata = entry;
@@ -394,7 +420,7 @@ export const mediaProgressStorage: StateStorage = {
 export function scheduleMediaCollectionsPersist(
     collections: MediaProgressCollections
 ): void {
-    if (!canWriteEncryptedStorage('records', MEDIA_PROGRESS_STORAGE_KEY)) return;
+    if (writeSuspendDepth > 0 || !canWriteEncryptedStorage('records', MEDIA_PROGRESS_STORAGE_KEY)) return;
     if (!collectionsReady && usePrivacyStore.getState().failures.records === 'read') return;
     const snapshot: MediaProgressCollections = {
         photoProcessedIds: collections.photoProcessedIds,

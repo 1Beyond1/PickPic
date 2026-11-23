@@ -5,7 +5,30 @@ import * as path from 'node:path';
 const { patches, versions, redact, applyPrivacyPatches } = require('../../scripts/apply-privacy-patches');
 
 it('checks the actual installed SDK source and emitted JavaScript, not just the patch definitions', () => {
-    expect(applyPrivacyPatches(path.resolve(__dirname, '../..'), true)).toBe(12);
+    expect(applyPrivacyPatches(path.resolve(__dirname, '../..'), true)).toBe(14);
+});
+
+it('redacts iOS ML Kit imagePath/modelPath and face detection result logs while keeping inference intact', () => {
+    const labelPatch = patches.find((item: any) => item.file === 'ios/RNMLKitImageLabelingModule.swift');
+    expect(labelPatch).toBeTruthy();
+    const labelOriginal = 'logger.debug("RNMLKit", "addModel: Loading model \'\\(spec.modelName)\' from \\(spec.modelPath)")\n'
+        + 'logger.info("RNMLKit", "classify image: Classifying image: \\(imagePath) ")\n'
+        + 'let results = try await imageLabeler.classifyImage(imagePath: imagePath)';
+    const labelNext = redact(labelOriginal, labelPatch);
+    expect(labelNext).not.toContain('\\(imagePath)');
+    expect(labelNext).not.toContain('\\(spec.modelPath)');
+    expect(labelNext).toContain('try await imageLabeler.classifyImage(imagePath: imagePath)');
+    expect(redact(labelNext, labelPatch)).toBe(labelNext);
+
+    const facePatch = patches.find((item: any) => item.file === 'ios/RNMLKitFaceDetectionModule.swift');
+    expect(facePatch).toBeTruthy();
+    const faceOriginal = 'let result = try await faceDetector.detectFaces(image: image)\n'
+        + 'logger.debug(result)\n'
+        + 'promise.resolve(result.record)';
+    const faceNext = redact(faceOriginal, facePatch);
+    expect(faceNext).not.toContain('logger.debug(result)');
+    expect(faceNext).toContain('promise.resolve(result.record)');
+    expect(redact(faceNext, facePatch)).toBe(faceNext);
 });
 
 it('keeps native image loading and rejected errors intact while removing URI logging', () => {

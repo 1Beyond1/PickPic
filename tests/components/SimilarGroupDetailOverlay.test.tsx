@@ -19,8 +19,20 @@ jest.mock('../../database/repositories/SimilarReviewRepository', () => ({
 jest.mock('../../services/similarReview', () => ({ keepSimilarPhotos: (...args: any[]) => mockKeep(...args), completeSimilarGroup: (...args: any[]) => mockComplete(...args) }));
 jest.mock('../../services/mediaSizes', () => ({ readMediaSizes: jest.fn(async () => ({ status: 'unavailable', sizes: new Map() })) }));
 jest.mock('../../services/mediaProgressStorage', () => ({ flushMediaProgress: jest.fn(async () => {}) }));
-jest.mock('../../components/SimilarComparison', () => ({ SimilarComparison: ({ onClose }: any) =>
-  require('react').createElement(require('react-native').Pressable, { testID: 'similar-comparison', accessibilityRole: 'button', accessibilityLabel: 'Close comparison', onPress: onClose }) }));
+jest.mock('../../components/SimilarComparison', () => ({
+  SimilarComparison: ({ onClose, onMarkNotSimilar }: any) => {
+    const ReactModule = require('react');
+    const { View, Pressable } = require('react-native');
+    return ReactModule.createElement(
+      View,
+      { testID: 'similar-comparison' },
+      ReactModule.createElement(Pressable, { accessibilityRole: 'button', accessibilityLabel: 'Close comparison', onPress: onClose }),
+      onMarkNotSimilar
+        ? ReactModule.createElement(Pressable, { testID: 'similar-comparison-not-similar', accessibilityRole: 'button', accessibilityLabel: 'similar_not_similar_action', onPress: onMarkNotSimilar })
+        : null,
+    );
+  },
+}));
 jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn(), getAssetsAsync: jest.fn(), deleteAssetsAsync: jest.fn() }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 60, bottom: mockBottomInset, left: 0, right: 0 }),
@@ -396,4 +408,36 @@ it('P1-2: keepSelectedAndQueueRest excludes already confirmed-kept photos so exp
   await keepPhoto(2);
   fireEvent(screen.getAllByRole('button', { name: 'similar_photo' })[1], 'longPress');
   expect(screen.queryByTestId('similar-keep-selected-queue-rest')).toBeNull();
+});
+
+it('persists Not Similar stable keys directly from SimilarComparison and closes overlay without deleting media', async () => {
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({
+    id,
+    filename: `${id}.jpg`,
+    mediaType: 'photo',
+    uri: `file:///${id}.jpg`,
+    width: 1200,
+    height: 900,
+    creationTime: 1700000000000,
+  }));
+  const onIgnore = jest.fn();
+  const onClose = jest.fn();
+  const onComplete = jest.fn();
+  await renderAsync(<SimilarGroupDetailOverlay {...props} onIgnore={onIgnore} onClose={onClose} onComplete={onComplete} />);
+  await waitFor(() => expect(screen.getAllByRole('button', { name: 'similar_photo' })).toHaveLength(2));
+
+  fireEvent.press(screen.getByRole('button', { name: 'similar_compare' }));
+  expect(screen.getByTestId('similar-comparison')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.press(screen.getByTestId('similar-comparison-not-similar'));
+  });
+
+  expect(onIgnore).toHaveBeenCalledTimes(1);
+  const [snapshotArg, allKeysArg] = onIgnore.mock.calls[0];
+  expect(snapshotArg).toBe('snapshot');
+  expect(allKeysArg).toEqual(expect.arrayContaining(['snapshot', expect.stringMatching(/^sgc1:[a-f0-9]{64}$/)]));
+  expect(onComplete).toHaveBeenCalledTimes(1);
+  expect(onClose).toHaveBeenCalledWith(true);
+  expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
 });

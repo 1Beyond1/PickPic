@@ -8,6 +8,7 @@ export type {
     AssetRecord,
     BlurryAsset,
     BlurryAssetsCursor,
+    CompletedAssetSummary,
     LibraryAssetSyncInput,
     LibraryMetadataSyncBatchOptions,
     LibraryMetadataSyncBatchResult,

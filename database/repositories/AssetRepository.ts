@@ -52,6 +52,14 @@ export interface BlurryAssetsCursor {
     assetId: string;
 }
 
+export interface CompletedAssetSummary {
+    asset_id: string;
+    taken_at: number | null;
+    width: number | null;
+    height: number | null;
+    file_signature: string | null;
+}
+
 export interface LibraryAssetSyncInput {
     assetId: string;
     takenAt: number;
@@ -1295,6 +1303,30 @@ export const AssetRepository = {
              ORDER BY taken_at DESC, asset_id ASC`,
             [AssetStatus.DONE]
         );
+    },
+
+    /**
+     * Lightweight summary of completed scanned assets for exact-duplicate
+     * fileSize pre-bucketing, optionally scoped to currently visible photo IDs.
+     */
+    async getCompletedAssetsSummary(assetIds?: readonly string[]): Promise<CompletedAssetSummary[]> {
+        const db = await getDatabase();
+        const batches = splitAssetIds(assetIds);
+        if (batches.length === 0) return [];
+
+        const rows: CompletedAssetSummary[] = [];
+        for (const batch of batches) {
+            if (batch !== undefined && batch.length === 0) continue;
+            const scope = createAssetScope(batch);
+            rows.push(...await db.getAllAsync<CompletedAssetSummary>(
+                `SELECT asset_id, taken_at, width, height, file_signature
+                 FROM assets
+                 WHERE status = ?${scope.clause}
+                 ORDER BY taken_at ASC, asset_id ASC`,
+                [AssetStatus.DONE, ...scope.params],
+            ));
+        }
+        return rows;
     },
 
     /**

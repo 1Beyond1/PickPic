@@ -33,7 +33,7 @@ afterEach(() => {
     Object.defineProperty(Platform, 'Version', versionDescriptor);
 });
 
-it.each([['ios', '26'], ['android', 35]])('does not change existing requests on %s %s', async (os, version) => {
+it.each([['ios', '26'], ['android', 29]])('does not split requests on %s %s', async (os, version) => {
     platform(String(os), version);
     const reconcile = jest.fn();
     await deleteAssetsInBatches(ids, reconcile);
@@ -42,8 +42,11 @@ it.each([['ios', '26'], ['android', 35]])('does not change existing requests on 
     expect(reconcile).toHaveBeenCalledWith(ids);
 });
 
-it.each([0, 1, 2000])('does not introduce additional prompts for %s assets on Android 16', async count => {
-    platform('android', 36);
+it.each([
+    [30, 0], [30, 1], [30, 1000],
+    [35, 1000], [36, 1000],
+])('does not introduce additional prompts on Android API %s for %s assets', async (apiLevel, count) => {
+    platform('android', apiLevel);
     const reconcile = jest.fn();
     const assets = ids.slice(0, count);
     await deleteAssetsInBatches(assets, reconcile);
@@ -52,8 +55,16 @@ it.each([0, 1, 2000])('does not introduce additional prompts for %s assets on An
     if (count > 0) expect(nativeDelete).toHaveBeenCalledWith(assets);
 });
 
-it('reconciles a successful request before asking for the next system confirmation', async () => {
-    platform('android', 36);
+it.each([30, 31, 35, 36])('splits large deletion queues into max 1000-item batches on Android API %s', async apiLevel => {
+    platform('android', apiLevel);
+    const reconcile = jest.fn();
+    await deleteAssetsInBatches(ids, reconcile);
+    expect(nativeDelete.mock.calls.map(([batch]) => batch.length)).toEqual([1000, 1000, 1]);
+    expect(reconcile.mock.calls.map(([batch]) => batch.length)).toEqual([1000, 1000, 1]);
+});
+
+it('reconciles a successful 1000-item request before asking for the next system confirmation on Android 11+', async () => {
+    platform('android', 33);
     let finishReconcile!: () => void;
     const reconciliation = new Promise<void>(resolve => { finishReconcile = resolve; });
     let notifyReconcile!: () => void;
@@ -72,6 +83,6 @@ it('reconciles a successful request before asking for the next system confirmati
         finishReconcile();
         await deletion;
     }
-    expect(nativeDelete.mock.calls.map(([batch]) => batch.length)).toEqual([2000, 1]);
-    expect(reconcile.mock.calls.map(([batch]) => batch.length)).toEqual([2000, 1]);
+    expect(nativeDelete.mock.calls.map(([batch]) => batch.length)).toEqual([1000, 1000, 1]);
+    expect(reconcile.mock.calls.map(([batch]) => batch.length)).toEqual([1000, 1000, 1]);
 });

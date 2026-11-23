@@ -33,7 +33,7 @@ function isSnapshot(value: unknown): value is DecisionSnapshot {
     return [snapshot.processed, snapshot.collected, snapshot.deferred].every(flag => typeof flag === 'boolean')
         && (pending === null || (!!pending && typeof pending === 'object' && !Array.isArray(pending)
             && exact(pending, ['source', 'addedAt']) && time(pending.addedAt)
-            && ['photos', 'videos', 'blur', 'similar', 'classification', 'unknown'].includes(pending.source)));
+            && ['photos', 'videos', 'blur', 'similar', 'exact_duplicate', 'classification', 'unknown'].includes(pending.source)));
 }
 export function sameDecisionSnapshot(left: DecisionSnapshot, right: DecisionSnapshot): boolean {
     return left.processed === right.processed && left.collected === right.collected && left.deferred === right.deferred

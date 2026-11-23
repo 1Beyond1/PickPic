@@ -275,7 +275,8 @@ describe('result navigation preserves media decisions', () => {
     await renderAsync(<ScanResultsScreen />);
     await screen.findByText('scan_no_blurry');
     expect(screen.queryByRole('tab', { name: 'scan_tab_ai' })).toBeNull();
-    expect(screen.getAllByRole('tab')).toHaveLength(2);
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getByRole('tab', { name: 'scan_tab_exact' })).toBeTruthy();
     expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
   });
 

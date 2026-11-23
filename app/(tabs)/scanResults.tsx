@@ -12,6 +12,7 @@ import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useReducedMotion } from 'react-native-reanimated';
 
+import { ExactDuplicatesView } from '../../components/ExactDuplicatesView';
 import { SimilarGroupCard } from '../../components/SimilarGroupCard';
 import { SimilarGroupDetailOverlay } from '../../components/SimilarGroupDetailOverlay';
 import { PendingDeletionButton } from '../../components/PendingDeletionReview';
@@ -20,7 +21,18 @@ import { getPendingDeletionEntries } from '../../services/pendingDeletion';
 import { flushMediaProgress } from '../../services/mediaProgressStorage';
 import { isAssetProtected } from '../../services/protectedAlbums';
 import { isRecordTransferActive } from '../../services/recordOperationLock';
-import { addReviewIgnore, addReviewIgnores, getIgnoredReviewKeys } from '../../services/reviewIgnores';
+import {
+    addReviewIgnore,
+    addReviewIgnores,
+    getAllIgnoredSimilarGroupKeys,
+    getIgnoredReviewKeys,
+    ignoreSimilarGroupKeys,
+} from '../../services/reviewIgnores';
+import {
+    collectSimilarGroupIgnoreKeys,
+    isSimilarGroupIgnored,
+    type SimilarGroupAssetDescriptor,
+} from '../../services/similarGroupKey';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 import { AssetRepository, DupGroupRepository } from '../../database';
 import type { BlurryAssetsCursor, DupGroup, DupGroupsCursor, DupMember } from '../../database';
@@ -43,6 +55,7 @@ interface BlurryPhoto {
 interface SimilarGroup {
     groupId: string;
     snapshotKey: string | null;
+    ignoreKeys: string[];
     memberCount: number;
     memberAssetIds: string[];
     memberAlbumIds: Record<string, string | undefined>;
@@ -123,12 +136,27 @@ async function hydrateSimilarGroupPage(
     groups: readonly DupGroup[],
     membersByGroupId: ReadonlyMap<string, DupMember[]>,
     visiblePhotoIds: ReadonlySet<string> | undefined,
-    readableInfos: ReadonlyMap<string, { localUri?: string; uri?: string; albumId?: string }>,
+    readableInfos: ReadonlyMap<string, {
+        localUri?: string;
+        uri?: string;
+        albumId?: string;
+        filename?: string;
+        width?: number;
+        height?: number;
+        creationTime?: number;
+        duration?: number;
+    }>,
     ignoredSimilarKeys: ReadonlySet<string> = new Set(),
 ): Promise<SimilarGroup[]> {
+    type AvailableMemberEntry = {
+        member: DupMember;
+        uri: string;
+        albumId?: string;
+        descriptor: SimilarGroupAssetDescriptor;
+    };
     const candidates: {
         group: DupGroup;
-        availableMembers: { member: DupMember; uri: string; albumId?: string }[];
+        availableMembers: AvailableMemberEntry[];
     }[] = [];
 
     for (const group of groups) {
@@ -137,13 +165,26 @@ async function hydrateSimilarGroupPage(
             ? members
             : members.filter(member => visiblePhotoIds.has(member.asset_id));
 
-        const availableMembers = visibleMembers
-            .map(member => {
-                const info = readableInfos.get(member.asset_id);
-                const uri = info?.localUri || info?.uri;
-                return uri ? { member, uri, ...(info?.albumId ? { albumId: info.albumId } : {}) } : null;
-            })
-            .filter((entry): entry is { member: DupMember; uri: string; albumId?: string } => entry !== null);
+        const availableMembers: AvailableMemberEntry[] = [];
+        for (const member of visibleMembers) {
+            const info = readableInfos.get(member.asset_id);
+            const uri = info?.localUri || info?.uri;
+            if (!uri) continue;
+            availableMembers.push({
+                member,
+                uri,
+                ...(info?.albumId ? { albumId: info.albumId } : {}),
+                descriptor: {
+                    id: member.asset_id,
+                    filename: info?.filename,
+                    mediaType: 'photo',
+                    width: info?.width,
+                    height: info?.height,
+                    creationTime: info?.creationTime,
+                    duration: info?.duration,
+                },
+            });
+        }
 
         // A group with a deleted/inaccessible member should not remain
         // actionable in the results screen.
@@ -164,9 +205,20 @@ async function hydrateSimilarGroupPage(
     const hydrated: SimilarGroup[] = [];
     for (const { group, availableMembers } of candidates) {
         const snapshot = snapshotsByGroupId.get(group.group_id) ?? null;
-        if (snapshot && ignoredSimilarKeys.has(snapshot.key)) {
+        const memberAssetIds = availableMembers.map(item => item.member.asset_id);
+        const memberDescriptors = availableMembers.map(item => item.descriptor);
+        if (isSimilarGroupIgnored(ignoredSimilarKeys, {
+            snapshotKey: snapshot?.key ?? null,
+            assets: memberDescriptors,
+            assetIds: memberAssetIds,
+        })) {
             continue;
         }
+        const ignoreKeys = collectSimilarGroupIgnoreKeys({
+            snapshotKey: snapshot?.key ?? null,
+            assets: memberDescriptors,
+            assetIds: memberAssetIds,
+        });
         const representative = availableMembers.find(
             item => item.member.asset_id === group.representative_asset_id,
         ) ?? availableMembers[0];
@@ -184,8 +236,9 @@ async function hydrateSimilarGroupPage(
         hydrated.push({
             groupId: group.group_id,
             snapshotKey: snapshot?.key ?? null,
+            ignoreKeys,
             memberCount: availableMembers.length,
-            memberAssetIds: availableMembers.map(item => item.member.asset_id),
+            memberAssetIds,
             memberAlbumIds,
             bestAssetId,
             representativeUri: representative.uri,
@@ -259,7 +312,7 @@ export default function ScanResultsScreen() {
         [protectedAssetIds],
     );
 
-    const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'ai'>('blur');
+    const [activeTab, setActiveTab] = useState<'blur' | 'similar' | 'exact' | 'ai'>('blur');
     const [blurryPhotos, setBlurryPhotos] = useState<BlurryPhoto[]>([]);
     const [similarGroups, setSimilarGroups] = useState<SimilarGroup[]>([]);
     const [hasMoreBlurry, setHasMoreBlurry] = useState(false);
@@ -434,10 +487,13 @@ export default function ScanResultsScreen() {
                 AssetRepository.getBlurryAssets(visibleIdsArray, BLURRY_PAGE_SIZE, 0),
                 DupGroupRepository.getGroupsPage({ limit: SIMILAR_PAGE_SIZE, offset: 0, repair: true }),
                 getIgnoredReviewKeys('blur'),
-                getIgnoredReviewKeys('similar_group'),
+                typeof getAllIgnoredSimilarGroupKeys === 'function'
+                    ? getAllIgnoredSimilarGroupKeys()
+                    : getIgnoredReviewKeys('similar_group'),
             ]);
             ignoredBlurIdsRef.current = new Set(ignoredBlurIds);
-            ignoredSimilarKeysRef.current = new Set(ignoredSimilarKeys);
+            const storeSimilarKeys = useMediaStore.getState?.()?.ignoredSimilarGroupKeys ?? [];
+            ignoredSimilarKeysRef.current = new Set([...ignoredSimilarKeys, ...storeSimilarKeys]);
             const membersByGroupId = await DupGroupRepository.getGroupMembersBatch(
                 groups.map(group => group.group_id),
             );
@@ -874,15 +930,25 @@ export default function ScanResultsScreen() {
         }
     };
 
-    const handleIgnoreSimilarGroup = async (groupId: string, snapshotKey: string | null) => {
-        if (!snapshotKey || isDeletingBlurryRef.current) return;
+    const handleIgnoreSimilarGroup = async (groupId: string, ignoreKeys: readonly string[]) => {
+        const keys = Array.from(new Set(ignoreKeys.filter(Boolean)));
+        if (keys.length === 0 || isDeletingBlurryRef.current) return;
         isDeletingBlurryRef.current = true;
         setIsDeletingBlurry(true);
         setQueueFeedback(null);
         try {
-            await addReviewIgnore('similar_group', snapshotKey);
-            ignoredSimilarKeysRef.current.add(snapshotKey);
-            setSimilarGroups(previous => previous.filter(item => item.groupId !== groupId && item.snapshotKey !== snapshotKey));
+            if (typeof ignoreSimilarGroupKeys === 'function') {
+                await ignoreSimilarGroupKeys(keys);
+            } else {
+                await addReviewIgnores(keys.map(targetKey => ({ ignoreType: 'similar_group' as const, targetKey })));
+            }
+            const ignoredKeySet = new Set(keys);
+            for (const key of ignoredKeySet) ignoredSimilarKeysRef.current.add(key);
+            setSimilarGroups(previous => previous.filter(
+                item => item.groupId !== groupId
+                    && (!item.snapshotKey || !ignoredKeySet.has(item.snapshotKey))
+                    && !item.ignoreKeys.some(key => ignoredKeySet.has(key)),
+            ));
             setQueueFeedback(t('similar_hidden_feedback'));
         } catch {
             setQueueFeedback(t('similar_save_failed'));
@@ -1005,7 +1071,7 @@ export default function ScanResultsScreen() {
                 previewUris={item.previewUris}
                 isProcessed={isGroupProcessed(item)}
                 protectedCount={protectedCount}
-                onIgnore={item.snapshotKey ? () => { void handleIgnoreSimilarGroup(item.groupId, item.snapshotKey); } : undefined}
+                onIgnore={item.ignoreKeys.length > 0 ? () => { void handleIgnoreSimilarGroup(item.groupId, item.ignoreKeys); } : undefined}
                 onPress={(layout) => {
                     if (layout) {
                         setSelectedSimilarGroup({ group: item, origin: layout });
@@ -1529,6 +1595,23 @@ export default function ScanResultsScreen() {
                         </Text>
                     </Pressable>
 
+                    <Pressable
+                        accessibilityRole="tab"
+                        accessibilityLabel={t('scan_tab_exact')}
+                        accessibilityState={{ selected: activeTab === 'exact' }}
+                        style={[styles.tab, activeTab === 'exact' && { borderBottomColor: colors.primary }]}
+                        onPress={() => setActiveTab('exact')}
+                    >
+                        <Text
+                            style={[
+                                styles.tabText,
+                                { color: activeTab === 'exact' ? colors.primary : colors.textSecondary },
+                            ]}
+                        >
+                            {t('scan_tab_exact' as any)}
+                        </Text>
+                    </Pressable>
+
                     {enableAIClassification ? (
                         <Pressable
                             accessibilityRole="tab"
@@ -1550,7 +1633,12 @@ export default function ScanResultsScreen() {
                 </View>
 
                 {/* Content */}
-                {activeTab === 'ai' ? (
+                {activeTab === 'exact' ? (
+                    <ExactDuplicatesView
+                        completedCount={completedCount}
+                        onOpenSettings={() => router.navigate('/(tabs)/settings')}
+                    />
+                ) : activeTab === 'ai' ? (
                     <View style={styles.aiContainer}>
                         {aiLoading ? (
                             <View style={styles.loadingContainer}>
@@ -1781,11 +1869,15 @@ export default function ScanResultsScreen() {
                     }
                 }}
                 onComplete={() => setSelectedSimilarGroup(null)}
-                onIgnore={(snapshotKey) => {
+                onIgnore={(snapshotKey, allKeys) => {
                     const closedGroupId = selectedSimilarGroup?.group.groupId;
-                    ignoredSimilarKeysRef.current.add(snapshotKey);
+                    const keysToAdd = allKeys && allKeys.length > 0 ? allKeys : [snapshotKey];
+                    const ignoredKeySet = new Set(keysToAdd);
+                    for (const key of ignoredKeySet) ignoredSimilarKeysRef.current.add(key);
                     setSimilarGroups(previous => previous.filter(
-                        item => item.groupId !== closedGroupId && item.snapshotKey !== snapshotKey,
+                        item => item.groupId !== closedGroupId
+                            && (!item.snapshotKey || !ignoredKeySet.has(item.snapshotKey))
+                            && !item.ignoreKeys.some(key => ignoredKeySet.has(key)),
                     ));
                     setSelectedSimilarGroup(null);
                     setQueueFeedback(t('similar_hidden_feedback'));

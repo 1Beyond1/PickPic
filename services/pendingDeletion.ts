@@ -1,6 +1,6 @@
 import type { PhotoAsset } from '../stores/useMediaStore';
 
-export type PendingDeletionSource = 'photos' | 'videos' | 'blur' | 'similar' | 'classification' | 'unknown';
+export type PendingDeletionSource = 'photos' | 'videos' | 'blur' | 'similar' | 'exact_duplicate' | 'classification' | 'unknown';
 export interface PendingDeletionInfo { source: PendingDeletionSource; addedAt: number; }
 export interface PendingDeletionEntry extends PendingDeletionInfo { asset: PhotoAsset; type: 'photo' | 'video'; }
 export interface PendingDeletionQueues {

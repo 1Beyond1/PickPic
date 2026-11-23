@@ -34,7 +34,8 @@ import { keepSimilarPhotos, completeSimilarGroup } from '../services/similarRevi
 import { flushMediaProgress } from '../services/mediaProgressStorage';
 import { readMediaSizes } from '../services/mediaSizes';
 import { isAssetProtected } from '../services/protectedAlbums';
-import { addReviewIgnore } from '../services/reviewIgnores';
+import { ignoreSimilarGroupKeys } from '../services/reviewIgnores';
+import { collectSimilarGroupIgnoreKeys } from '../services/similarGroupKey';
 import { SimilarComparison } from './SimilarComparison';
 import { calculateBestShotBreakdown } from '../database/bestShotScoring';
 
@@ -43,6 +44,7 @@ const COLUMN_COUNT = 3;
 interface PhotoItem {
     assetId: string;
     uri: string;
+    filename?: string;
     width: number;
     height: number;
     takenAt: number | null;
@@ -57,7 +59,7 @@ interface SimilarGroupDetailOverlayProps {
     originRect: { x: number; y: number; width: number; height: number } | null;
     onClose: (didChange?: boolean) => void;
     onComplete: () => void;
-    onIgnore?: (snapshotKey: string) => void;
+    onIgnore?: (snapshotKey: string, allKeys?: readonly string[]) => void;
 }
 
 export function SimilarGroupDetailOverlay({
@@ -141,6 +143,7 @@ export function SimilarGroupDetailOverlay({
                 items.push({
                     assetId,
                     uri: info.localUri || info.uri,
+                    ...(info.filename ? { filename: info.filename } : {}),
                     width: Number.isFinite(info.width) && info.width > 0 ? info.width : 0,
                     height: Number.isFinite(info.height) && info.height > 0 ? info.height : 0,
                     takenAt: Number.isFinite(info.creationTime) && info.creationTime > 0 ? info.creationTime : null,
@@ -419,14 +422,33 @@ export function SimilarGroupDetailOverlay({
         }
     };
     const handleIgnoreGroup = async () => {
-        if (!snapshot || isDeletingRef.current) return;
+        if (isDeletingRef.current) return;
+        const keys = collectSimilarGroupIgnoreKeys({
+            snapshotKey: snapshot?.key ?? null,
+            assets: photos.map(photo => ({
+                id: photo.assetId,
+                filename: photo.filename,
+                mediaType: 'photo',
+                width: photo.width,
+                height: photo.height,
+                creationTime: photo.takenAt,
+            })),
+            assetIds: photos.map(photo => photo.assetId),
+        });
+        if (keys.length === 0) return;
         const generation = loadRequestIdRef.current;
         isDeletingRef.current = true; setIsDeleting(true); setQueueFeedback(null);
         try {
-            await addReviewIgnore('similar_group', snapshot.key);
+            await ignoreSimilarGroupKeys(keys);
             if (generation !== loadRequestIdRef.current) return;
             hasMutatedRef.current = true;
-            onIgnore?.(snapshot.key);
+            setShowComparison(false);
+            const primaryKey = snapshot?.key ?? keys[0];
+            if (keys.length > 1 || keys[0] !== primaryKey) {
+                onIgnore?.(primaryKey, keys);
+            } else {
+                onIgnore?.(primaryKey);
+            }
             onComplete();
             onClose(true);
         } catch {
@@ -646,7 +668,15 @@ export function SimilarGroupDetailOverlay({
                     </View>
                 </Modal>
             )}
-            {showComparison && photos.length > 1 && <SimilarComparison photos={photos} recommendedId={snapshot?.recommendedAssetId ?? null} onClose={() => setShowComparison(false)} />}
+            {showComparison && photos.length > 1 && (
+                <SimilarComparison
+                    photos={photos}
+                    recommendedId={snapshot?.recommendedAssetId ?? null}
+                    onClose={() => setShowComparison(false)}
+                    onMarkNotSimilar={snapshot || photos.length >= 2 ? () => { void handleIgnoreGroup(); } : undefined}
+                    isMarkingNotSimilar={isDeleting}
+                />
+            )}
         </Animated.View>
     );
 }

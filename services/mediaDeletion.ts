@@ -44,8 +44,10 @@ function isProtectedItem<T extends MediaLibrary.Asset | string>(
 }
 
 /**
- * MediaStore.createDeleteRequest limits each request to 2000 URIs on
- * Android 16+ for apps targeting API 36+. Our target SDK is 36.
+ * MediaStore.createDeleteRequest on Android 11+ (API 30+) packs all requested
+ * URIs into a Binder transaction (and Android 16+ caps requests at 2000 URIs).
+ * Limiting each Android API 30+ batch to at most 1000 items avoids Android 11-15
+ * Binder TransactionTooLargeException and stays within Android 16+'s cap.
  * Reconcile each successful batch before requesting the next one: a later
  * cancellation must not leave already-deleted items in the pending list.
  * No retries or fallback deletion bypass the user's system confirmation.
@@ -68,8 +70,8 @@ export async function deleteAssetsInBatches<T extends MediaLibrary.Asset | strin
         protection?.onProtectedSkipped?.(skippedProtectedIds);
     }
 
-    const batchSize = Platform.OS === 'android' && Number(Platform.Version) >= 36
-        ? 2000
+    const batchSize = Platform.OS === 'android' && Number(Platform.Version) >= 30
+        ? 1000
         : safeAssets.length;
     if (safeAssets.length === 0) return;
 

@@ -15,22 +15,28 @@ class PickPicSystemUIModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("PickPicSystemUI")
     AsyncFunction("syncModalAppearance") { dark: Boolean ->
-      fun visit(view: View) {
-        if (view is ReactModalHostView) {
-          val dialog = view.dialog
-          val window = dialog?.window
-          if (dialog?.isShowing == true && window != null) {
-            val controller = WindowInsetsControllerCompat(window, window.decorView)
-            controller.isAppearanceLightStatusBars = !dark
-            controller.isAppearanceLightNavigationBars = !dark
-            visit(window.decorView)
+      val activity = appContext.currentActivity
+      if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
+        fun visit(view: View) {
+          if (view is ReactModalHostView) {
+            val dialog = view.dialog
+            val window = dialog?.window
+            if (dialog?.isShowing == true && window != null) {
+              val controller = WindowInsetsControllerCompat(window, window.decorView)
+              controller.isAppearanceLightStatusBars = !dark
+              controller.isAppearanceLightNavigationBars = !dark
+              visit(window.decorView)
+            }
+            return
+          }
+          if (view is ViewGroup) {
+            for (index in 0 until view.childCount) {
+              view.getChildAt(index)?.let { visit(it) }
+            }
           }
         }
-        if (view is ViewGroup) {
-          for (index in 0 until view.childCount) visit(view.getChildAt(index))
-        }
+        activity.window?.decorView?.let { visit(it) }
       }
-      appContext.currentActivity?.window?.decorView?.let { visit(it) }
       Unit
     }.runOnQueue(Queues.MAIN)
   }

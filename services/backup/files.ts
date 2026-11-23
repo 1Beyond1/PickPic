@@ -5,19 +5,66 @@ import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 import { getRandomBytesAsync } from 'expo-crypto';
 import { bytesToHex } from '@noble/hashes/utils.js';
+import { toByteArray } from 'react-native-quick-base64';
 import { BackupError, MAX_BACKUP_BYTES } from './crypto';
 
-export async function pickEncryptedFile(): Promise<Uint8Array | null> {
-    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: true, multiple: false });
-    if (result.canceled) return null;
-    const file = new File(result.assets[0].uri);
+async function readAndroidContentUriBounded(uri: string): Promise<Uint8Array> {
+    let base64: string;
     try {
-        if (!file.exists || file.size <= 0 || file.size > MAX_BACKUP_BYTES) throw new BackupError('size');
-        const bytes = await file.bytes();
-        if (bytes.length > MAX_BACKUP_BYTES) throw new BackupError('size');
-        return bytes;
+        base64 = await LegacyFileSystem.readAsStringAsync(uri, {
+            encoding: LegacyFileSystem.EncodingType.Base64,
+        });
+    } catch {
+        throw new BackupError('unavailable');
+    }
+    let bytes: Uint8Array;
+    try {
+        bytes = toByteArray(base64);
+    } catch {
+        throw new BackupError('invalid');
+    }
+    if (bytes.length <= 0 || bytes.length > MAX_BACKUP_BYTES) {
+        throw new BackupError('size');
+    }
+    return bytes;
+}
+
+export async function pickEncryptedFile(): Promise<Uint8Array | null> {
+    // Avoid synchronous UI-thread copies of mistakenly picked large files (e.g. videos).
+    const result = await DocumentPicker.getDocumentAsync({ type: '*/*', copyToCacheDirectory: false, multiple: false });
+    if (result.canceled || !result.assets?.[0]?.uri) return null;
+    const asset = result.assets[0];
+    const hasValidDeclaredSize = typeof asset.size === 'number' && Number.isFinite(asset.size);
+    if (hasValidDeclaredSize && (asset.size! <= 0 || asset.size! > MAX_BACKUP_BYTES)) {
+        throw new BackupError('size');
+    }
+    const isAndroidContentUri = Platform.OS === 'android' && asset.uri.startsWith('content://');
+    const file = new File(asset.uri);
+    try {
+        try {
+            if (file.exists) {
+                if (file.size <= 0 || file.size > MAX_BACKUP_BYTES) throw new BackupError('size');
+                const bytes = await file.bytes();
+                if (bytes.length <= 0 || bytes.length > MAX_BACKUP_BYTES) throw new BackupError('size');
+                return bytes;
+            }
+            if (!isAndroidContentUri) {
+                throw new BackupError('size');
+            }
+        } catch (error) {
+            if (error instanceof BackupError) throw error;
+            if (!isAndroidContentUri) throw new BackupError('unavailable');
+        }
+
+        // Some Android content:// providers do not expose SAF document segments to
+        // FileSystemFile. Allow controlled base64 fallback ONLY after asset.size has
+        // already been verified <= MAX_BACKUP_BYTES so huge files can never OOM.
+        if (!hasValidDeclaredSize) {
+            throw new BackupError('unavailable');
+        }
+        return await readAndroidContentUriBounded(asset.uri);
     } finally {
-        // Only remove the picker-owned private cache copy, never the original.
+        // Only remove a picker-owned private cache copy if one exists, never the original.
         if (file.uri.startsWith(`${Paths.cache.uri.replace(/\/$/, '')}/`)) {
             try { file.delete(); } catch { /* At worst ciphertext remains in cache. */ }
         }

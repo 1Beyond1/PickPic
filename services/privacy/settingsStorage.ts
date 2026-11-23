@@ -6,12 +6,26 @@ import { canWriteEncryptedStorage, encryptedSettingsStorage } from './encryptedS
 let queue = Promise.resolve();
 let failed = false;
 let latest: { name: string; value: string } | null = null;
+let writeSuspendDepth = 0;
+
+/** Blocks new settings writes during self-rescue reset until resumed. */
+export function suspendSettingsWrites(): () => void {
+    let released = false;
+    writeSuspendDepth++;
+    return () => {
+        if (released) return;
+        released = true;
+        writeSuspendDepth = Math.max(0, writeSuspendDepth - 1);
+    };
+}
+
 export const settingsStorage: StateStorage = {
     async getItem(name) { await queue; return encryptedSettingsStorage.getItem(name); },
     setItem(name, value) {
-        if (!canWriteEncryptedStorage('settings', name)) return;
+        if (writeSuspendDepth > 0 || !canWriteEncryptedStorage('settings', name)) return;
         latest = { name, value };
         queue = queue.then(async () => {
+            if (writeSuspendDepth > 0) return;
             try { await encryptedSettingsStorage.setItem(name, value); failed = false; }
             catch { failed = true; }
         });
@@ -19,6 +33,7 @@ export const settingsStorage: StateStorage = {
     async removeItem(name) { await queue; await encryptedSettingsStorage.removeItem(name); },
 };
 export async function resetSettingsPersistenceState(): Promise<void> {
+    latest = null;
     let observed;
     do { observed = queue; await observed.catch(() => undefined); } while (observed !== queue);
     failed = false;

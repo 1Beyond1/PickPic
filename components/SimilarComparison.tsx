@@ -83,10 +83,21 @@ function Pane({ photo, viewport, label }: { photo: ComparisonPhoto; viewport: Li
     </GestureDetector>;
 }
 
-/** Comparison is read-only. Keep / pending choices stay in the group page so
- * switching panes or zooming can never accidentally make an organizing decision. */
-export function SimilarComparison({ photos, recommendedId, onClose }: {
-    photos: ComparisonPhoto[]; recommendedId: string | null; onClose: () => void;
+/** Keep / pending deletion choices stay in the group page so switching panes
+ * or zooming never deletes media. Users can explicitly mark the whole group
+ * as "Not similar" here to persist the ignore and dismiss false positives. */
+export function SimilarComparison({
+    photos,
+    recommendedId,
+    onClose,
+    onMarkNotSimilar,
+    isMarkingNotSimilar = false,
+}: {
+    photos: ComparisonPhoto[];
+    recommendedId: string | null;
+    onClose: () => void;
+    onMarkNotSimilar?: () => void;
+    isMarkingNotSimilar?: boolean;
 }) {
     const { colors } = useThemeColor();
     const { t } = useI18n();
@@ -138,6 +149,26 @@ export function SimilarComparison({ photos, recommendedId, onClose }: {
                     {button(t('similar_zoom_in'), () => { scale.value = clampComparisonScale(scale.value * 1.5); })}
                     {button(t('similar_zoom_reset'), reset)}
                 </View>
+                {onMarkNotSimilar && (
+                    <View style={styles.controls}>
+                        <Pressable
+                            testID="similar-comparison-not-similar"
+                            accessibilityRole="button"
+                            accessibilityLabel={t('similar_not_similar_action')}
+                            accessibilityState={{ disabled: isMarkingNotSimilar, busy: isMarkingNotSimilar }}
+                            disabled={isMarkingNotSimilar}
+                            onPress={onMarkNotSimilar}
+                            style={[
+                                styles.button,
+                                { backgroundColor: colors.surface, opacity: isMarkingNotSimilar ? 0.5 : 1 },
+                            ]}
+                        >
+                            <Text style={[styles.buttonText, { color: colors.textSecondary }]}>
+                                {t('similar_not_similar_action')}
+                            </Text>
+                        </Pressable>
+                    </View>
+                )}
                 <Text style={[styles.body, { color: colors.textSecondary }]}>{t('similar_linked_zoom_hint')}</Text>
             </ScrollView>
         </GestureHandlerRootView>

@@ -172,7 +172,22 @@ export async function createEncryptedRecords(
             loadProtectedAlbums(),
             getAllReviewIgnores(),
         ]);
-        const blurIgnoreRows = storedIgnores
+        const storeSimilarIgnores = useMediaStore.getState().ignoredSimilarGroupKeys ?? [];
+        const ignoreMap = new Map<string, (typeof storedIgnores)[number]>();
+        for (const ignore of storedIgnores) {
+            ignoreMap.set(`${ignore.ignoreType}:${ignore.targetKey}`, ignore);
+        }
+        const now = Date.now();
+        for (const rawKey of storeSimilarIgnores) {
+            const targetKey = typeof rawKey === 'string' ? rawKey.trim() : '';
+            if (!targetKey || targetKey.length > 512) continue;
+            const composite = `similar_group:${targetKey}`;
+            if (!ignoreMap.has(composite)) {
+                ignoreMap.set(composite, { ignoreType: 'similar_group', targetKey, createdAt: now });
+            }
+        }
+        const mergedStoredIgnores = Array.from(ignoreMap.values());
+        const blurIgnoreRows = mergedStoredIgnores
             .filter(ignore => ignore.ignoreType === 'blur')
             .map(ignore => ({ id: ignore.targetKey, kind: 'photo' as const }));
         const visible = await readVisible([...rows, ...blurIgnoreRows], cancelled);
@@ -189,7 +204,7 @@ export async function createEncryptedRecords(
             }];
         });
 
-        const reviewIgnores: BackupReviewIgnore[] = storedIgnores.map(ignore => {
+        const reviewIgnores: BackupReviewIgnore[] = mergedStoredIgnores.map(ignore => {
             if (ignore.ignoreType === 'blur') {
                 const key = `photo:${ignore.targetKey}`;
                 const asset = visible.get(key);
@@ -318,11 +333,15 @@ export async function openEncryptedRecords(
             targetPlatform,
         );
         check(cancelled);
+        const existingIgnoreSet = new Set<string>([
+            ...existingIgnores.map(item => `${item.ignoreType}:${item.targetKey}`),
+            ...(useMediaStore.getState().ignoredSimilarGroupKeys ?? []).map(key => `similar_group:${key}`),
+        ]);
         const { preview } = planRestore(payload, useMediaStore.getState(), visible, false, {
             localSizes,
             localAlbums,
             existingProtectedAlbumIds: new Set(existingProtected.map(item => item.albumId)),
-            existingReviewIgnores: new Set(existingIgnores.map(item => `${item.ignoreType}:${item.targetKey}`)),
+            existingReviewIgnores: existingIgnoreSet,
             targetPlatform,
             protectedAssetIds,
             blockPendingDeletions,
@@ -361,6 +380,10 @@ export async function restoreEncryptedRecords(
         const current = useMediaStore.getState();
         if (current.isConfirmingDeletion || current.isConfirmingVideoTrash) throw new BackupError('unavailable');
 
+        const existingIgnoreSet = new Set<string>([
+            ...existingIgnores.map(item => `${item.ignoreType}:${item.targetKey}`),
+            ...(current.ignoredSimilarGroupKeys ?? []).map(key => `similar_group:${key}`),
+        ]);
         const { merged, preview, protectedAlbumsToMerge, reviewIgnoresToMerge } = planRestore(
             payload,
             current,
@@ -370,7 +393,7 @@ export async function restoreEncryptedRecords(
                 localSizes,
                 localAlbums,
                 existingProtectedAlbumIds: new Set(existingProtected.map(item => item.albumId)),
-                existingReviewIgnores: new Set(existingIgnores.map(item => `${item.ignoreType}:${item.targetKey}`)),
+                existingReviewIgnores: existingIgnoreSet,
                 targetPlatform,
                 protectedAssetIds,
                 blockPendingDeletions,
@@ -403,6 +426,14 @@ export async function restoreEncryptedRecords(
                 ),
             ));
 
+        const restoredSimilarIgnoreKeys = reviewIgnoresToMerge
+            .filter(item => item.ignoreType === 'similar_group')
+            .map(item => item.targetKey);
+        const existingSimilarIgnoreKeys = current.ignoredSimilarGroupKeys ?? [];
+        const mergedSimilarIgnoreKeys = restoredSimilarIgnoreKeys.length > 0
+            ? Array.from(new Set([...existingSimilarIgnoreKeys, ...restoredSimilarIgnoreKeys])).slice(-2000)
+            : existingSimilarIgnoreKeys;
+
         // Backups do not contain an undo journal or organizing sessions.
         // Clear stale sessions/recovery state while preserving limited-access
         // hidden-queue protection.
@@ -419,6 +450,7 @@ export async function restoreEncryptedRecords(
                 videoTrashBin: merged.videoTrashBin,
                 pendingDeletionInfo: current.pendingDeletionInfo ?? {},
             }),
+            ...(restoredSimilarIgnoreKeys.length > 0 ? { ignoredSimilarGroupKeys: mergedSimilarIgnoreKeys } : {}),
             lastDeletionResult: null,
             photos: [],
             videos: [],

@@ -14,6 +14,7 @@ import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
+import { isMediaOlderThanFilter } from '../../services/mediaMonth';
 import { isAssetProtected } from '../../services/protectedAlbums';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -191,7 +192,13 @@ export default function PhotosScreen() {
         : session ? 'session_next_batch' : visiblePhotos.length > 0 ? 'photos_home_start' : 'photos_reload';
     const scopeCaption = session ? t(session.scope.albumIds.length ? 'session_album_scope' : 'session_all_scope', {
         count: session.scope.albumIds.length, order: t(`session_order_${session.scope.order}`),
-    }) + (session.scope.date !== undefined ? ` · ${session.scope.date === 'unknown' ? t('scope_unknown_date') : t('scope_month_value', { year: session.scope.date.year, month: session.scope.date.month })}` : '') : t('photos_home_scope');
+    }) + (session.scope.date !== undefined ? ` · ${
+        session.scope.date === 'unknown'
+            ? t('scope_unknown_date')
+            : isMediaOlderThanFilter(session.scope.date)
+                ? t('scope_older_than_value', { days: session.scope.date.days })
+                : t('scope_month_value', { year: session.scope.date.year, month: session.scope.date.month })
+    }` : '') : t('photos_home_scope');
 
 
     useEffect(() => {

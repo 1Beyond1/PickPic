@@ -7,7 +7,32 @@ export interface MediaMonth {
     startInclusive: number;
     endExclusive: number;
 }
-export type MediaDateFilter = MediaMonth | 'unknown';
+export type OlderThanDays = 30 | 90;
+export interface MediaOlderThanFilter {
+    kind: 'older_than';
+    days: OlderThanDays;
+    beforeExclusive: number;
+}
+export type MediaDateFilter = MediaMonth | MediaOlderThanFilter | 'unknown';
+
+export function isMediaOlderThanFilter(value: unknown): value is MediaOlderThanFilter {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || Object.keys(value).sort().join(',') !== 'beforeExclusive,days,kind') return false;
+    const range = value as MediaOlderThanFilter;
+    return range.kind === 'older_than'
+        && (range.days === 30 || range.days === 90)
+        && Number.isSafeInteger(range.beforeExclusive)
+        && range.beforeExclusive > 0;
+}
+
+export function createMediaOlderThan(days: OlderThanDays, now = Date.now()): MediaOlderThanFilter {
+    if (days !== 30 && days !== 90) {
+        throw new Error('Invalid older-than preset');
+    }
+    const safeNow = Number.isFinite(now) ? Math.floor(now) : Date.now();
+    const beforeExclusive = Math.max(1, safeNow - days * 86400000);
+    return { kind: 'older_than', days, beforeExclusive };
+}
 
 export function isMediaMonth(value: unknown): value is MediaMonth {
     if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -24,10 +49,16 @@ export function isMediaMonth(value: unknown): value is MediaMonth {
     return Math.abs(range.startInclusive - start.getTime()) <= day && Math.abs(range.endExclusive - end.getTime()) <= day
         && range.endExclusive - range.startInclusive >= 27 * day && range.endExclusive - range.startInclusive <= 32 * day;
 }
-export const isMediaDateFilter = (value: unknown): value is MediaDateFilter => value === 'unknown' || isMediaMonth(value);
+export const isMediaDateFilter = (value: unknown): value is MediaDateFilter => (
+    value === 'unknown' || isMediaMonth(value) || isMediaOlderThanFilter(value)
+);
 export function sameMediaDateFilter(left?: MediaDateFilter, right?: MediaDateFilter) {
     if (left === right) return true;
     if (!left || !right || left === 'unknown' || right === 'unknown') return false;
+    if (isMediaOlderThanFilter(left) || isMediaOlderThanFilter(right)) {
+        return isMediaOlderThanFilter(left) && isMediaOlderThanFilter(right)
+            && left.days === right.days && left.beforeExclusive === right.beforeExclusive;
+    }
     return left.year === right.year && left.month === right.month && left.startInclusive === right.startInclusive && left.endExclusive === right.endExclusive;
 }
 export function mediaHasKnownDate(time: number) {
@@ -35,10 +66,15 @@ export function mediaHasKnownDate(time: number) {
     return Number.isFinite(time) && time !== 0 && year >= 1 && year <= 9999;
 }
 export function mediaMatchesDate(time: number, filter?: MediaDateFilter) {
-    return filter === undefined || (filter === 'unknown' ? !mediaHasKnownDate(time) : mediaMatchesMonth(time, filter));
+    if (filter === undefined) return true;
+    if (filter === 'unknown') return !mediaHasKnownDate(time);
+    if (isMediaOlderThanFilter(filter)) return mediaHasKnownDate(time) && time < filter.beforeExclusive;
+    return mediaMatchesMonth(time, filter);
 }
 export function mediaDateQuery(filter?: MediaDateFilter) {
-    return filter && filter !== 'unknown' ? mediaMonthQuery(filter) : {};
+    if (!filter || filter === 'unknown') return {};
+    if (isMediaOlderThanFilter(filter)) return { createdBefore: filter.beforeExclusive };
+    return mediaMonthQuery(filter);
 }
 
 export function createMediaMonth(year: number, month: number): MediaMonth {

@@ -9,16 +9,28 @@ import {
 } from '../../stores/usePrivacyStore';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { DEFAULT_SETTINGS_STATE, useSettingsStore } from '../../stores/useSettingsStore';
-import { resetMediaProgressPersistenceState } from '../mediaProgressStorage';
+import {
+    resetMediaProgressPersistenceState,
+    suspendMediaProgressWrites,
+} from '../mediaProgressStorage';
 import { isScanning, stop as stopScanner } from '../scanner';
 import { BackupError, type BackupCancellation } from '../backup/crypto';
 import type { BackupPayload, RestorePreview } from '../backup/payload';
 import { restoreEncryptedRecords } from '../backup/records';
-import { resetBackupChangeState } from '../backup/changeTracker';
+import {
+    resetBackupChangeState,
+    suspendBackupChangeWrites,
+} from '../backup/changeTracker';
 import { deleteDeviceKey, probeDeviceKeystore } from './deviceKey';
-import { resetEncryptedStorageKeys } from './encryptedStorage';
+import {
+    disableEncryptedStorageWrites,
+    resetEncryptedStorageKeys,
+} from './encryptedStorage';
 import { clearLegacyMediaCache } from './mediaCache';
-import { resetSettingsPersistenceState } from './settingsStorage';
+import {
+    resetSettingsPersistenceState,
+    suspendSettingsWrites,
+} from './settingsStorage';
 
 const DOMAIN_PRIORITY: readonly PrivacyFailureReason[] = [
     'keystore_unavailable',
@@ -67,7 +79,30 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
     }
 
     const endRecovery = usePrivacyStore.getState().beginRecovery?.();
+    const resumeMediaWrites = typeof suspendMediaProgressWrites === 'function' ? suspendMediaProgressWrites() : undefined;
+    const resumeSettingsWrites = typeof suspendSettingsWrites === 'function' ? suspendSettingsWrites() : undefined;
+    const resumeChangeWrites = typeof suspendBackupChangeWrites === 'function' ? suspendBackupChangeWrites() : undefined;
+    let writesResumed = false;
+    const resumeAllWrites = () => {
+        if (writesResumed) return;
+        writesResumed = true;
+        resumeChangeWrites?.();
+        resumeSettingsWrites?.();
+        resumeMediaWrites?.();
+    };
     try {
+        // Block new persistence writes and drain every in-flight writer BEFORE
+        // closing SQLCipher or wiping any local ciphertext / device key so old-key
+        // writes can never land after key deletion and re-lock the app.
+        if (typeof disableEncryptedStorageWrites === 'function') {
+            disableEncryptedStorageWrites();
+        }
+        await resetMediaProgressPersistenceState();
+        if (typeof resetSettingsPersistenceState === 'function') {
+            await resetSettingsPersistenceState();
+        }
+        await resetBackupChangeState();
+
         await clearLegacyMediaCache().catch(() => undefined);
         await closeDatabase();
         await resetEncryptedDatabaseFiles();
@@ -75,11 +110,6 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
         for (const scope of ['scanner', 'records', 'settings'] as const) {
             await deleteDeviceKey(scope);
         }
-        await resetMediaProgressPersistenceState();
-        if (typeof resetSettingsPersistenceState === 'function') {
-            await resetSettingsPersistenceState();
-        }
-        resetBackupChangeState();
 
         useSettingsStore.setState?.({
             ...(DEFAULT_SETTINGS_STATE ?? {}),
@@ -109,6 +139,7 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
             protectedAlbums: [],
             protectedAssetIds: [],
             missingProtectedAlbumIds: [],
+            ignoredSimilarGroupKeys: [],
             hiddenPhotoQueuedAssetIds: null,
             hiddenVideoQueuedAssetIds: null,
             hasHydrated: false,
@@ -116,14 +147,17 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
 
         usePrivacyStore.getState().clearAll();
 
-        // Open a clean freshly keyed SQLCipher database and rehydrate both stores
+        // Re-enable writes only after all old files and keys are wiped, then
+        // open a clean freshly keyed SQLCipher database and rehydrate both stores
         // while the recovery gate lock remains active.
+        resumeAllWrites();
         await getDatabase();
         await useSettingsStore.persist.rehydrate();
         await useMediaStore.persist.rehydrate();
         await useMediaStore.getState().loadProtectedAlbums?.();
         await useMediaStore.getState().refreshTotalCounts?.().catch(() => undefined);
     } finally {
+        resumeAllWrites();
         endRecovery?.();
     }
 }
@@ -138,7 +172,8 @@ async function assertMediaAccessForRecoveryBackup(payload: BackupPayload): Promi
         if (!photoPermission.granted) {
             throw new BackupError('unavailable');
         }
-    } else if (needsVideo) {
+    }
+    if (needsVideo) {
         const videoPermission = await MediaLibrary.getPermissionsAsync(false, ['video']);
         if (!videoPermission.granted) {
             throw new BackupError('unavailable');
