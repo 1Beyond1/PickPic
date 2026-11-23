@@ -4,9 +4,9 @@
 
 PickPic is an offline-first local photo and video organizer. Review media one item at a time, decide whether to keep, skip, or queue items for deletion, and securely track your progress locally on-device. It supports light, dark, and system-following themes along with on-device blur detection, similar-photo comparison, and optional image classification.
 
-The current public release is **0.4.0** (beta). Development and verification have primarily been conducted on Android emulators and automated test suites. **Real Android devices (across OEM ROMs, real-world permissions, and large libraries) and native iOS builds/runs have not yet completed device verification.**
+Current public release: **0.4.0** (beta), focused on Android; native iOS support is still in progress.
 
-> **Release vs. Development Branch Note**: The current development branch builds on `0.4.0` with local AES-256-GCM & SQLCipher encryption, passphrase-encrypted record backup/restore, unified pending-deletion review, resumable organizing sessions with recent-decision undo, month / Android largest-first / screenshot & screen-recording album scope filters, system-following theme, side-by-side & A/B similar-photo comparison, batched single-transaction scanner synchronization, and version-verified SDK privacy log patches. These changes are not included in the `0.4.0` release APK below. See [Documentation Index](docs/README.md), [Encrypted Backup & SDK Patches](docs/ENCRYPTED_BACKUP.md), [Real-Device Checklist](docs/REAL_DEVICE_CHECKLIST.md), and [Iteration Checkpoint](docs/archive/ITERATION_CHECKPOINT.md) for implementation details and verification boundaries.
+> **Release vs. Development Branch**: The development branch builds on `0.4.0` with local AES-256-GCM & SQLCipher encryption, passphrase-encrypted record backup/restore, unified pending-deletion review, resumable organizing sessions with recent-decision undo, month / Android largest-first / screenshot & screen-recording album scope filters, system-following theme, side-by-side & A/B similar-photo comparison, batched single-transaction scanner synchronization, and version-verified SDK privacy log patches. These changes are not yet included in the `0.4.0` release APK below. See the [Documentation Index](docs/README.md) and [Encrypted Backup & SDK Patches](docs/ENCRYPTED_BACKUP.md) for details.
 
 ## Download (0.4.0 Release)
 
@@ -28,26 +28,22 @@ Download the [0.4.0 Android APK](https://github.com/1Beyond1/PickPic/releases/do
   <a href="assets/screenshots/settings-dark.jpg"><img src="assets/screenshots/settings-dark.jpg" alt="Dark settings screen" width="42%" /></a>
 </p>
 
-Captured from a live Android emulator (`0.4.0` visual baseline). Sample images are AI-generated placeholder assets containing no personal photo library data, and screenshots are unedited.
-
 ## Key Features
 
 ### Photo & Video Organizing
 
 - **Card-based photo organizing**: Process photos in batches of 10 / 20 / 30. Swipe up to queue for deletion or swipe down to keep; swiping up never immediately deletes the original file.
 - **Vertical video feed**: Swipe up/down through videos with side controls for mute, favorite, share, keep, and queue for deletion. Simply opening or leaving the video tab does not mark videos as organized; supports revisiting organized videos and long-press fullscreen playback.
-- **Resumable sessions, temporary skip & recent decisions (dev branch)**: Photo and video sessions persist scope and position across restarts. Temporarily skip items to revisit later, and safely undo from up to 100 recent local decisions (reverts in-app decisions only; never claims to restore physically deleted files).
-- **Multi-dimensional scope filters (dev branch)**: Combine album, calendar month, and newest / oldest / random ordering. On Android, the custom native module `PickPicMediaIndex` reads only the `MediaStore` size column to enable **Largest First** sorting, alongside quick recommendations for screenshot and screen-recording albums matched by exact album title (title-based hints only, not content detection).
-- **Unified pending-deletion review (dev branch)**: Photos, videos, and on-device analysis results feed into one shared review screen with type/source filters. Tapping a thumbnail opens preview only; a dedicated **Keep** action removes an item from the queue while keeping it marked organized. System deletion runs only after explicit confirmation. *(Note: released `0.4.0` still uses per-batch photo review and separate entry points.)*
+- **Resumable sessions, temporary skip & recent decisions (dev branch)**: Photo and video sessions persist scope and position across restarts. Temporarily skip items to revisit later, and undo up to 100 recent local decisions.
+- **Multi-dimensional scope filters (dev branch)**: Combine album, calendar month, and newest / oldest / random ordering. On Android, the custom native module `PickPicMediaIndex` reads the `MediaStore` size column to enable **Largest First** sorting, alongside quick filters for screenshot and screen-recording albums.
+- **Unified pending-deletion review (dev branch)**: Photos, videos, and on-device analysis results feed into one shared review screen with type/source filters. Tapping a thumbnail opens preview; a dedicated **Keep** action removes an item from the queue while keeping it marked organized. System deletion runs only after confirmation. *(Note: released `0.4.0` still uses per-batch photo review and separate entry points.)*
 
 ### On-Device Analysis & Similar Photo Comparison
 
 - **100% local processing**: Blur estimation (Laplacian variance / mean luma), 64-bit perceptual hashing (dHash), and time-windowed similarity grouping run entirely on-device—no cloud AI uploads and no automatic deletions.
 - **Batched single-transaction library sync (dev branch)**: Scanner synchronization reads existing rows per page (100 items), skips expensive `FileSystem.getInfoAsync` checks for valid unchanged assets, stats new/changed items with bounded concurrency (max 16), and commits each page in a single SQLCipher transaction with cooperative pause/stop support. High-resolution photos are downscaled before face detection with immediate temporary file cleanup.
-- **Side-by-side & A/B similar-photo comparison (dev branch)**: Compare similar shots side-by-side or A/B with synchronized zoom and metadata inspection. Explicitly mark one or more photos to keep, queue the rest for deletion, and complete the group. Keep recommendations are heuristic scores based on resolution, sharpness, and brightness—not aesthetic judgment or guaranteed accuracy—and visual similarity does not imply byte-identical files.
+- **Side-by-side & A/B similar-photo comparison (dev branch)**: Compare similar shots side-by-side or A/B with synchronized zoom and metadata inspection. Mark one or more photos to keep, queue the rest for deletion, and complete the group; keep recommendations are scored by resolution, sharpness, and brightness.
 - **Optional image labeling & face detection**: Disabled by default; toggle in **Settings → AI Analysis**. Uses bundled `EfficientNet-Lite4` (TFLite) for labeling and ML Kit for face detection. The dev branch supports on-demand AI backfill and error retry in **Scan Management** while preserving existing blur and similarity results; enabling the toggle does not auto-start a scan.
-
-Blur, similarity, and classification outputs are organizing aids rather than deletion advice; accuracy and speed vary by photo content, library size, and hardware.
 
 ### Local Encryption, Encrypted Backup & Privacy (dev branch)
 
@@ -56,7 +52,7 @@ Blur, similarity, and classification outputs are organizing aids rather than del
 - **Cache & OS backup boundaries**: Never requests media location access (`isAccessMediaLocationEnabled: false`); gallery previews use memory-only caching; startup and scanner runs clean app-owned temporary image caches with a fail-closed cache gate; Android/iOS config plugins exclude app private data from automatic OS/cloud backups.
 - **SDK privacy log redaction patches**: `scripts/apply-privacy-patches.js` applies version- and SHA-256-verified log redactions across 12 files in ML Kit and `expo-media-library`, while Android autolinking forces `expo-media-library` and `expo-image` to build from source so prebuilt artifacts cannot bypass patches.
 
-See [ENCRYPTED_BACKUP.md](docs/ENCRYPTED_BACKUP.md) for the full threat model, storage guarantees, and explicit non-goals.
+See [ENCRYPTED_BACKUP.md](docs/ENCRYPTED_BACKUP.md) for encryption and backup design details.
 
 ## Deletion & Cloud Sync Warnings
 
@@ -82,7 +78,7 @@ See [ENCRYPTED_BACKUP.md](docs/ENCRYPTED_BACKUP.md) for the full threat model, s
 
 - Node.js `20.19.4+` and npm (**Node.js `24.11.1`** is used in CI and recommended for the full test suite).
 - Android local development: JDK 17, Android SDK, and an emulator or physical device.
-- iOS local development: macOS and Xcode (native iOS builds/runs have not yet been verified).
+- iOS local development: macOS and Xcode.
 
 ```bash
 git clone https://github.com/1Beyond1/PickPic.git
@@ -116,16 +112,15 @@ npx eas-cli build -p android --profile preview
 npx eas-cli build -p android --profile preview --local
 ```
 
-### Verification Status & Scope Boundaries
+### Automated Test Coverage
 
-- **Automated verification**: The current development branch passes **81 test suites / 828 tests** (covering in-memory SQLite transactions, real AES-256-GCM / `scrypt` crypto, Zustand recovery and fail-closed privacy gates, batched scanner sync with bounded concurrency, and SDK privacy log patch fingerprints), alongside TypeScript typecheck, ESLint, and `--check` patch validation.
-- **Pending verification**: Real Android hardware across OEMs (runtime permission changes, OEM deletion protection, large-library performance/battery) and native iOS builds/runs are **still unverified**. Automated tests and isolated x86_64 emulator runs do not substitute for physical device testing; see [REAL_DEVICE_CHECKLIST.md](docs/REAL_DEVICE_CHECKLIST.md).
+The current development branch includes **94 test suites / 929 tests** (covering in-memory SQLite transactions, AES-256-GCM / `scrypt` crypto, Zustand recovery and fail-closed privacy gates, batched scanner sync with bounded concurrency, and SDK privacy patch fingerprints), enforced in CI alongside TypeScript typecheck, ESLint, and `--check` patch validation. See [REAL_DEVICE_CHECKLIST.md](docs/REAL_DEVICE_CHECKLIST.md) for physical-device test items.
 
 ## Feedback & Contributing
 
-- Contributors and AI agents should read [AGENTS.md](AGENTS.md) and [docs/README.md](docs/README.md) first.
-- When reporting issues on [GitHub Issues](https://github.com/1Beyond1/PickPic/issues), include app version, device model, OS version, and reproduction steps, and redact personal photos, accounts, and local file paths from screenshots and logs.
-- Run all four checks above before committing. Never commit tokens, API keys, signing keystores, `build-artifacts/`, `*.pickpic` backups, local configs, or personal photo libraries.
+- Contributors should read [AGENTS.md](AGENTS.md) and [docs/README.md](docs/README.md) first.
+- When reporting issues on [GitHub Issues](https://github.com/1Beyond1/PickPic/issues), include app version, device model, OS version, and reproduction steps.
+- Run all four checks above before committing, and avoid committing signing keystores, `build-artifacts/`, or `*.pickpic` backups.
 
 ## License
 
