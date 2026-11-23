@@ -4,7 +4,7 @@
 
 PickPic is an offline-first local photo and video organizer. Review media one item at a time, decide whether to keep, skip, or queue items for deletion, and securely track your progress locally on-device. It supports light, dark, and system-following themes along with on-device blur detection, similar-photo comparison, and optional image classification.
 
-Current public release: **0.4.0** (beta), focused on Android; native iOS support is still in progress.
+Current public release: **0.4.0**, focused on Android; native iOS support is still in progress.
 
 > **Release vs. Development Branch**: The development branch builds on `0.4.0` with local AES-256-GCM & SQLCipher encryption, passphrase-encrypted record backup/restore, unified pending-deletion review, resumable organizing sessions with recent-decision undo, month / Android largest-first / screenshot & screen-recording album scope filters, system-following theme, side-by-side & A/B similar-photo comparison, batched single-transaction scanner synchronization, and version-verified SDK privacy log patches. These changes are not yet included in the `0.4.0` release APK below. See the [Documentation Index](docs/README.md) and [Encrypted Backup & SDK Patches](docs/ENCRYPTED_BACKUP.md) for details.
 
