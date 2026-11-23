@@ -69,11 +69,26 @@ jest.mock('../../stores/useMediaStore', () => ({
     useMediaStore: Object.assign((selector: any) => selector(mockMediaState), { getState: () => mockMediaState }),
 }));
 jest.mock('../../components/ZoomablePhotoModal', () => ({
-    ZoomablePhotoModal: ({ visible, photo, testID }: any) => {
+    ZoomablePhotoModal: ({ visible, photo, testID, isProtected, actions = [] }: any) => {
         const ReactModule = require('react');
-        const { View, Text } = require('react-native');
+        const { View, Text, Pressable } = require('react-native');
         return visible && photo
-            ? ReactModule.createElement(View, { testID }, ReactModule.createElement(Text, null, photo.id))
+            ? ReactModule.createElement(
+                View,
+                { testID },
+                ReactModule.createElement(Text, null, photo.id),
+                isProtected ? ReactModule.createElement(Text, { testID: `${testID}-protected` }, 'PROTECTED') : null,
+                ...actions.map((action: any) => ReactModule.createElement(
+                    Pressable,
+                    {
+                        key: action.id,
+                        testID: action.testID,
+                        disabled: action.disabled,
+                        onPress: action.onPress,
+                    },
+                    ReactModule.createElement(Text, null, action.label),
+                )),
+            )
             : null;
     },
 }));
@@ -84,6 +99,10 @@ describe('ExactDuplicatesView UI workflow', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockMediaState.deleteQueue = [];
+        mockMediaState.protectedAlbums = [{ albumId: 'alb-docs', title: 'Docs', createdAt: 1 }];
+        mockMediaState.protectedAssetIds = ['p-prot'];
+        mockMediaState.permissionRefreshVersion = 0;
+        mockMediaState.mediaLibraryRefreshVersion = 0;
         mockEnqueueWithReport.mockImplementation((assets: any[]) => ({
             added: assets.length,
             alreadyQueued: 0,
@@ -165,5 +184,81 @@ describe('ExactDuplicatesView UI workflow', () => {
         );
         expect(mockFlushMediaProgress).toHaveBeenCalledTimes(1);
         expect(MediaLibrary.deleteAssetsAsync).not.toHaveBeenCalled();
+    });
+
+    it('enforces keep-at-least-one and live isProtected in ZoomablePhotoModal and invalidates results on mediaLibraryRefreshVersion change', async () => {
+        const digest = 'f0e1d2c3b4a5'.padEnd(64, '0');
+        mockMediaState.protectedAlbums = [];
+        mockMediaState.protectedAssetIds = [];
+        mockScanExactDuplicates.mockResolvedValue({
+            status: 'ready',
+            totalEvaluated: 2,
+            sizeBucketCandidateCount: 2,
+            hashedCount: 2,
+            skippedUnknownSizeCount: 0,
+            skippedUnreadableCount: 0,
+            skippedOversizedCount: 0,
+            permissionLimited: false,
+            groups: [
+                {
+                    sha256: digest,
+                    fileSize: 1024 * 1024,
+                    members: [
+                        {
+                            assetId: 'p-1',
+                            uri: 'file:///p-1.jpg',
+                            fileSize: 1024 * 1024,
+                            creationTime: 1700000000000,
+                            albumId: 'alb-cam',
+                            width: 1000,
+                            height: 1000,
+                            isProtected: false,
+                        },
+                        {
+                            assetId: 'p-2',
+                            uri: 'file:///p-2.jpg',
+                            fileSize: 1024 * 1024,
+                            creationTime: 1700000500000,
+                            albumId: 'alb-cam',
+                            width: 1000,
+                            height: 1000,
+                            isProtected: false,
+                        },
+                    ],
+                    recommendedKeepIds: ['p-1'],
+                    reclaimableBytes: 1024 * 1024,
+                },
+            ],
+        });
+
+        const view = await renderAsync(<ExactDuplicatesView completedCount={2} onOpenSettings={jest.fn()} />);
+        await act(async () => {
+            fireEvent.press(screen.getByTestId('exact-dup-start-btn'));
+        });
+        await waitFor(() => expect(screen.getByTestId('exact-dup-summary')).toBeTruthy());
+
+        // 1) Previewing the sole kept photo (p-1) must NOT allow queueing it via ZoomablePhotoModal.
+        fireEvent.press(screen.getByTestId('exact-dup-preview-p-1'));
+        await act(async () => {
+            fireEvent.press(screen.getByTestId('exact-dup-preview-queue'));
+        });
+        expect(mockEnqueueWithReport).not.toHaveBeenCalled();
+        expect(screen.getByTestId('exact-dup-feedback').props.children).toContain('每组至少保留一张照片');
+
+        // 2) Previewing the redundant copy (p-2) allows queueing it, and live isProtected updates immediately.
+        fireEvent.press(screen.getByTestId('exact-dup-preview-p-2'));
+        expect(screen.queryByTestId('exact-dup-zoom-preview-protected')).toBeNull();
+        expect(screen.getByTestId('exact-dup-preview-queue')).toBeTruthy();
+
+        mockMediaState.protectedAssetIds = ['p-2'];
+        await view.rerenderAsync(<ExactDuplicatesView completedCount={2} onOpenSettings={jest.fn()} />);
+        expect(screen.getByTestId('exact-dup-zoom-preview-protected')).toBeTruthy();
+        expect(screen.queryByTestId('exact-dup-preview-queue')).toBeNull();
+
+        // 3) External gallery refresh invalidates stale results and closes preview modal immediately.
+        mockMediaState.mediaLibraryRefreshVersion = 1;
+        await view.rerenderAsync(<ExactDuplicatesView completedCount={2} onOpenSettings={jest.fn()} />);
+        expect(screen.queryByTestId('exact-dup-summary')).toBeNull();
+        expect(screen.queryByTestId('exact-dup-zoom-preview')).toBeNull();
     });
 });

@@ -21,7 +21,9 @@ import { getReadableMediaInfos } from './readableMedia';
  *    protected, defaulted to keep, and excluded from batch deletion queues.
  */
 
-export const MAX_EXACT_DUPLICATE_FILE_BYTES = 64 * 1024 * 1024;
+export const MAX_EXACT_DUPLICATE_FILE_BYTES = 32 * 1024 * 1024;
+export const DEFAULT_EXACT_DUPLICATE_INFLIGHT_BYTE_BUDGET = 16 * 1024 * 1024;
+export const LARGE_EXACT_DUPLICATE_FILE_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_EXACT_DUPLICATE_CONCURRENCY = 4;
 const MAX_CONCURRENCY = 8;
 const LIMITED_SCOPE_PAGE_SIZE = 200;
@@ -90,6 +92,10 @@ export interface DetectExactDuplicatesOptions {
     protectedAssetIds?: ReadonlySet<string>;
     concurrency?: number;
     maxFileBytes?: number;
+    /** Global in-flight byte budget across concurrent workers (defaults to 16 MiB). */
+    maxInFlightBytes?: number;
+    /** Files at or above this byte size degrade to serial concurrency=1 (defaults to 8 MiB). */
+    serialFileThresholdBytes?: number;
     isCancelled?: () => boolean;
     onProgress?: (progress: ExactDuplicateProgress) => void;
     permissionLimited?: boolean;
@@ -226,11 +232,79 @@ export async function readCandidateFileBytes(
     }
 }
 
+interface BudgetWaiter {
+    bytes: number;
+    exclusive: boolean;
+    resolve: (release: () => void) => void;
+}
+
+/**
+ * Coordinates global in-flight read memory across hashing workers so concurrent
+ * `File.bytes()` JSI copies stay bounded on mobile devices:
+ * - Total concurrent bytes never exceed `maxInFlightBytes` (default 16 MiB).
+ * - Any file >= `serialThresholdBytes` (default 8 MiB) or > `maxInFlightBytes`
+ *   degrades to exclusive serial mode (`concurrency = 1`) until its buffer is
+ *   hashed and released.
+ */
+function createInFlightByteBudget(maxInFlightBytes: number, serialThresholdBytes: number) {
+    let inFlightBytes = 0;
+    let inFlightCount = 0;
+    let exclusiveActive = false;
+    const waiters: BudgetWaiter[] = [];
+
+    const canGrant = (bytes: number, exclusive: boolean): boolean => {
+        if (exclusiveActive) return false;
+        if (exclusive) return inFlightCount === 0;
+        return inFlightBytes + bytes <= maxInFlightBytes;
+    };
+
+    const makeReleaser = (bytes: number, exclusive: boolean) => {
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            inFlightBytes = Math.max(0, inFlightBytes - bytes);
+            inFlightCount = Math.max(0, inFlightCount - 1);
+            if (exclusive) exclusiveActive = false;
+            drainWaiters();
+        };
+    };
+
+    const grant = (bytes: number, exclusive: boolean): (() => void) => {
+        inFlightBytes += bytes;
+        inFlightCount += 1;
+        if (exclusive) exclusiveActive = true;
+        return makeReleaser(bytes, exclusive);
+    };
+
+    const drainWaiters = () => {
+        while (waiters.length > 0) {
+            const head = waiters[0];
+            if (!canGrant(head.bytes, head.exclusive)) break;
+            waiters.shift();
+            head.resolve(grant(head.bytes, head.exclusive));
+        }
+    };
+
+    const acquire = (bytes: number): Promise<() => void> => {
+        const exclusive = bytes >= serialThresholdBytes || bytes > maxInFlightBytes;
+        if (waiters.length === 0 && canGrant(bytes, exclusive)) {
+            return Promise.resolve(grant(bytes, exclusive));
+        }
+        return new Promise<() => void>(resolve => {
+            waiters.push({ bytes, exclusive, resolve });
+        });
+    };
+
+    return { acquire };
+}
+
 /**
  * Pure core byte-for-byte duplicate detector.
  * Buckets candidates by exact `fileSize` (> 0), hashes only same-size buckets
- * (count >= 2) with bounded concurrency via SHA-256, and returns sorted groups
- * annotated with protected-album retention defaults and explicit skip stats.
+ * (count >= 2) with bounded concurrency + global in-flight memory budgeting via
+ * SHA-256, and returns sorted groups annotated with protected-album retention
+ * defaults and explicit skip stats.
  */
 export async function detectExactDuplicates(
     candidates: readonly ExactDuplicateCandidate[],
@@ -246,6 +320,12 @@ export async function detectExactDuplicates(
     const maxFileBytes = isValidPositiveByteSize(options.maxFileBytes)
         ? options.maxFileBytes
         : MAX_EXACT_DUPLICATE_FILE_BYTES;
+    const maxInFlightBytes = isValidPositiveByteSize(options.maxInFlightBytes)
+        ? options.maxInFlightBytes
+        : DEFAULT_EXACT_DUPLICATE_INFLIGHT_BYTE_BUDGET;
+    const serialThresholdBytes = isValidPositiveByteSize(options.serialFileThresholdBytes)
+        ? options.serialFileThresholdBytes
+        : LARGE_EXACT_DUPLICATE_FILE_BYTES;
     const isCancelled = options.isCancelled;
     const onProgress = options.onProgress;
     const permissionLimited = !!options.permissionLimited;
@@ -301,10 +381,11 @@ export async function detectExactDuplicates(
     }
 
     const candidatesToHash: ExactDuplicateCandidate[] = [];
-    for (const bucket of bucketsBySize.values()) {
-        if (bucket.length >= 2) {
-            candidatesToHash.push(...bucket);
-        }
+    const sortedBuckets = Array.from(bucketsBySize.entries())
+        .filter(([, bucket]) => bucket.length >= 2)
+        .sort(([leftSize], [rightSize]) => leftSize - rightSize);
+    for (const [, bucket] of sortedBuckets) {
+        candidatesToHash.push(...bucket);
     }
 
     const sizeBucketCandidateCount = candidatesToHash.length;
@@ -335,8 +416,9 @@ export async function detectExactDuplicates(
         skippedUnreadableCount: 0,
     });
 
-    // Stage 2: Bounded-concurrency SHA-256 content hashing on candidate buckets only.
+    // Stage 2: Bounded-concurrency + byte-budgeted SHA-256 content hashing on candidate buckets only.
     const groupsByHashKey = new Map<string, { sha256: string; fileSize: number; members: ExactDuplicateMember[] }>();
+    const byteBudget = createInFlightByteBudget(maxInFlightBytes, serialThresholdBytes);
     let nextIndex = 0;
     let hashedCount = 0;
     let cancelled = false;
@@ -363,85 +445,99 @@ export async function detectExactDuplicates(
                     continue;
                 }
 
+                const releaseBudget = await byteBudget.acquire(expectedSize);
                 let bytes: Uint8Array | null = null;
                 try {
-                    bytes = await readBytes(candidate, maxFileBytes);
-                } catch {
+                    if (isCancelled?.()) {
+                        cancelled = true;
+                        return;
+                    }
+
+                    try {
+                        bytes = await readBytes(candidate, maxFileBytes);
+                    } catch {
+                        bytes = null;
+                    }
+
+                    if (isCancelled?.()) {
+                        cancelled = true;
+                        return;
+                    }
+
+                    if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+                        skippedUnreadableCount++;
+                        onProgress?.({
+                            phase: 'hashing',
+                            totalCandidates: sizeBucketCandidateCount,
+                            hashedCount,
+                            skippedUnreadableCount,
+                        });
+                        continue;
+                    }
+
+                    if (bytes.length > maxFileBytes) {
+                        skippedOversizedCount++;
+                        onProgress?.({
+                            phase: 'hashing',
+                            totalCandidates: sizeBucketCandidateCount,
+                            hashedCount,
+                            skippedUnreadableCount,
+                        });
+                        continue;
+                    }
+
+                    // If actual file bytes no longer match indexed fileSize, the file
+                    // changed concurrently or metadata was stale; do not risk false grouping.
+                    if (bytes.length !== expectedSize) {
+                        skippedUnreadableCount++;
+                        onProgress?.({
+                            phase: 'hashing',
+                            totalCandidates: sizeBucketCandidateCount,
+                            hashedCount,
+                            skippedUnreadableCount,
+                        });
+                        continue;
+                    }
+
+                    const digest = bytesToHex(sha256(bytes));
+                    // Drop buffer reference immediately after digest computation to ease GC pressure.
                     bytes = null;
-                }
 
-                if (isCancelled?.()) {
-                    cancelled = true;
-                    return;
-                }
+                    const member: ExactDuplicateMember = {
+                        assetId: candidate.assetId,
+                        uri: candidate.uri,
+                        ...(candidate.filename ? { filename: candidate.filename } : {}),
+                        fileSize: expectedSize,
+                        creationTime: validCreationTime(candidate.creationTime),
+                        ...(candidate.albumId ? { albumId: candidate.albumId } : {}),
+                        width: typeof candidate.width === 'number' && Number.isFinite(candidate.width) && candidate.width > 0 ? candidate.width : 0,
+                        height: typeof candidate.height === 'number' && Number.isFinite(candidate.height) && candidate.height > 0 ? candidate.height : 0,
+                        isProtected: isAssetProtected(
+                            { id: candidate.assetId, albumId: candidate.albumId },
+                            protectedAlbumIds,
+                            protectedAssetIds,
+                        ),
+                    };
 
-                if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
-                    skippedUnreadableCount++;
+                    const bucketKey = `${expectedSize}:${digest}`;
+                    const existing = groupsByHashKey.get(bucketKey);
+                    if (existing) {
+                        existing.members.push(member);
+                    } else {
+                        groupsByHashKey.set(bucketKey, { sha256: digest, fileSize: expectedSize, members: [member] });
+                    }
+
+                    hashedCount++;
                     onProgress?.({
                         phase: 'hashing',
                         totalCandidates: sizeBucketCandidateCount,
                         hashedCount,
                         skippedUnreadableCount,
                     });
-                    continue;
+                } finally {
+                    bytes = null;
+                    releaseBudget();
                 }
-
-                if (bytes.length > maxFileBytes) {
-                    skippedOversizedCount++;
-                    onProgress?.({
-                        phase: 'hashing',
-                        totalCandidates: sizeBucketCandidateCount,
-                        hashedCount,
-                        skippedUnreadableCount,
-                    });
-                    continue;
-                }
-
-                // If actual file bytes no longer match indexed fileSize, the file
-                // changed concurrently or metadata was stale; do not risk false grouping.
-                if (bytes.length !== expectedSize) {
-                    skippedUnreadableCount++;
-                    onProgress?.({
-                        phase: 'hashing',
-                        totalCandidates: sizeBucketCandidateCount,
-                        hashedCount,
-                        skippedUnreadableCount,
-                    });
-                    continue;
-                }
-
-                const digest = bytesToHex(sha256(bytes));
-                const member: ExactDuplicateMember = {
-                    assetId: candidate.assetId,
-                    uri: candidate.uri,
-                    ...(candidate.filename ? { filename: candidate.filename } : {}),
-                    fileSize: expectedSize,
-                    creationTime: validCreationTime(candidate.creationTime),
-                    ...(candidate.albumId ? { albumId: candidate.albumId } : {}),
-                    width: typeof candidate.width === 'number' && Number.isFinite(candidate.width) && candidate.width > 0 ? candidate.width : 0,
-                    height: typeof candidate.height === 'number' && Number.isFinite(candidate.height) && candidate.height > 0 ? candidate.height : 0,
-                    isProtected: isAssetProtected(
-                        { id: candidate.assetId, albumId: candidate.albumId },
-                        protectedAlbumIds,
-                        protectedAssetIds,
-                    ),
-                };
-
-                const bucketKey = `${expectedSize}:${digest}`;
-                const existing = groupsByHashKey.get(bucketKey);
-                if (existing) {
-                    existing.members.push(member);
-                } else {
-                    groupsByHashKey.set(bucketKey, { sha256: digest, fileSize: expectedSize, members: [member] });
-                }
-
-                hashedCount++;
-                onProgress?.({
-                    phase: 'hashing',
-                    totalCandidates: sizeBucketCandidateCount,
-                    hashedCount,
-                    skippedUnreadableCount,
-                });
             }
         }),
     );
@@ -545,6 +641,8 @@ export interface ScanIndexedExactDuplicatesOptions {
     protectedAssetIds?: ReadonlySet<string>;
     concurrency?: number;
     maxFileBytes?: number;
+    maxInFlightBytes?: number;
+    serialFileThresholdBytes?: number;
     isCancelled?: () => boolean;
     onProgress?: (progress: ExactDuplicateProgress) => void;
     readBytes?: ExactDuplicateByteReader;
@@ -734,6 +832,8 @@ export async function scanExactDuplicatesFromIndexedPhotos(
         protectedAssetIds: options.protectedAssetIds,
         concurrency: options.concurrency,
         maxFileBytes,
+        maxInFlightBytes: options.maxInFlightBytes,
+        serialFileThresholdBytes: options.serialFileThresholdBytes,
         isCancelled,
         onProgress: options.onProgress,
         permissionLimited: access.limited,

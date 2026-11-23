@@ -40,6 +40,7 @@ jest.mock('../../services/scanner', () => ({
     stop: (...args: any[]) => mockStopScanner(...args),
 }));
 jest.mock('../../services/mediaProgressStorage', () => ({ flushMediaProgress: async () => {} }));
+jest.mock('../../services/privacy/encryptedStorage', () => ({ canWriteEncryptedStorage: () => true }));
 jest.mock('../../services/privacy/settingsStorage', () => ({ flushSettings: async () => {} }));
 jest.mock('../../services/privacy/mediaCache', () => ({ clearLegacyMediaCache: async () => {} }));
 jest.mock('../../services/privacy/recovery', () => ({

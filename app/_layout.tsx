@@ -14,6 +14,7 @@ import { syncModalAppearance } from '../services/modalAppearance';
 import { AssetRepository, closeDatabase, getDatabase } from '../database';
 import { flushMediaProgress } from '../services/mediaProgressStorage';
 import { loadBackupChangeState } from '../services/backup/changeTracker';
+import { canWriteEncryptedStorage } from '../services/privacy/encryptedStorage';
 import { flushSettings } from '../services/privacy/settingsStorage';
 import { clearLegacyMediaCache } from '../services/privacy/mediaCache';
 import {
@@ -419,9 +420,15 @@ export default function RootLayout() {
       const failures = usePrivacyStore.getState().failures;
       if (failures.scanner) await closeDatabase();
       await getDatabase();
-      if (failures.settings === 'read') await useSettingsStore.persist.rehydrate();
+      const needsSettingsRehydrate = failures.settings === 'read'
+        || !useSettingsStore.getState().hasHydrated
+        || !canWriteEncryptedStorage('settings', 'photoapp-settings');
+      if (needsSettingsRehydrate) await useSettingsStore.persist.rehydrate();
       else await flushSettings();
-      if (failures.records === 'read') await useMediaStore.persist.rehydrate();
+      const needsRecordsRehydrate = failures.records === 'read'
+        || !useMediaStore.getState().hasHydrated
+        || !canWriteEncryptedStorage('records', 'photoapp-media-progress');
+      if (needsRecordsRehydrate) await useMediaStore.persist.rehydrate();
       else await flushMediaProgress();
     } catch {
       // The privacy gate retains the data and a non-sensitive failure state.

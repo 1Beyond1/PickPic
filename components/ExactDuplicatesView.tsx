@@ -45,6 +45,7 @@ export function ExactDuplicatesView({ completedCount, onOpenSettings }: ExactDup
     const protectedAlbums = useMediaStore(state => state.protectedAlbums);
     const protectedAssetIds = useMediaStore(state => state.protectedAssetIds);
     const permissionRefreshVersion = useMediaStore(state => state.permissionRefreshVersion ?? 0);
+    const mediaLibraryRefreshVersion = useMediaStore(state => state.mediaLibraryRefreshVersion ?? 0);
     const lastDeletionResult = useMediaStore(state => state.lastDeletionResult ?? null);
 
     const pendingDeleteIdSet = useMemo(() => new Set((deleteQueue ?? []).map(asset => asset.id)), [deleteQueue]);
@@ -65,18 +66,22 @@ export function ExactDuplicatesView({ completedCount, onOpenSettings }: ExactDup
     const [keepOverrides, setKeepOverrides] = useState<Record<string, string[]>>({});
     const [feedback, setFeedback] = useState<string | null>(null);
     const [isQueueing, setIsQueueing] = useState(false);
-    const [previewMember, setPreviewMember] = useState<ExactDuplicateMember | null>(null);
+    const [previewTarget, setPreviewTarget] = useState<{ sha256: string; assetId: string } | null>(null);
 
     const scanRunIdRef = useRef(0);
     const cancelledRef = useRef(false);
     const queueingRef = useRef(false);
     const prevPermVersionRef = useRef(permissionRefreshVersion);
+    const prevMediaRefreshVersionRef = useRef(mediaLibraryRefreshVersion);
     const prevDeletionResultRef = useRef(lastDeletionResult);
 
-    // Clear stale results immediately when permissions change.
+    // Clear stale results immediately when permissions or external gallery contents change.
     useEffect(() => {
-        if (permissionRefreshVersion === prevPermVersionRef.current) return;
+        const permChanged = permissionRefreshVersion !== prevPermVersionRef.current;
+        const mediaChanged = mediaLibraryRefreshVersion !== prevMediaRefreshVersionRef.current;
+        if (!permChanged && !mediaChanged) return;
         prevPermVersionRef.current = permissionRefreshVersion;
+        prevMediaRefreshVersionRef.current = mediaLibraryRefreshVersion;
         cancelledRef.current = true;
         scanRunIdRef.current += 1;
         setIsScanningExact(false);
@@ -84,9 +89,9 @@ export function ExactDuplicatesView({ completedCount, onOpenSettings }: ExactDup
         setScanResult(null);
         setScanError(false);
         setKeepOverrides({});
-        setPreviewMember(null);
+        setPreviewTarget(null);
         setFeedback(null);
-    }, [permissionRefreshVersion]);
+    }, [mediaLibraryRefreshVersion, permissionRefreshVersion]);
 
     // Remove confirmed physically deleted photos from displayed groups immediately.
     useEffect(() => {
@@ -112,7 +117,7 @@ export function ExactDuplicatesView({ completedCount, onOpenSettings }: ExactDup
                 .filter((group): group is ExactDuplicateGroup => group !== null);
             return { ...previous, groups };
         });
-        setPreviewMember(prev => (prev && deletedSet.has(prev.assetId) ? null : prev));
+        setPreviewTarget(prev => (prev && deletedSet.has(prev.assetId) ? null : prev));
     }, [lastDeletionResult, strategy]);
 
     useEffect(() => () => {
@@ -302,24 +307,68 @@ export function ExactDuplicatesView({ completedCount, onOpenSettings }: ExactDup
         }
     }, [protectedAlbumIdSet, protectedAssetIdSet, t]);
 
+    const getGroupQueueableIds = useCallback((group: ExactDuplicateGroup): string[] => {
+        const keepSet = getEffectiveKeepSet(group);
+        const requested = selectExactDuplicateQueueIds(group, keepSet);
+        if (requested.length === 0) return [];
+        const requestedSet = new Set(requested);
+        const remainingUnqueued = group.members.some(
+            member => !pendingDeleteIdSet.has(member.assetId) && !requestedSet.has(member.assetId),
+        );
+        if (remainingUnqueued) return requested;
+        const preserve = group.members.find(member => !pendingDeleteIdSet.has(member.assetId));
+        return preserve ? requested.filter(id => id !== preserve.assetId) : [];
+    }, [getEffectiveKeepSet, pendingDeleteIdSet]);
+
+    const previewContext = useMemo(() => {
+        if (!previewTarget) return null;
+        const group = resolvedGroups.find(item => item.sha256 === previewTarget.sha256);
+        if (!group) return null;
+        const member = group.members.find(item => item.assetId === previewTarget.assetId);
+        if (!member) return null;
+        return { group, member };
+    }, [previewTarget, resolvedGroups]);
+
+    const queuePreviewMember = useCallback(async (group: ExactDuplicateGroup, member: ExactDuplicateMember) => {
+        if (member.isProtected) {
+            setFeedback(t('exact_dup_protected_keep_locked'));
+            return;
+        }
+        const otherUnqueued = group.members.some(
+            item => item.assetId !== member.assetId && !pendingDeleteIdSet.has(item.assetId),
+        );
+        const effectiveKeep = getEffectiveKeepSet(group);
+        if (!otherUnqueued || (effectiveKeep.has(member.assetId) && effectiveKeep.size <= 1)) {
+            setFeedback(t('exact_dup_keep_at_least_one'));
+            return;
+        }
+        await queueAssetIds([member.assetId]);
+        if (effectiveKeep.has(member.assetId) && effectiveKeep.size > 1) {
+            setKeepOverrides(previous => {
+                const next = new Set(previous[group.sha256] ?? Array.from(effectiveKeep));
+                if (next.size <= 1) return previous;
+                next.delete(member.assetId);
+                return { ...previous, [group.sha256]: Array.from(next) };
+            });
+        }
+    }, [getEffectiveKeepSet, pendingDeleteIdSet, queueAssetIds, t]);
+
     const allQueueableIds = useMemo(() => {
         const ids: string[] = [];
         for (const group of resolvedGroups) {
-            const keepSet = getEffectiveKeepSet(group);
-            ids.push(...selectExactDuplicateQueueIds(group, keepSet));
+            ids.push(...getGroupQueueableIds(group));
         }
         return ids;
-    }, [getEffectiveKeepSet, resolvedGroups]);
+    }, [getGroupQueueableIds, resolvedGroups]);
 
     const totalReclaimableBytes = useMemo(() => {
         let total = 0;
         for (const group of resolvedGroups) {
-            const keepSet = getEffectiveKeepSet(group);
-            const queueIds = selectExactDuplicateQueueIds(group, keepSet);
+            const queueIds = getGroupQueueableIds(group);
             total += group.fileSize * queueIds.length;
         }
         return total;
-    }, [getEffectiveKeepSet, resolvedGroups]);
+    }, [getGroupQueueableIds, resolvedGroups]);
 
     const hasIncompleteCoverage = !!scanResult
         && scanResult.status === 'ready'
@@ -331,7 +380,7 @@ export function ExactDuplicatesView({ completedCount, onOpenSettings }: ExactDup
 
     const renderGroup = ({ item: group }: { item: ExactDuplicateGroup }) => {
         const keepSet = getEffectiveKeepSet(group);
-        const queueIds = selectExactDuplicateQueueIds(group, keepSet);
+        const queueIds = getGroupQueueableIds(group);
         const allProtected = group.members.every(member => member.isProtected);
 
         return (
@@ -368,7 +417,7 @@ export function ExactDuplicatesView({ completedCount, onOpenSettings }: ExactDup
                                     testID={`exact-dup-preview-${member.assetId}`}
                                     accessibilityRole="button"
                                     accessibilityLabel={t('exact_dup_open_preview')}
-                                    onPress={() => setPreviewMember(member)}
+                                    onPress={() => setPreviewTarget({ sha256: group.sha256, assetId: member.assetId })}
                                     style={styles.memberPreviewTouch}
                                 >
                                     <Image
@@ -625,22 +674,22 @@ export function ExactDuplicatesView({ completedCount, onOpenSettings }: ExactDup
 
             <ZoomablePhotoModal
                 testID="exact-dup-zoom-preview"
-                visible={!!previewMember}
-                photo={previewMember ? { id: previewMember.assetId, uri: previewMember.uri } : null}
+                visible={!!previewContext}
+                photo={previewContext ? { id: previewContext.member.assetId, uri: previewContext.member.uri } : null}
                 title={t('photo_detail_title')}
-                subtitle={previewMember ? `${formatBytes(previewMember.fileSize)}${previewMember.width > 0 && previewMember.height > 0 ? ` · ${previewMember.width} × ${previewMember.height}` : ''}` : undefined}
-                isProtected={previewMember?.isProtected ?? false}
+                subtitle={previewContext ? `${formatBytes(previewContext.member.fileSize)}${previewContext.member.width > 0 && previewContext.member.height > 0 ? ` · ${previewContext.member.width} × ${previewContext.member.height}` : ''}` : undefined}
+                isProtected={previewContext?.member.isProtected ?? false}
                 feedback={feedback}
-                onClose={() => setPreviewMember(null)}
-                actions={previewMember && !previewMember.isProtected ? [
+                onClose={() => setPreviewTarget(null)}
+                actions={previewContext && !previewContext.member.isProtected ? [
                     {
                         id: 'queue',
                         testID: 'exact-dup-preview-queue',
-                        label: pendingDeleteIdSet.has(previewMember.assetId) ? t('pending_already_added') : t('pending_add'),
-                        icon: pendingDeleteIdSet.has(previewMember.assetId) ? 'trash' : 'trash-outline',
+                        label: pendingDeleteIdSet.has(previewContext.member.assetId) ? t('pending_already_added') : t('pending_add'),
+                        icon: pendingDeleteIdSet.has(previewContext.member.assetId) ? 'trash' : 'trash-outline',
                         tone: 'danger',
                         disabled: isQueueing,
-                        onPress: () => { void queueAssetIds([previewMember.assetId]); },
+                        onPress: () => { void queuePreviewMember(previewContext.group, previewContext.member); },
                     },
                 ] : []}
             />

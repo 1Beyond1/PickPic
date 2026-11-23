@@ -90,6 +90,17 @@ it('refuses unbounded Android content:// fallback when asset.size is missing and
     expect(Legacy.readAsStringAsync).not.toHaveBeenCalled();
     expect(mockDelete).not.toHaveBeenCalled();
 });
+it('throws unavailable (not size) when a non-Android-content file does not exist', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+    mockExists = false;
+    jest.mocked(Picker.getDocumentAsync).mockResolvedValue({
+        canceled: false,
+        assets: [{ uri: 'file:///missing/backup.pickpic', size: 128 }],
+    } as any);
+    await expect(pickEncryptedFile()).rejects.toMatchObject({ code: 'unavailable' });
+    expect(mockRead).not.toHaveBeenCalled();
+    expect(Legacy.readAsStringAsync).not.toHaveBeenCalled();
+});
 it('removes only the private picker copy after reading', async () => {
     jest.mocked(Picker.getDocumentAsync).mockResolvedValue({ canceled: false, assets: [{ uri: 'file:///app/cache/DocumentPicker/backup' }] } as any);
     const bytes = new Uint8Array([1, 2]); mockRead.mockResolvedValue(bytes);

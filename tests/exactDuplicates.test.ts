@@ -23,6 +23,9 @@ jest.mock('../database', () => ({
 import * as MediaLibrary from 'expo-media-library';
 import { AssetRepository } from '../database';
 import {
+    DEFAULT_EXACT_DUPLICATE_INFLIGHT_BYTE_BUDGET,
+    LARGE_EXACT_DUPLICATE_FILE_BYTES,
+    MAX_EXACT_DUPLICATE_FILE_BYTES,
     detectExactDuplicates,
     parseFileSizeFromSignature,
     scanExactDuplicatesFromIndexedPhotos,
@@ -262,5 +265,74 @@ describe('exactDuplicates pure byte-level detection engine', () => {
         const result = await scanExactDuplicatesFromIndexedPhotos();
         expect(result.status).toBe('permission');
         expect(AssetRepository.getCompletedAssetsSummary).not.toHaveBeenCalled();
+    });
+
+    it('enforces safe default memory caps, global in-flight byte budget, and serial degradation for large files (P1-2)', async () => {
+        expect(MAX_EXACT_DUPLICATE_FILE_BYTES).toBe(32 * 1024 * 1024);
+        expect(DEFAULT_EXACT_DUPLICATE_INFLIGHT_BYTE_BUDGET).toBe(16 * 1024 * 1024);
+        expect(LARGE_EXACT_DUPLICATE_FILE_BYTES).toBe(8 * 1024 * 1024);
+
+        // Files above default 32 MiB cap are skipped as oversized BEFORE any byte read.
+        const oversizedRead = jest.fn();
+        const oversizedResult = await detectExactDuplicates([
+            { assetId: 'huge-1', uri: 'file:///huge-1.dng', fileSize: 33 * 1024 * 1024 },
+            { assetId: 'huge-2', uri: 'file:///huge-2.dng', fileSize: 33 * 1024 * 1024 },
+        ], { readBytes: oversizedRead });
+        expect(oversizedRead).not.toHaveBeenCalled();
+        expect(oversizedResult.skippedOversizedCount).toBe(2);
+        expect(oversizedResult.groups).toEqual([]);
+
+        // Verify BOTH:
+        // 1) Medium files (60 B each with 160 B budget, concurrency 4) never exceed 2 concurrent (120 B <= 160 B).
+        // 2) Large files (>= 80 B threshold, e.g. 120 B) degrade strictly to concurrency=1 with zero overlap.
+        const candidates: ExactDuplicateCandidate[] = [
+            { assetId: 'med-1', uri: 'file:///med-1.jpg', fileSize: 60, creationTime: 1 },
+            { assetId: 'med-2', uri: 'file:///med-2.jpg', fileSize: 60, creationTime: 2 },
+            { assetId: 'med-3', uri: 'file:///med-3.jpg', fileSize: 60, creationTime: 3 },
+            { assetId: 'med-4', uri: 'file:///med-4.jpg', fileSize: 60, creationTime: 4 },
+            { assetId: 'big-1', uri: 'file:///big-1.png', fileSize: 120, creationTime: 5 },
+            { assetId: 'big-2', uri: 'file:///big-2.png', fileSize: 120, creationTime: 6 },
+            { assetId: 'big-3', uri: 'file:///big-3.png', fileSize: 120, creationTime: 7 },
+        ];
+
+        let activeCount = 0;
+        let activeBytes = 0;
+        let peakMediumBytes = 0;
+        let peakMediumConcurrency = 0;
+        let peakConcurrencyDuringLarge = 0;
+
+        const result = await detectExactDuplicates(candidates, {
+            concurrency: 4,
+            maxFileBytes: 320,
+            maxInFlightBytes: 160,
+            serialFileThresholdBytes: 80,
+            readBytes: async candidate => {
+                const size = candidate.fileSize!;
+                const isLarge = size >= 80;
+                activeCount++;
+                activeBytes += size;
+                if (isLarge) {
+                    peakConcurrencyDuringLarge = Math.max(peakConcurrencyDuringLarge, activeCount);
+                } else {
+                    peakMediumBytes = Math.max(peakMediumBytes, activeBytes);
+                    peakMediumConcurrency = Math.max(peakMediumConcurrency, activeCount);
+                }
+                await new Promise(resolve => setTimeout(resolve, 12));
+                if (isLarge) {
+                    peakConcurrencyDuringLarge = Math.max(peakConcurrencyDuringLarge, activeCount);
+                }
+                activeBytes -= size;
+                activeCount--;
+                return new Uint8Array(size).fill(isLarge ? 0x22 : 0x11);
+            },
+        });
+
+        expect(result.status).toBe('ready');
+        expect(result.groups).toHaveLength(2);
+        // Medium files stayed strictly inside 160 B budget (max 2 * 60 B = 120 B).
+        expect(peakMediumBytes).toBeLessThanOrEqual(160);
+        expect(peakMediumConcurrency).toBeLessThanOrEqual(2);
+        // Large files (>= threshold) ran strictly serially (concurrency = 1, zero overlap).
+        expect(peakConcurrencyDuringLarge).toBe(1);
     });
 });

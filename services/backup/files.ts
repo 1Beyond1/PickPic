@@ -49,7 +49,7 @@ export async function pickEncryptedFile(): Promise<Uint8Array | null> {
                 return bytes;
             }
             if (!isAndroidContentUri) {
-                throw new BackupError('size');
+                throw new BackupError('unavailable');
             }
         } catch (error) {
             if (error instanceof BackupError) throw error;

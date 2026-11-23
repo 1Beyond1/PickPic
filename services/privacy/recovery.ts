@@ -90,12 +90,14 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
         resumeSettingsWrites?.();
         resumeMediaWrites?.();
     };
+    let writesDisabled = false;
     try {
         // Block new persistence writes and drain every in-flight writer BEFORE
         // closing SQLCipher or wiping any local ciphertext / device key so old-key
         // writes can never land after key deletion and re-lock the app.
         if (typeof disableEncryptedStorageWrites === 'function') {
             disableEncryptedStorageWrites();
+            writesDisabled = true;
         }
         await resetMediaProgressPersistenceState();
         if (typeof resetSettingsPersistenceState === 'function') {
@@ -156,6 +158,21 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
         await useMediaStore.persist.rehydrate();
         await useMediaStore.getState().loadProtectedAlbums?.();
         await useMediaStore.getState().refreshTotalCounts?.().catch(() => undefined);
+    } catch (error) {
+        if (writesDisabled) {
+            // Encrypted storage write gates were cleared; force both stores back
+            // into read-blocked unhydrated state so Retry always rehydrates and
+            // re-arms write gates instead of silently dropping writes or spinning.
+            useSettingsStore.setState?.({ hasHydrated: false });
+            useMediaStore.setState?.({ hasHydrated: false });
+            const reason = error instanceof LocalPrivacyError ? error.reason : 'storage_io';
+            const privacy = usePrivacyStore.getState();
+            const settingsReason = privacy.failures.settings === 'read' ? privacy.reasons?.settings : undefined;
+            const recordsReason = privacy.failures.records === 'read' ? privacy.reasons?.records : undefined;
+            privacy.block?.('settings', 'read', settingsReason ?? reason);
+            privacy.block?.('records', 'read', recordsReason ?? reason);
+        }
+        throw error;
     } finally {
         resumeAllWrites();
         endRecovery?.();
