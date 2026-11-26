@@ -179,25 +179,43 @@ export class ImageOpsJS implements IImageOps {
     }
 
     /**
-     * Compute a 64-bit dHash from an 9x8 grayscale sampling grid.
+     * Compute a 64-bit dHash using a 9x8 area/box-average downsampled grid.
+     * Averaging each cell across the 256x256 grayscale buffer makes the hash
+     * resilient to single-pixel shifts and sensor noise without extra native calls.
      */
     computeDHash64(gray: GrayImageRef): string {
         const data = gray.data;
-        if (!data || data.length === 0) {
+        if (!data || data.length === 0 || gray.width <= 0 || gray.height <= 0) {
             throw new Error('Cannot compute perceptual hash without pixel data');
+        }
+
+        const grid = new Float64Array(9 * 8);
+
+        for (let gy = 0; gy < 8; gy++) {
+            const yStart = Math.min(gray.height - 1, Math.floor((gy * gray.height) / 8));
+            const yEnd = Math.min(gray.height, Math.max(yStart + 1, Math.floor(((gy + 1) * gray.height) / 8)));
+            for (let gx = 0; gx < 9; gx++) {
+                const xStart = Math.min(gray.width - 1, Math.floor((gx * gray.width) / 9));
+                const xEnd = Math.min(gray.width, Math.max(xStart + 1, Math.floor(((gx + 1) * gray.width) / 9)));
+                let sum = 0;
+                let count = 0;
+                for (let py = yStart; py < yEnd; py++) {
+                    const rowOffset = py * gray.width;
+                    for (let px = xStart; px < xEnd; px++) {
+                        sum += data[rowOffset + px];
+                        count++;
+                    }
+                }
+                grid[(gy * 9) + gx] = count > 0 ? sum / count : 0;
+            }
         }
 
         let hash = 0n;
 
         for (let y = 0; y < 8; y++) {
-            const sourceY = Math.min(gray.height - 1, Math.floor((y * gray.height) / 8));
+            const rowOffset = y * 9;
             for (let x = 0; x < 8; x++) {
-                const leftX = Math.min(gray.width - 1, Math.floor((x * gray.width) / 9));
-                const rightX = Math.min(gray.width - 1, Math.floor(((x + 1) * gray.width) / 9));
-                const left = data[sourceY * gray.width + leftX];
-                const right = data[sourceY * gray.width + rightX];
-
-                if (left < right) {
+                if (grid[rowOffset + x] < grid[rowOffset + x + 1]) {
                     hash |= (1n << BigInt((y * 8) + x));
                 }
             }
@@ -232,35 +250,55 @@ export class ImageOpsJS implements IImageOps {
     }
 
     /**
-     * Center crop to square and resize to targetSize (default 224)
+     * Center crop to square and resize to targetSize (default 224).
+     * Falls back to a direct resize when dimensions are unavailable or EXIF
+     * rotation causes the crop rectangle to fall out of bounds.
      */
     async centerCropSquare(assetUri: string, width: number, height: number, targetSize: number = 224): Promise<string> {
-        const safeWidth = Math.max(1, Math.floor(width));
-        const safeHeight = Math.max(1, Math.floor(height));
-        const size = Math.min(safeWidth, safeHeight);
-        const originX = Math.floor((safeWidth - size) / 2);
-        const originY = Math.floor((safeHeight - size) / 2);
         const target = Math.max(1, Math.round(targetSize));
+        const hasValidDimensions = Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0;
+
+        if (hasValidDimensions) {
+            const safeWidth = Math.max(1, Math.floor(width));
+            const safeHeight = Math.max(1, Math.floor(height));
+            const size = Math.min(safeWidth, safeHeight);
+            const originX = Math.floor((safeWidth - size) / 2);
+            const originY = Math.floor((safeHeight - size) / 2);
+
+            try {
+                const result = await ImageManipulator.manipulateAsync(
+                    assetUri,
+                    [
+                        {
+                            crop: {
+                                originX,
+                                originY,
+                                width: size,
+                                height: size
+                            }
+                        },
+                        { resize: { width: target, height: target } }
+                    ],
+                    { format: ImageManipulator.SaveFormat.JPEG, compress: 0.8 }
+                );
+                return result.uri;
+            } catch {
+                // EXIF-rotated photos may swap decoded width/height relative to
+                // metadata, causing the crop rectangle to fall out of bounds.
+                // Fall through to direct downscaling so 48-200MP originals are
+                // never forwarded raw to TFLite/ML Kit.
+            }
+        }
 
         try {
-            const result = await ImageManipulator.manipulateAsync(
+            const resized = await ImageManipulator.manipulateAsync(
                 assetUri,
-                [
-                    {
-                        crop: {
-                            originX,
-                            originY,
-                            width: size,
-                            height: size
-                        }
-                    },
-                    { resize: { width: target, height: target } }
-                ],
+                [{ resize: { width: target, height: target } }],
                 { format: ImageManipulator.SaveFormat.JPEG, compress: 0.8 }
             );
-            return result.uri;
+            return resized.uri;
         } catch {
-            console.warn('[ImageOpsJS] Failed to crop image, using original.');
+            console.warn('[ImageOpsJS] Failed to crop or resize image, using original.');
             return assetUri;
         }
     }

@@ -434,9 +434,46 @@ export async function restoreEncryptedRecords(
             ? Array.from(new Set([...existingSimilarIgnoreKeys, ...restoredSimilarIgnoreKeys])).slice(-2000)
             : existingSimilarIgnoreKeys;
 
+        // Snapshot pre-restore in-memory state so any persistence failure rolls
+        // back atomically instead of leaving unpersisted records in UI memory.
+        const previousSnapshot = {
+            photoProcessedIds: current.photoProcessedIds,
+            videoProcessedIds: current.videoProcessedIds,
+            deleteQueue: current.deleteQueue,
+            collectionQueue: current.collectionQueue,
+            videoTrashBin: current.videoTrashBin,
+            pendingDeletionInfo: current.pendingDeletionInfo,
+            recentDecisions: current.recentDecisions,
+            organizingSessions: current.organizingSessions,
+            photoSessionRecoveryStatus: current.photoSessionRecoveryStatus,
+            photoSessionUnavailableCount: current.photoSessionUnavailableCount,
+            videoSessionRecoveryStatus: current.videoSessionRecoveryStatus,
+            videoSessionUnavailableCount: current.videoSessionUnavailableCount,
+            ignoredSimilarGroupKeys: current.ignoredSimilarGroupKeys,
+            lastDeletionResult: current.lastDeletionResult,
+            photos: current.photos,
+            videos: current.videos,
+            currentIndex: current.currentIndex,
+            videoCurrentIndex: current.videoCurrentIndex,
+            hiddenPhotoQueuedAssetIds: current.hiddenPhotoQueuedAssetIds,
+            hiddenVideoQueuedAssetIds: current.hiddenVideoQueuedAssetIds,
+        };
+
+        // Write v2 SQLCipher tables BEFORE mutating in-memory store state so a
+        // SQLCipher failure never leaves in-memory state ahead of persistence.
+        if (payload.version === 2) {
+            if (protectedAlbumsToMerge.length > 0) {
+                await mergeProtectedAlbums(protectedAlbumsToMerge);
+            }
+            if (reviewIgnoresToMerge.length > 0) {
+                await mergeReviewIgnores(reviewIgnoresToMerge);
+            }
+        }
+
         // Backups do not contain an undo journal or organizing sessions.
         // Clear stale sessions/recovery state while preserving limited-access
-        // hidden-queue protection.
+        // hidden-queue protection, then await durable persistence before
+        // publishing refresh signals (rolling back memory on write failure).
         useMediaStore.setState({
             ...merged,
             recentDecisions: [],
@@ -460,18 +497,18 @@ export async function restoreEncryptedRecords(
             hiddenVideoQueuedAssetIds,
         });
 
-        if (payload.version === 2) {
-            if (protectedAlbumsToMerge.length > 0) {
-                await mergeProtectedAlbums(protectedAlbumsToMerge);
-                await useMediaStore.getState().loadProtectedAlbums?.();
-            }
-            if (reviewIgnoresToMerge.length > 0) {
-                await mergeReviewIgnores(reviewIgnoresToMerge);
-            }
+        try {
+            await flushMediaProgress();
+        } catch (error) {
+            useMediaStore.setState(previousSnapshot);
+            throw error;
+        }
+
+        if (payload.version === 2 && protectedAlbumsToMerge.length > 0) {
+            await useMediaStore.getState().loadProtectedAlbums?.();
         }
 
         current.clearLoadedMedia(); // Invalidate asynchronous feed loads too.
-        await flushMediaProgress();
         await current.refreshTotalCounts();
         current.notifyMediaLibraryRefresh();
         return preview;

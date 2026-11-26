@@ -13,7 +13,7 @@ export type BackupCancellation = () => boolean;
 export type BackupKeyProgress = (fraction: number) => void;
 
 export class BackupError extends Error {
-    constructor(public readonly code: 'password' | 'invalid' | 'cancelled' | 'size' | 'unavailable') {
+    constructor(public readonly code: 'password' | 'invalid' | 'cancelled' | 'size' | 'permission' | 'unavailable') {
         super(`Backup operation failed (${code})`);
     }
 }

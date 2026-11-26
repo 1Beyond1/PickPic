@@ -5,7 +5,8 @@
 
 export const DB_NAME = 'pickpic_scanner.db';
 
-export const GLOBAL_ALGO_VERSION = 4;
+// v5: 9x8 box/area-average dHash downsampling replaces single-pixel sampling.
+export const GLOBAL_ALGO_VERSION = 5;
 export const AI_ALGO_VERSION = 1;
 
 // Explicit similar-group decisions live inside the keyed scanner database,

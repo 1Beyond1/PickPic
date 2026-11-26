@@ -15,7 +15,11 @@ import {
 } from '../mediaProgressStorage';
 import { isScanning, stop as stopScanner } from '../scanner';
 import { BackupError, type BackupCancellation } from '../backup/crypto';
-import type { BackupPayload, RestorePreview } from '../backup/payload';
+import {
+    getRequiredBackupMediaPermissions,
+    type BackupPayload,
+    type RestorePreview,
+} from '../backup/payload';
 import { restoreEncryptedRecords } from '../backup/records';
 import {
     resetBackupChangeState,
@@ -179,22 +183,27 @@ export async function resetLocalPrivacyIndex(): Promise<void> {
     }
 }
 
-async function assertMediaAccessForRecoveryBackup(payload: BackupPayload): Promise<void> {
-    if (typeof MediaLibrary.getPermissionsAsync !== 'function') return;
-    const needsPhoto = payload.records.some(record => record.kind === 'photo')
-        || (payload.version === 2 && payload.reviewIgnores.some(ignore => ignore.ignoreType === 'blur'));
-    const needsVideo = payload.records.some(record => record.kind === 'video');
-    if (needsPhoto) {
-        const photoPermission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
-        if (!photoPermission.granted) {
-            throw new BackupError('unavailable');
+export { getRequiredBackupMediaPermissions };
+
+export async function getMissingBackupMediaPermissions(
+    payload: BackupPayload,
+): Promise<('photo' | 'video')[]> {
+    if (typeof MediaLibrary.getPermissionsAsync !== 'function') return [];
+    const required = getRequiredBackupMediaPermissions(payload);
+    const missing: ('photo' | 'video')[] = [];
+    for (const kind of required) {
+        const permission = await MediaLibrary.getPermissionsAsync(false, [kind]);
+        if (!permission || !permission.granted) {
+            missing.push(kind);
         }
     }
-    if (needsVideo) {
-        const videoPermission = await MediaLibrary.getPermissionsAsync(false, ['video']);
-        if (!videoPermission.granted) {
-            throw new BackupError('unavailable');
-        }
+    return missing;
+}
+
+async function assertMediaAccessForRecoveryBackup(payload: BackupPayload): Promise<void> {
+    const missing = await getMissingBackupMediaPermissions(payload);
+    if (missing.length > 0) {
+        throw new BackupError('permission');
     }
 }
 

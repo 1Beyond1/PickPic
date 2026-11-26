@@ -7,6 +7,10 @@ import expo.modules.kotlin.modules.ModuleDefinition
 /** Only indexed size for requested media IDs. No paths, names, EXIF, original
  * bytes, network downloads or writes. Android still enforces media access. */
 class PickPicMediaIndexModule : Module() {
+  companion object {
+    private val MEDIA_ID_REGEX = Regex("[1-9][0-9]{0,18}")
+  }
+
   override fun definition() = ModuleDefinition {
     Name("PickPicMediaIndex")
 
@@ -14,7 +18,7 @@ class PickPicMediaIndexModule : Module() {
       require(kind == "photo" || kind == "video") { "Unsupported media type" }
       require(requestedIds.size <= 200) { "Media index batch is too large" }
       val ids = requestedIds.distinct()
-      require(ids.all { it.matches(Regex("[1-9][0-9]{0,18}")) && it.toLongOrNull() != null }) { "Invalid media ID" }
+      require(ids.all { it.matches(MEDIA_ID_REGEX) && it.toLongOrNull() != null }) { "Invalid media ID" }
       if (ids.isEmpty()) return@AsyncFunction emptyList<Map<String, Any?>>()
       val context = appContext.reactContext ?: throw IllegalStateException("Media index context unavailable")
       val uri = if (kind == "photo") MediaStore.Images.Media.EXTERNAL_CONTENT_URI else MediaStore.Video.Media.EXTERNAL_CONTENT_URI

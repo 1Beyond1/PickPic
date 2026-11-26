@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as MediaLibrary from 'expo-media-library';
 import React, { useEffect, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     AppState,
     KeyboardAvoidingView,
+    Linking,
     Platform,
     Pressable,
     ScrollView,
@@ -17,7 +19,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
-import type { BackupPayload, RestorePreview } from '../services/backup/payload';
+import {
+    getRequiredBackupMediaPermissions,
+    type BackupPayload,
+    type RestorePreview,
+} from '../services/backup/payload';
 import { type PrivacyFailureReason, usePrivacyStore } from '../stores/usePrivacyStore';
 import { BottomSheet } from './BottomSheet';
 
@@ -83,6 +89,9 @@ export function PrivacyRecoveryScreen({
     const [working, setWorking] = useState(false);
     const [irreversibleWorking, setIrreversibleWorking] = useState(false);
     const [wizardMessage, setWizardMessage] = useState('');
+    const [wizardInfoMessage, setWizardInfoMessage] = useState('');
+    const [needsMediaPermission, setNeedsMediaPermission] = useState(false);
+    const [permissionNeedsSettings, setPermissionNeedsSettings] = useState(false);
     const [resetAck, setResetAck] = useState(false);
 
     // Backup import wizard state
@@ -102,6 +111,7 @@ export function PrivacyRecoveryScreen({
     const payloadRef = useRef<BackupPayload | null>(null);
     const generationRef = useRef(0);
     const externalUIRef = useRef(false);
+    const returningFromSettingsRef = useRef(false);
     const runningRef = useRef(false);
     const irreversibleWorkingRef = useRef(false);
     const uiRecoveryReleaseRef = useRef<(() => void) | null>(null);
@@ -117,11 +127,15 @@ export function PrivacyRecoveryScreen({
         bytesRef.current?.fill(0);
         bytesRef.current = null;
         payloadRef.current = null;
+        returningFromSettingsRef.current = false;
         irreversibleWorkingRef.current = false;
         setIrreversibleWorking(false);
         setWizardMode(null);
         setWorking(false);
         setWizardMessage('');
+        setWizardInfoMessage('');
+        setNeedsMediaPermission(false);
+        setPermissionNeedsSettings(false);
         setResetAck(false);
         setSelectedFile(false);
         setPassword('');
@@ -143,11 +157,13 @@ export function PrivacyRecoveryScreen({
         const encrypted = bytesRef;
         const decrypted = payloadRef;
         const subscription = AppState.addEventListener('change', state => {
-            if (state !== 'active') {
-                setPassword('');
-                if (!externalUIRef.current && !irreversibleWorkingRef.current) {
-                    closeRef.current();
-                }
+            if (state === 'active') {
+                returningFromSettingsRef.current = false;
+                return;
+            }
+            setPassword('');
+            if (!externalUIRef.current && !returningFromSettingsRef.current && !irreversibleWorkingRef.current) {
+                closeRef.current();
             }
         });
         return () => {
@@ -174,6 +190,7 @@ export function PrivacyRecoveryScreen({
             setIrreversibleWorking(true);
         }
         setWizardMessage('');
+        setWizardInfoMessage('');
         setKeyProgress(null);
         const ticket = generationRef.current;
         const cancelled = () => ticket !== generationRef.current;
@@ -193,8 +210,11 @@ export function PrivacyRecoveryScreen({
                 if (code === 'password') setWizardMessage(t('backup_error_password'));
                 else if (code === 'invalid') setWizardMessage(t('backup_error_invalid'));
                 else if (code === 'size') setWizardMessage(t('backup_error_size'));
-                else if (code === 'unavailable' && fallbackErrorKey === 'privacy_wizard_restore_failed') {
+                else if (code === 'permission' && fallbackErrorKey === 'privacy_wizard_restore_failed') {
+                    setNeedsMediaPermission(true);
                     setWizardMessage(t('privacy_wizard_restore_no_permission'));
+                } else if (code === 'unavailable' && fallbackErrorKey === 'privacy_wizard_restore_failed') {
+                    setWizardMessage(t('privacy_wizard_restore_unavailable'));
                 } else setWizardMessage(t(fallbackErrorKey));
             }
         } finally {
@@ -213,6 +233,8 @@ export function PrivacyRecoveryScreen({
 
     const handleChooseBackup = () => void runWizardTask(async cancelled => {
         setPassword('');
+        setNeedsMediaPermission(false);
+        setPermissionNeedsSettings(false);
         const { pickEncryptedFile } = await import('../services/backup/files');
         externalUIRef.current = true;
         let picked: Uint8Array | null;
@@ -229,6 +251,8 @@ export function PrivacyRecoveryScreen({
 
     const handleDecryptBackup = () => void runWizardTask(async (cancelled, onProgress) => {
         if (!bytesRef.current) return;
+        setNeedsMediaPermission(false);
+        setPermissionNeedsSettings(false);
         const { decryptAndParseBackup } = await import('../services/backup/records');
         const parsed = await decryptAndParseBackup(bytesRef.current, password, cancelled, onProgress);
         if (cancelled()) return;
@@ -244,6 +268,71 @@ export function PrivacyRecoveryScreen({
         });
     }, 'privacy_wizard_restore_failed');
 
+    const handleGrantMediaPermission = () => void runWizardTask(async cancelled => {
+        externalUIRef.current = true;
+        let response: MediaLibrary.PermissionResponse;
+        try {
+            response = await MediaLibrary.requestPermissionsAsync(false, ['photo', 'video']);
+        } catch {
+            if (!cancelled()) {
+                setNeedsMediaPermission(true);
+                setWizardMessage(t('permission_request_failed'));
+            }
+            return;
+        } finally {
+            externalUIRef.current = false;
+        }
+        if (cancelled()) return;
+
+        let allRequiredGranted = !!response?.granted;
+        if (payloadRef.current && typeof MediaLibrary.getPermissionsAsync === 'function') {
+            const required = getRequiredBackupMediaPermissions(payloadRef.current);
+            if (required.length > 0) {
+                let verifiedCount = 0;
+                let missingAny = false;
+                for (const kind of required) {
+                    const check = await MediaLibrary.getPermissionsAsync(false, [kind]);
+                    if (check && typeof check.granted === 'boolean') {
+                        verifiedCount++;
+                        if (!check.granted) missingAny = true;
+                    }
+                }
+                if (verifiedCount === required.length) {
+                    allRequiredGranted = !missingAny;
+                }
+            }
+        }
+        if (cancelled()) return;
+
+        if (allRequiredGranted) {
+            setNeedsMediaPermission(false);
+            setPermissionNeedsSettings(false);
+            setWizardMessage('');
+            setWizardInfoMessage(t('privacy_wizard_permission_granted'));
+            return;
+        }
+
+        setNeedsMediaPermission(true);
+        if (response?.canAskAgain === false) {
+            setPermissionNeedsSettings(true);
+            setWizardMessage(t('privacy_wizard_permission_denied_settings'));
+        } else {
+            setWizardMessage(t('privacy_wizard_restore_no_permission'));
+        }
+    }, 'privacy_wizard_restore_failed');
+
+    const handleOpenMediaSettings = () => void (async () => {
+        if (working) return;
+        setWizardInfoMessage('');
+        returningFromSettingsRef.current = true;
+        try {
+            await Linking.openSettings();
+        } catch {
+            returningFromSettingsRef.current = false;
+            setWizardMessage(t('permission_settings_failed'));
+        }
+    })();
+
     const handleConfirmRestore = () => void runWizardTask(async () => {
         if (!payloadRef.current || !onRecoverFromBackup) return;
         const payloadToRestore = payloadRef.current;
@@ -255,6 +344,8 @@ export function PrivacyRecoveryScreen({
         try {
             const result = await onRecoverFromBackup(payloadToRestore, includePending, neverCancel);
             payloadRef.current = null;
+            setNeedsMediaPermission(false);
+            setPermissionNeedsSettings(false);
             setVerifiedSummary(null);
             setRestoreResult(result);
         } catch (error) {
@@ -496,10 +587,53 @@ export function PrivacyRecoveryScreen({
                                 {t('backup_key_progress', { percent: keyProgress })}
                             </Text>
                         )}
+                        {!!wizardInfoMessage && (
+                            <Text accessibilityLiveRegion="polite" style={[styles.sheetCopy, { color: colors.text }]}>
+                                {wizardInfoMessage}
+                            </Text>
+                        )}
                         {!!wizardMessage && (
                             <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.sheetCopy, { color: colors.danger }]}>
                                 {wizardMessage}
                             </Text>
+                        )}
+                        {needsMediaPermission && !restoreResult && (
+                            <View style={styles.actions}>
+                                {!permissionNeedsSettings && (
+                                    <Pressable
+                                        testID="privacy-import-grant-permission-btn"
+                                        accessibilityRole="button"
+                                        disabled={working}
+                                        onPress={handleGrantMediaPermission}
+                                        style={({ pressed }) => [styles.secondaryButton, {
+                                            backgroundColor: colors.surface,
+                                            borderColor: colors.primary,
+                                            opacity: working || pressed ? 0.6 : 1,
+                                        }]}
+                                    >
+                                        <Ionicons name="key-outline" size={18} color={colors.text} />
+                                        <Text style={[styles.buttonText, { color: colors.text }]}>
+                                            {t('privacy_wizard_grant_media_permission')}
+                                        </Text>
+                                    </Pressable>
+                                )}
+                                <Pressable
+                                    testID="privacy-import-open-settings-btn"
+                                    accessibilityRole="button"
+                                    disabled={working}
+                                    onPress={handleOpenMediaSettings}
+                                    style={({ pressed }) => [styles.secondaryButton, {
+                                        backgroundColor: colors.surface,
+                                        borderColor: colors.divider,
+                                        opacity: working || pressed ? 0.6 : 1,
+                                    }]}
+                                >
+                                    <Ionicons name="settings-outline" size={18} color={colors.text} />
+                                    <Text style={[styles.buttonText, { color: colors.text }]}>
+                                        {t('permission_open_settings')}
+                                    </Text>
+                                </Pressable>
+                            </View>
                         )}
                     </ScrollView>
                 </KeyboardAvoidingView>

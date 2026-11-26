@@ -171,6 +171,8 @@ interface MediaState {
     totalVideos: number;
 
     isLoading: boolean;
+    isLoadingPhotos: boolean;
+    isLoadingVideos: boolean;
     photoLoadFailed: boolean;
     videoLoadFailed: boolean;
     isConfirmingDeletion: boolean;
@@ -434,7 +436,9 @@ async function loadAlbumPage(
     mediaType: MediaType,
     sortBy: MediaLibrary.SortByValue[],
     date?: MediaDateFilter,
-): Promise<void> {
+    isCurrent: () => boolean = () => true,
+): Promise<boolean> {
+    if (!isCurrent()) return false;
     const result = await MediaLibrary.getAssetsAsync({
         mediaType,
         first: 100,
@@ -443,11 +447,13 @@ async function loadAlbumPage(
         ...mediaDateQuery(date),
         ...(state.after ? { after: state.after } : {}),
     });
+    if (!isCurrent()) return false;
 
     state.assets = result.assets;
     state.index = 0;
     state.hasNextPage = result.hasNextPage;
     state.endCursor = result.endCursor;
+    return true;
 }
 
 /**
@@ -464,7 +470,9 @@ async function loadOrderedAlbumAssets(
     processed: ReadonlySet<string>,
     albumIds: readonly string[],
     date?: MediaDateFilter,
+    isCurrent: () => boolean = () => true,
 ): Promise<MediaLibrary.Asset[]> {
+    if (!isCurrent()) return [];
     const states: OrderedAlbumPage[] = Array.from(new Set(albumIds)).map(albumId => ({
         albumId,
         assets: [],
@@ -473,14 +481,17 @@ async function loadOrderedAlbumAssets(
         endCursor: '',
     }));
 
-    await Promise.all(states.map(state => loadAlbumPage(state, mediaType, sortBy, date)));
+    await Promise.all(states.map(state => loadAlbumPage(state, mediaType, sortBy, date, isCurrent)));
+    if (!isCurrent()) return [];
 
     const selected: MediaLibrary.Asset[] = [];
     const seenAssetIds = new Set<string>();
 
     while (selected.length < count) {
+        if (!isCurrent()) return [];
         const candidates = (await Promise.all(states.map(async state => {
             while (true) {
+                if (!isCurrent()) return null;
                 if (state.index < state.assets.length) {
                     const asset = state.assets[state.index];
                     if (processed.has(asset.id) || seenAssetIds.has(asset.id) || !mediaMatchesDate(asset.creationTime, date)) {
@@ -497,11 +508,13 @@ async function loadOrderedAlbumAssets(
                     throw new Error(`Media library returned an invalid pagination cursor for album ${state.albumId}`);
                 }
                 state.after = nextCursor;
-                await loadAlbumPage(state, mediaType, sortBy, date);
+                const loaded = await loadAlbumPage(state, mediaType, sortBy, date, isCurrent);
+                if (!loaded) return null;
             }
         }))).filter((candidate): candidate is { state: OrderedAlbumPage; asset: MediaLibrary.Asset } => (
             candidate !== null
         ));
+        if (!isCurrent()) return [];
 
         if (candidates.length === 0) break;
 
@@ -538,6 +551,7 @@ async function loadAssetsForReview(
     isCurrent: () => boolean = () => true,
     excludedAlbumIds?: ReadonlySet<string>,
 ): Promise<{ assets: MediaLibrary.Asset[]; totalCount: number | null }> {
+    if (!isCurrent()) return { assets: [], totalCount: null };
     if (displayOrder === 'largest') return loadLargestMedia(mediaType, count, albumIds, new Set(processedIds), date, isCurrent, excludedAlbumIds);
     if (count <= 0) {
         return { assets: [], totalCount: 0 };
@@ -545,6 +559,7 @@ async function loadAssetsForReview(
 
     const processed = new Set(processedIds);
     const normalizedAlbumIds = await normalizeAlbumIds(albumIds);
+    if (!isCurrent()) return { assets: [], totalCount: null };
     // An empty selection means "all albums" in persisted settings, but a
     // non-empty selection whose IDs all disappeared means "nothing in scope".
     // Keep those two states distinct so stale album IDs cannot widen a query.
@@ -563,10 +578,13 @@ async function loadAssetsForReview(
             processed,
             normalizedAlbumIds,
             date,
+            isCurrent,
         );
+        if (!isCurrent()) return { assets: [], totalCount: null };
         // iOS falls back to an unscoped query if an album disappears while a
         // page is being fetched. Do not publish that page to the feed.
         await assertAlbumsStillAvailable(normalizedAlbumIds);
+        if (!isCurrent()) return { assets: [], totalCount: null };
         return {
             assets,
             totalCount: null,
@@ -585,9 +603,11 @@ async function loadAssetsForReview(
             : [undefined];
 
     for (const albumId of queryAlbums) {
+        if (!isCurrent()) return { assets: [], totalCount: null };
         let after: string | undefined;
 
         while (true) {
+            if (!isCurrent()) return { assets: [], totalCount: null };
             const result = await MediaLibrary.getAssetsAsync({
                 mediaType,
                 first: 100,
@@ -596,6 +616,7 @@ async function loadAssetsForReview(
                 ...(albumId ? { album: albumId } : {}),
                 ...(after ? { after } : {}),
             });
+            if (!isCurrent()) return { assets: [], totalCount: null };
 
             if (result.hasNextPage && (!result.endCursor || result.endCursor === after)) {
                 throw new Error('Media library returned an invalid pagination cursor');
@@ -644,7 +665,9 @@ async function loadAssetsForReview(
         }
     }
 
+    if (!isCurrent()) return { assets: [], totalCount: null };
     await assertAlbumsStillAvailable(normalizedAlbumIds);
+    if (!isCurrent()) return { assets: [], totalCount: null };
     if (displayOrder === 'random') {
         // Reservoir sampling chooses which assets to show, but keeps library
         // order when the eligible set fits within one batch. Shuffle the
@@ -696,7 +719,17 @@ async function getVisibleTotalCount(mediaType: MediaType): Promise<number> {
     return result.totalCount;
 }
 
-let activeMediaLoads = 0;
+let activePhotoLoads = 0;
+let activeVideoLoads = 0;
+
+function getMediaLoadingState(): Pick<MediaState, 'isLoading' | 'isLoadingPhotos' | 'isLoadingVideos'> {
+    return {
+        isLoadingPhotos: activePhotoLoads > 0,
+        isLoadingVideos: activeVideoLoads > 0,
+        isLoading: activePhotoLoads > 0 || activeVideoLoads > 0,
+    };
+}
+
 let albumLoadRequestId = 0;
 let photoLoadRequestId = 0;
 let totalCountsRequestId = 0;
@@ -773,6 +806,8 @@ export const useMediaStore = create<MediaState>()(
     videoSessionUnavailableCount: 0,
 
     isLoading: false,
+    isLoadingPhotos: false,
+    isLoadingVideos: false,
     photoLoadFailed: false,
     videoLoadFailed: false,
     isConfirmingDeletion: false,
@@ -1001,8 +1036,9 @@ export const useMediaStore = create<MediaState>()(
             && (kind === 'photo' ? get().photoProcessedIds === initial.photoProcessedIds && get().deleteQueue === initial.deleteQueue
                 : get().videoProcessedIds === initial.videoProcessedIds && get().videoTrashBin === initial.videoTrashBin)
             && requestId === (kind === 'photo' ? photoLoadRequestId : videoLoadRequestId);
-        activeMediaLoads++;
-        set({ isLoading: true, ...(kind === 'photo' ? { photos: [], photoLoadFailed: false, photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0 }
+        if (kind === 'photo') activePhotoLoads++;
+        else activeVideoLoads++;
+        set({ ...getMediaLoadingState(), ...(kind === 'photo' ? { photos: [], photoLoadFailed: false, photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0 }
             : { videos: [], videoLoadFailed: false, videoSessionRecoveryStatus: null, videoSessionUnavailableCount: 0 }) });
         try {
             const result = await recoverOrganizingSession(session,
@@ -1018,8 +1054,9 @@ export const useMediaStore = create<MediaState>()(
             }
             return result;
         } finally {
-            activeMediaLoads--;
-            if (activeMediaLoads === 0) set({ isLoading: false });
+            if (kind === 'photo') activePhotoLoads = Math.max(0, activePhotoLoads - 1);
+            else activeVideoLoads = Math.max(0, activeVideoLoads - 1);
+            set(getMediaLoadingState());
         }
     },
 
@@ -1124,11 +1161,11 @@ export const useMediaStore = create<MediaState>()(
             && get().permissionRefreshVersion === initial.permissionRefreshVersion
             && (!sessionMode || (get().organizingSessions.photo === initialSession && !isRecordTransferActive()
                 && !get().isConfirmingDeletion && !get().isConfirmingVideoTrash));
-        activeMediaLoads++;
+        activePhotoLoads++;
         // Do not keep showing a batch that belongs to a previous filter while
         // the current request is loading or if it fails. The old batch could
         // otherwise make out-of-scope media appear actionable.
-        set({ isLoading: true, photos: [], currentIndex: 0, photoLoadFailed: false, photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0 });
+        set({ ...getMediaLoadingState(), photos: [], currentIndex: 0, photoLoadFailed: false, photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0 });
         try {
             const { photoProcessedIds, protectedAlbums, protectedAssetIds } = get();
             const excludeProtectedByDefault = albumIds.length === 0;
@@ -1154,6 +1191,7 @@ export const useMediaStore = create<MediaState>()(
                         return;
                     }
                     const availableAlbums = new Set((await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true })).map(album => album.id));
+                    if (!isCurrent()) return;
                     if (albumIds.some(id => !availableAlbums.has(id))) {
                         if (isCurrent()) set({ photoSessionRecoveryStatus: 'unavailable' });
                         return;
@@ -1177,13 +1215,16 @@ export const useMediaStore = create<MediaState>()(
                 isCurrent,
                 protectedAlbumIdSet,
             );
+            if (!isCurrent()) return;
             if (sessionPermission) {
                 const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+                if (!isCurrent()) return;
                 if (!permission.granted || permission.accessPrivileges !== sessionPermission.accessPrivileges) {
                     if (isCurrent()) set({ photoSessionRecoveryStatus: 'permission' });
                     return;
                 }
                 await assertAlbumsStillAvailable(albumIds);
+                if (!isCurrent()) return;
             }
 
             // A newer request owns the visible list. Read processed IDs in
@@ -1223,8 +1264,8 @@ export const useMediaStore = create<MediaState>()(
             set((state) => isCurrent() ? { photoLoadFailed: !permissionFailed,
                 ...(permissionFailed ? { photoSessionRecoveryStatus: 'permission' as const } : {}) } : state);
         } finally {
-            activeMediaLoads--;
-            if (activeMediaLoads === 0) set({ isLoading: false });
+            activePhotoLoads = Math.max(0, activePhotoLoads - 1);
+            set(getMediaLoadingState());
         }
     },
 
@@ -1250,11 +1291,11 @@ export const useMediaStore = create<MediaState>()(
         const isCurrent = () => requestId === videoLoadRequestId && get().organizingSessions.video === initialSession
             && get().mediaLibraryRefreshVersion === mediaGeneration && get().permissionRefreshVersion === permissionGeneration
             && !isRecordTransferActive() && !get().isConfirmingDeletion && !get().isConfirmingVideoTrash;
-        activeMediaLoads++;
+        activeVideoLoads++;
         // Do not keep showing a batch that belongs to a previous filter while
         // the current request is loading or if it fails. The old batch could
         // otherwise make out-of-scope media appear actionable.
-        set({ isLoading: true, videos: [], videoCurrentIndex: 0, videoLoadFailed: false,
+        set({ ...getMediaLoadingState(), videos: [], videoCurrentIndex: 0, videoLoadFailed: false,
             videoSessionRecoveryStatus: null, videoSessionUnavailableCount: 0 });
         try {
             const permission = await MediaLibrary.getPermissionsAsync(false, ['video']);
@@ -1271,6 +1312,7 @@ export const useMediaStore = create<MediaState>()(
                     return;
                 }
                 const albums = new Set((await MediaLibrary.getAlbumsAsync({ includeSmartAlbums: true })).map(album => album.id));
+                if (!isCurrent()) return;
                 if (albumIds.some(id => !albums.has(id))) {
                     if (isCurrent()) set({ videoSessionRecoveryStatus: 'unavailable' });
                     return;
@@ -1302,6 +1344,7 @@ export const useMediaStore = create<MediaState>()(
                 isCurrent,
                 protectedAlbumIdSet,
             );
+            if (!isCurrent()) return;
             const latestPermission = await MediaLibrary.getPermissionsAsync(false, ['video']);
             if (!isCurrent()) return;
             if (!latestPermission.granted || latestPermission.accessPrivileges !== permission.accessPrivileges) {
@@ -1309,6 +1352,7 @@ export const useMediaStore = create<MediaState>()(
                 return;
             }
             await assertAlbumsStillAvailable(albumIds);
+            if (!isCurrent()) return;
 
             set((state) => {
                 if (!isCurrent()) return state;
@@ -1341,8 +1385,8 @@ export const useMediaStore = create<MediaState>()(
             set((state) => isCurrent() ? { videoLoadFailed: !permissionFailed,
                 videoSessionRecoveryStatus: permissionFailed ? 'permission' as const : 'failed' as const } : state);
         } finally {
-            activeMediaLoads--;
-            if (activeMediaLoads === 0) set({ isLoading: false });
+            activeVideoLoads = Math.max(0, activeVideoLoads - 1);
+            set(getMediaLoadingState());
         }
     },
 
@@ -1903,9 +1947,14 @@ export const useMediaStore = create<MediaState>()(
                 }
             }
             const remainingIds = requestedIds.filter(id => !deleted.has(id));
-            const status = remainingIds.length === 0 ? 'success'
-                : deleted.size > 0 ? 'partial' : failed ?? 'unavailable';
             const protectedSkippedIds = [...protectedSkipped];
+            const allRemainingProtected = remainingIds.length > 0
+                && remainingIds.every(id => protectedSkipped.has(id));
+            const status: PendingDeletionResult['status'] = remainingIds.length === 0
+                ? 'success'
+                : deleted.size > 0
+                    ? 'partial'
+                    : failed ?? (allRemainingProtected ? 'protected' : 'unavailable');
             const result: PendingDeletionResult = {
                 status,
                 requestedIds,
@@ -1914,6 +1963,13 @@ export const useMediaStore = create<MediaState>()(
                 failureKind: failed,
                 ...(protectedSkippedIds.length > 0 ? { protectedSkippedIds } : {}),
             };
+            if (deleted.size > 0) {
+                try {
+                    await flushMediaProgress();
+                } catch {
+                    console.error('[PendingDeletion] Failed to flush confirmed deletion progress.');
+                }
+            }
             set({ lastDeletionResult: result });
             return result;
         } finally { set({ isConfirmingDeletion: false, isConfirmingVideoTrash: false }); }

@@ -5,7 +5,7 @@
 ## 1. 项目定位与当前边界
 
 - **定位**：离线优先的本地照片/视频滑动整理与设备端分析应用（React Native `0.81.5` + Expo SDK `54` + TypeScript `~5.9` + Expo Router + Zustand + Reanimated）。
-- **版本约束**：当前公开发布基线为 `0.4.0`（`package.json` / `app.json`），未经明确授权不得修改版本号、发布标签或签名配置。
+- **版本约束**：当前公开发布基线为 `0.5.1`（`package.json` / `app.json`），未经明确授权不得修改版本号、发布标签或签名配置。
 - **平台与验证边界**：开发与模拟器验证以 Android（ARM64 / x86_64）为主；**Android 多厂商真机与 iOS 原生构建/运行均尚未完成实机验收**，严禁将自动化测试或模拟器结果表述为真机或 iOS 已通过（详见 `docs/REAL_DEVICE_CHECKLIST.md`）。
 
 ## 2. 目录地图
@@ -49,16 +49,17 @@ docs/         长期架构/安全/验证说明；已结束阶段归档在 docs/a
 ## 5. SDK 隐私日志补丁机制
 
 - `npm ci` / `npm install` 会自动执行 `postinstall`：`node scripts/apply-privacy-patches.js`。
-- 该脚本对 `@infinitered/react-native-mlkit-core` / `image-labeling` / `face-detection`（`5.0.0`）与 `expo-media-library`（`18.2.1`）共 12 个文件执行受版本与完整文件 SHA-256 指纹校验的日志脱敏替换。
+- 该脚本对 `@infinitered/react-native-mlkit-core` / `image-labeling` / `face-detection`（`5.0.0`，含 Android Kotlin、iOS Swift 与 JS/TS 文件）与 `expo-media-library`（`18.2.1`）共 **14 个**文件执行受版本与完整文件 SHA-256 指纹校验的日志脱敏替换。
 - `package.json` 的 `expo.autolinking.android.buildFromSource` 固定包含 `expo-media-library` 与 `expo-image`，防止 Android 预编译产物绕过本地源码补丁或带入详细日志。
 - **严禁手工修改 `node_modules` 或绕过指纹校验**；升级相关依赖前必须先审查上游源码差异、更新补丁与指纹并重跑隐私回归。
 
 ## 6. 验证命令与 `.tmp/` 约定
 
-提交任何改动前，必须在仓库根目录实跑并全部通过以下四项检查（与 `.github/workflows/ci.yml` 一致）：
+提交任何改动前，必须在仓库根目录实跑并全部通过以下五项检查（与 `.github/workflows/ci.yml` 一致）：
 
 ```bash
 node scripts/apply-privacy-patches.js --check
+node scripts/check-privacy-config.mjs
 npm run typecheck
 npm run lint
 npm run test:ci

@@ -171,7 +171,7 @@ describe('privacy self-rescue recovery service', () => {
       reviewIgnores: [],
     };
 
-    await expect(recoverFromEncryptedBackup(payload, false)).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(recoverFromEncryptedBackup(payload, false)).rejects.toMatchObject({ code: 'permission' });
 
     expect(mockResetDbFiles).not.toHaveBeenCalled();
     expect(mockResetStorageKeys).not.toHaveBeenCalled();
@@ -207,7 +207,7 @@ describe('privacy self-rescue recovery service', () => {
       reviewIgnores: [],
     };
 
-    await expect(recoverFromEncryptedBackup(mixedPayload, false)).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(recoverFromEncryptedBackup(mixedPayload, false)).rejects.toMatchObject({ code: 'permission' });
 
     expect(mockGetPermissionsAsync).toHaveBeenCalledWith(false, ['photo']);
     expect(mockGetPermissionsAsync).toHaveBeenCalledWith(false, ['video']);

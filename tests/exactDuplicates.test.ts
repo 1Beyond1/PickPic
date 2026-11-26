@@ -20,6 +20,7 @@ jest.mock('../database', () => ({
     },
 }));
 
+import { File } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import { AssetRepository } from '../database';
 import {
@@ -27,7 +28,9 @@ import {
     LARGE_EXACT_DUPLICATE_FILE_BYTES,
     MAX_EXACT_DUPLICATE_FILE_BYTES,
     detectExactDuplicates,
+    normalizeCandidateFileUri,
     parseFileSizeFromSignature,
+    readCandidateFileBytes,
     scanExactDuplicatesFromIndexedPhotos,
     selectExactDuplicateKeepIds,
     selectExactDuplicateQueueIds,
@@ -334,5 +337,77 @@ describe('exactDuplicates pure byte-level detection engine', () => {
         expect(peakMediumConcurrency).toBeLessThanOrEqual(2);
         // Large files (>= threshold) ran strictly serially (concurrency = 1, zero overlap).
         expect(peakConcurrencyDuringLarge).toBe(1);
+    });
+
+    it('P1-1: normalizes Android special-character file:// URIs without double-encoding valid %XX or altering content:// URIs', () => {
+        const rawSpecial = 'file:///storage/emulated/0/Pictures/[微信]/IMG#1?draft=50%off [1].jpg';
+        const encoded = normalizeCandidateFileUri(rawSpecial);
+        expect(encoded).toBe(
+            'file:///storage/emulated/0/Pictures/%5B%E5%BE%AE%E4%BF%A1%5D/IMG%231%3Fdraft%3D50%25off%20%5B1%5D.jpg',
+        );
+        // Must be idempotent (no double-encoding on already encoded URI).
+        expect(normalizeCandidateFileUri(encoded)).toBe(encoded);
+
+        // Already valid percent sequences are preserved while bare `%`, `#`, `?`, brackets, and spaces are encoded.
+        expect(normalizeCandidateFileUri('file:///DCIM/My%20Album/100%#pic?[1].jpg')).toBe(
+            'file:///DCIM/My%20Album/100%25%23pic%3F%5B1%5D.jpg',
+        );
+
+        // Non-file schemes must never be mutated.
+        const contentUri = 'content://media/external/images/media/42?includePending=1#part';
+        expect(normalizeCandidateFileUri(contentUri)).toBe(contentUri);
+        expect(normalizeCandidateFileUri('ph://CC95F08C-88C3-4012-9D6D/L0/001')).toBe(
+            'ph://CC95F08C-88C3-4012-9D6D/L0/001',
+        );
+    });
+
+    it('P1-1: reads bytes via encoded file:// URI so special-character Android photos are not silently skipped', async () => {
+        const payload = new Uint8Array([1, 3, 5, 7, 9, 11]);
+        const passedUris: string[] = [];
+        jest.mocked(File as unknown as jest.Mock).mockImplementation((uri: string) => {
+            passedUris.push(uri);
+            // Simulate RFC 3986 parser rejecting raw unencoded `#`, `?`, `[`, `]`, spaces.
+            if (/[#?\[\]\s]/.test(uri)) {
+                throw new Error('URISyntaxException');
+            }
+            return {
+                exists: true,
+                size: payload.length,
+                bytes: async () => payload,
+            };
+        });
+
+        const bytes = await readCandidateFileBytes({
+            assetId: 'wechat-1',
+            uri: 'file:///storage/emulated/0/Pictures/[微信]/IMG#1?q=50% [1].jpg',
+            fileSize: payload.length,
+        });
+
+        expect(bytes).toEqual(payload);
+        expect(passedUris).toEqual([
+            'file:///storage/emulated/0/Pictures/%5B%E5%BE%AE%E4%BF%A1%5D/IMG%231%3Fq%3D50%25%20%5B1%5D.jpg',
+        ]);
+
+        // Also verify literal `%20` filename fallback when first lookup reports exists=false.
+        passedUris.length = 0;
+        jest.mocked(File as unknown as jest.Mock).mockImplementation((uri: string) => {
+            passedUris.push(uri);
+            const exists = uri.includes('%2520');
+            return {
+                exists,
+                size: payload.length,
+                bytes: async () => payload,
+            };
+        });
+        const literalBytes = await readCandidateFileBytes({
+            assetId: 'literal-pct',
+            uri: 'file:///storage/emulated/0/DCIM/sale%20tag.jpg',
+            fileSize: payload.length,
+        });
+        expect(literalBytes).toEqual(payload);
+        expect(passedUris).toEqual([
+            'file:///storage/emulated/0/DCIM/sale%20tag.jpg',
+            'file:///storage/emulated/0/DCIM/sale%2520tag.jpg',
+        ]);
     });
 });

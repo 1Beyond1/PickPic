@@ -26,8 +26,17 @@ describe('useI18n', () => {
     }
   });
 
-  it('keeps zh and en translation key sets completely aligned including recent and backup keys', () => {
-    expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort());
+  it('keeps zh and en translation key sets and placeholders 100% aligned including recent, backup, and privacy keys', () => {
+    const zhKeys = Object.keys(zh).sort();
+    const enKeys = Object.keys(en).sort();
+    expect(enKeys).toEqual(zhKeys);
+    const extractPlaceholders = (text: string) => Array.from(new Set(text.match(/\{[a-zA-Z0-9_]+\}/g) ?? [])).sort();
+    for (const key of zhKeys as (keyof typeof zh)[]) {
+      expect({ key, placeholders: extractPlaceholders(en[key]) }).toEqual({
+        key,
+        placeholders: extractPlaceholders(zh[key]),
+      });
+    }
     expect(en.recent_back).toBeTruthy();
     expect(en.recent_filter).toBeTruthy();
     expect(en.backup_export_label).toBeTruthy();

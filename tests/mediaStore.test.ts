@@ -741,6 +741,7 @@ describe('media visibility checks', () => {
       .mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve; }));
 
     const firstLoad = useMediaStore.getState().loadPhotos(1, 'oldest');
+    await waitFor(() => expect(resolveFirst).toBeDefined());
     const secondLoad = useMediaStore.getState().loadPhotos(1, 'oldest');
 
     await waitFor(() => expect(getAssetsAsync).toHaveBeenCalledTimes(2));
@@ -883,5 +884,99 @@ describe('media visibility checks', () => {
     expect(useMediaStore.getState().videoTrashBin).toEqual([]);
     expect(useMediaStore.getState().pendingDeletionInfo).toEqual({});
     expect(useMediaStore.getState().lastDeletionResult).toBeNull();
+  });
+
+  it('P1-2: aborts stale full-library random and ordered-album pagination loops immediately when superseded', async () => {
+    let releasePage1!: (val: any) => void;
+    let photoCalls = 0;
+    getAssetsAsync.mockImplementation((options?: any) => {
+      if (options?.mediaType === 'photo') {
+        photoCalls++;
+        if (photoCalls === 1) {
+          return new Promise(resolve => { releasePage1 = resolve; });
+        }
+        return Promise.resolve({
+          assets: [{ id: `fresh-${photoCalls}`, mediaType: 'photo', creationTime: photoCalls, uri: `file:///f${photoCalls}.jpg` }],
+          hasNextPage: false,
+          endCursor: '',
+          totalCount: 1,
+        });
+      }
+      return Promise.resolve({ assets: [], hasNextPage: false, endCursor: '', totalCount: 0 });
+    });
+
+    // Request 1 starts random full-library pagination (page 1 has hasNextPage: true).
+    const staleRandomLoad = useMediaStore.getState().loadPhotos(10, 'random', []);
+    await waitFor(() => expect(releasePage1).toBeDefined());
+
+    // Request 2 supersedes Request 1 with 'newest' filter.
+    await useMediaStore.getState().loadPhotos(10, 'newest', []);
+    expect(photoCalls).toBe(2);
+
+    // Resolve stale Request 1 page 1 with hasNextPage=true -> must NOT fetch page 2!
+    releasePage1({
+      assets: [{ id: 'stale-p1', mediaType: 'photo', creationTime: 1, uri: 'file:///s1.jpg' }],
+      hasNextPage: true,
+      endCursor: 'cursor-page-2',
+      totalCount: 500,
+    });
+    await staleRandomLoad;
+    expect(photoCalls).toBe(2);
+    expect(useMediaStore.getState().photos.map(p => p.id)).toEqual(['fresh-2']);
+  });
+
+  it('P1-2: isolates photo and video loading states so slow photo sampling never locks video tab isLoadingVideos', async () => {
+    let releasePhotos!: (val: any) => void;
+    getAssetsAsync.mockImplementation((options?: any) => {
+      if (options?.mediaType === 'photo') {
+        return new Promise(resolve => { releasePhotos = resolve; });
+      }
+      return Promise.resolve({
+        assets: [{ id: 'vid-1', mediaType: 'video', creationTime: 10, uri: 'file:///vid-1.mp4' }],
+        hasNextPage: false,
+        endCursor: '',
+        totalCount: 1,
+      });
+    });
+
+    const pendingPhotoLoad = useMediaStore.getState().loadPhotos(10, 'random', []);
+    await waitFor(() => expect(releasePhotos).toBeDefined());
+    expect(useMediaStore.getState().isLoadingPhotos).toBe(true);
+    expect(useMediaStore.getState().isLoadingVideos).toBe(false);
+    expect(useMediaStore.getState().isLoading).toBe(true);
+
+    // Switch to Videos tab while Photos is still sampling: loadVideos finishes cleanly and clears isLoadingVideos!
+    await useMediaStore.getState().loadVideos(50, 'newest', []);
+    expect(useMediaStore.getState().isLoadingVideos).toBe(false);
+    expect(useMediaStore.getState().isLoadingPhotos).toBe(true);
+    expect(useMediaStore.getState().isLoading).toBe(true);
+    expect(useMediaStore.getState().videos.map(v => v.id)).toEqual(['vid-1']);
+
+    releasePhotos({
+      assets: [{ id: 'pic-1', mediaType: 'photo', creationTime: 5, uri: 'file:///pic-1.jpg' }],
+      hasNextPage: false,
+      endCursor: '',
+      totalCount: 1,
+    });
+    await pendingPhotoLoad;
+    expect(useMediaStore.getState().isLoadingPhotos).toBe(false);
+    expect(useMediaStore.getState().isLoadingVideos).toBe(false);
+    expect(useMediaStore.getState().isLoading).toBe(false);
+  });
+
+  it('P2: flushes media progress after physical deletion settles in confirmPendingDeletion', async () => {
+    const mediaProgressStorage = require('../services/mediaProgressStorage');
+    const flushSpy = jest.spyOn(mediaProgressStorage, 'flushMediaProgress').mockResolvedValue(undefined);
+    try {
+      const target = { id: 'visible', mediaType: 'photo', uri: 'file:///visible.jpg' } as any;
+      useMediaStore.getState().enqueuePendingDeletion([target], 'photos');
+      deleteAssetsAsync.mockResolvedValueOnce(true);
+
+      const result = await useMediaStore.getState().confirmPendingDeletion();
+      expect(result.status).toBe('success');
+      expect(flushSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      flushSpy.mockRestore();
+    }
   });
 });

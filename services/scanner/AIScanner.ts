@@ -222,29 +222,124 @@ async function mapWithConcurrency<T, R>(
     return results;
 }
 
+export interface ScanAssetInfoContext {
+    /** Assets already enumerated during `syncAssetsToDatabase` in this scan run (Android only). */
+    syncedAssets: Map<string, MediaLibrary.Asset>;
+    /** Assets discovered during an Android fallback full-library lookup in this run. */
+    fallbackAssets: Map<string, MediaLibrary.Asset>;
+    /** True once a full-library fallback pass has completed in this run. */
+    fallbackFullScanDone: boolean;
+    /** True once Android `getAssetInfoAsync` rejected with `ACCESS_MEDIA_LOCATION` in this run. */
+    androidLocationRestricted: boolean;
+}
+
+export function createScanAssetInfoContext(): ScanAssetInfoContext {
+    return {
+        syncedAssets: new Map(),
+        fallbackAssets: new Map(),
+        fallbackFullScanDone: false,
+        androidLocationRestricted: false,
+    };
+}
+
+function clearScanAssetInfoContext(context: ScanAssetInfoContext): void {
+    context.syncedAssets.clear();
+    context.fallbackAssets.clear();
+    context.fallbackFullScanDone = false;
+    context.androidLocationRestricted = false;
+}
+
 /** Android full-detail reads may demand location permission even though pixel
  * analysis does not use GPS. Fall back only for that known SDK error, never
- * request location or mask unrelated file failures. */
-async function getReadableAssetInfo(assetId: string, takenAt: number | null): Promise<MediaLibrary.AssetInfo> {
-    try { return await MediaLibrary.getAssetInfoAsync(assetId); }
-    catch (error) {
-        if (Platform.OS !== 'android' || !(error instanceof Error) || !error.message.includes('ACCESS_MEDIA_LOCATION')) throw error;
-        const cursors = new Set<string>();
-        let after: string | undefined;
+ * request location or mask unrelated file failures. Within a scan run, reuse
+ * metadata already fetched during sync / earlier fallback pages to avoid O(N^2)
+ * full-library re-pagination on screenshots with missing/zero creation times. */
+export async function getReadableAssetInfo(
+    assetId: string,
+    takenAt: number | null,
+    context?: ScanAssetInfoContext,
+    options: { bypassCache?: boolean } = {},
+): Promise<MediaLibrary.AssetInfo> {
+    const bypassCache = !!options.bypassCache;
+    const isAndroid = Platform.OS === 'android';
+
+    const toFallbackAssetInfo = (asset: MediaLibrary.Asset): MediaLibrary.AssetInfo => (
+        { ...asset, localUri: asset.uri } as MediaLibrary.AssetInfo
+    );
+
+    const resolveAndroidFallback = async (): Promise<MediaLibrary.AssetInfo> => {
+        if (!bypassCache && context) {
+            const synced = context.syncedAssets.get(assetId);
+            if (synced?.uri) return toFallbackAssetInfo(synced);
+
+            const cachedFallback = context.fallbackAssets.get(assetId);
+            if (cachedFallback?.uri) return toFallbackAssetInfo(cachedFallback);
+            if (context.fallbackFullScanDone) {
+                throw new Error('Asset no longer available for analysis');
+            }
+        }
+
+        const hasPositiveTakenAt = takenAt !== null && Number.isFinite(takenAt) && takenAt > 0;
         // Positive known timestamps narrow the native query to this instant.
         // Missing/zero times (including PNGs without DATE_TAKEN) need a full
-        // paginated lookup; do not invent a date and silently skip the asset.
-        const timeRange = takenAt !== null && Number.isFinite(takenAt) && takenAt > 0
-            ? { createdAfter: takenAt - 1, createdBefore: takenAt + 1 } : {};
+        // paginated lookup; populate the per-run fallback map once so later
+        // zero-timestamp photos resolve in O(1) without guessing a date.
+        const timeRange = hasPositiveTakenAt
+            ? { createdAfter: takenAt - 1, createdBefore: takenAt + 1 }
+            : {};
+        const cursors = new Set<string>();
+        let after: string | undefined;
+        let found: MediaLibrary.Asset | null = null;
+        const populateFullFallbackCache = !hasPositiveTakenAt && !bypassCache && !!context;
+
         do {
-            const page = await MediaLibrary.getAssetsAsync({ mediaType: 'photo', first: 100,
-                resolveWithFullInfo: false, ...timeRange, ...(after ? { after } : {}) });
-            const asset = page.assets.find(item => item.id === assetId);
-            if (asset) return { ...asset, localUri: asset.uri } as MediaLibrary.AssetInfo;
-            if (!page.hasNextPage) throw new Error('Asset no longer available for analysis');
-            if (!page.endCursor || cursors.has(page.endCursor)) throw new Error('Could not resolve analysis asset');
-            cursors.add(page.endCursor); after = page.endCursor;
+            const page = await MediaLibrary.getAssetsAsync({
+                mediaType: 'photo',
+                first: 100,
+                resolveWithFullInfo: false,
+                ...timeRange,
+                ...(after ? { after } : {}),
+            });
+            for (const item of page.assets) {
+                if (populateFullFallbackCache) {
+                    context.fallbackAssets.set(item.id, item);
+                }
+                if (!found && item.id === assetId) {
+                    found = item;
+                }
+            }
+            if (found && !populateFullFallbackCache) {
+                return toFallbackAssetInfo(found);
+            }
+            if (!page.hasNextPage) {
+                if (populateFullFallbackCache) {
+                    context.fallbackFullScanDone = true;
+                }
+                if (found) return toFallbackAssetInfo(found);
+                throw new Error('Asset no longer available for analysis');
+            }
+            if (!page.endCursor || cursors.has(page.endCursor)) {
+                throw new Error('Could not resolve analysis asset');
+            }
+            cursors.add(page.endCursor);
+            after = page.endCursor;
         } while (true);
+    };
+
+    if (isAndroid && context?.androidLocationRestricted) {
+        return resolveAndroidFallback();
+    }
+
+    try {
+        return await MediaLibrary.getAssetInfoAsync(assetId);
+    } catch (error) {
+        if (!isAndroid || !(error instanceof Error) || !error.message.includes('ACCESS_MEDIA_LOCATION')) {
+            throw error;
+        }
+        if (context) {
+            context.androidLocationRestricted = true;
+        }
+        return resolveAndroidFallback();
     }
 }
 
@@ -313,7 +408,9 @@ function recordMLFailure(error: unknown): Error {
 /**
  * Sync media library assets to database
  */
-async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
+async function syncAssetsToDatabase(
+    scanContext?: ScanAssetInfoContext,
+): Promise<ReadonlySet<string> | null> {
     console.log('[AIScanner] Syncing assets to database...');
 
     const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
@@ -331,6 +428,7 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
     let pagesProcessed = 0;
     let shouldResetCursor = false;
     const seenAssetIds = new Set<string>();
+    const cacheAndroidAssets = Platform.OS === 'android' && !!scanContext;
 
     while (hasMore) {
         if (shouldStop) return null;
@@ -349,6 +447,9 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
         for (const asset of result.assets) {
             seenAssetIds.add(asset.id);
             pageById.set(asset.id, asset);
+            if (cacheAndroidAssets && asset.uri) {
+                scanContext.syncedAssets.set(asset.id, asset);
+            }
         }
         const pageAssets = Array.from(pageById.values());
 
@@ -608,11 +709,13 @@ async function analyzeAIPhoto(assetInfo: MediaLibrary.AssetInfo, uri: string) {
     let isCropped = false;
 
     // PREPROCESS: Center crop to square to avoid aspect ratio distortion
-    // EfficientNet-Lite4 expects 300x300 square input.
+    // EfficientNet-Lite4 expects 300x300 square input. When width/height
+    // metadata is missing or EXIF-rotated, centerCropSquare falls back to a
+    // direct 300x300 resize instead of passing huge originals to TFLite.
     try {
-        if (imageOps.centerCropSquare && assetInfo.width && assetInfo.height) {
+        if (imageOps.centerCropSquare) {
             // EfficientNet-Lite4 uses 300x300
-            labelingUri = await imageOps.centerCropSquare(uri, assetInfo.width, assetInfo.height, 300);
+            labelingUri = await imageOps.centerCropSquare(uri, assetInfo.width || 0, assetInfo.height || 0, 300);
             isCropped = (labelingUri !== uri);
         }
     } catch {
@@ -732,6 +835,8 @@ async function analyzeAIPhoto(assetInfo: MediaLibrary.AssetInfo, uri: string) {
 async function processAIForAsset(
     assetId: string,
     knownVisibleIds?: ReadonlySet<string> | null,
+    scanContext?: ScanAssetInfoContext,
+    prefetchedInfo?: MediaLibrary.AssetInfo,
 ): Promise<boolean> {
     const source = await AssetRepository.getById(assetId);
     if (!source || source.status !== AssetStatus.DONE || source.algo_version !== GLOBAL_ALGO_VERSION) return false;
@@ -750,13 +855,29 @@ async function processAIForAsset(
     };
     try {
         if (shouldStop || !await checkPermissionVisible()) return false;
-        const info = await getReadableAssetInfo(assetId, source.taken_at);
+        // Reuse the AssetInfo just loaded by processAsset (or the per-scan
+        // cache) instead of calling getReadableAssetInfo a second time before ML.
+        const info = prefetchedInfo ?? await getReadableAssetInfo(assetId, source.taken_at, scanContext);
         if (!info.localUri || !await matchesSource(info)) return false;
         const result = await analyzeAIPhoto(info, info.localUri);
         const latestPermission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
         if (!latestPermission.granted) return false;
-        const latest = await getReadableAssetInfo(assetId, source.taken_at);
-        if (!await matchesSource(latest) || latest.modificationTime !== info.modificationTime) return false;
+        const hasPositiveTakenAt = source.taken_at !== null && Number.isFinite(source.taken_at) && source.taken_at > 0;
+        if (
+            Platform.OS === 'android'
+            && scanContext?.androidLocationRestricted
+            && !hasPositiveTakenAt
+            && source.file_signature !== null
+            && !source.file_signature.startsWith('library_')
+        ) {
+            // Avoid O(N) full-library pagination per zero-timestamp screenshot
+            // on Android without ACCESS_MEDIA_LOCATION: verify file metadata in O(1).
+            const latestFileSignature = await getFileSignature(info.localUri);
+            if (latestFileSignature !== source.file_signature) return false;
+        } else {
+            const latest = await getReadableAssetInfo(assetId, source.taken_at, scanContext, { bypassCache: true });
+            if (!await matchesSource(latest) || latest.modificationTime !== info.modificationTime) return false;
+        }
         return await AIAnalysisRepository.save(source, result);
     } catch (error) {
         if (error instanceof LocalPrivacyError) {
@@ -774,7 +895,8 @@ async function processAsset(
     assetId: string,
     similarityCandidateAssetIds: readonly string[] | undefined,
     preserveSingletonGroups: boolean,
-    markForWiderDuplicateScan: boolean
+    markForWiderDuplicateScan: boolean,
+    scanContext?: ScanAssetInfoContext,
 ): Promise<boolean> {
     const imageOps = getImageOps();
     let gray: GrayImageRef | null = null;
@@ -782,7 +904,7 @@ async function processAsset(
     try {
         // Get asset info from media library
         const indexed = await AssetRepository.getById(assetId);
-        const assetInfo = await getReadableAssetInfo(assetId, indexed?.taken_at ?? null);
+        const assetInfo = await getReadableAssetInfo(assetId, indexed?.taken_at ?? null, scanContext);
         if (!assetInfo || !assetInfo.localUri) {
             throw new Error('Asset not found or no local URI');
         }
@@ -836,6 +958,8 @@ async function processAsset(
                 await processAIForAsset(
                     assetId,
                     similarityCandidateAssetIds ? new Set(similarityCandidateAssetIds) : null,
+                    scanContext,
+                    assetInfo,
                 );
             } catch {
                 useScannerStore.getState().setLastError(new Error('AI result could not be saved; base analysis was preserved'));
@@ -888,7 +1012,8 @@ async function processBatch(
     assetIds?: readonly string[],
     similarityCandidateAssetIds?: readonly string[],
     preserveSingletonGroups = false,
-    markForWiderDuplicateScan = preserveSingletonGroups
+    markForWiderDuplicateScan = preserveSingletonGroups,
+    scanContext?: ScanAssetInfoContext,
 ): Promise<boolean> {
     const batch = assetIds
         ? await AssetRepository.getPendingBatchForAssetIds(assetIds, batchSize)
@@ -922,7 +1047,8 @@ async function processBatch(
             asset.asset_id,
             similarityCandidateAssetIds,
             preserveSingletonGroups,
-            markForWiderDuplicateScan
+            markForWiderDuplicateScan,
+            scanContext,
         );
 
         // The image-processing layer cannot depend on the scanner. Observe
@@ -1061,10 +1187,11 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
 
     useScannerStore.getState().setIsFinalizing(false);
     useScannerStore.getState().setIsRunning(true);
+    const scanContext = createScanAssetInfoContext();
 
     try {
         // Sync assets from media library
-        const accessibleAssetIds = await syncAssetsToDatabase();
+        const accessibleAssetIds = await syncAssetsToDatabase(scanContext);
         if (shouldStop) return;
 
         if (accessibleAssetIds === null) {
@@ -1103,7 +1230,8 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
                 scanAssetIds,
                 scanAssetIds,
                 scanAssetIds !== undefined,
-                accessibleAssetIds !== null
+                accessibleAssetIds !== null,
+                scanContext,
             );
             await reportProgress(scanAssetIds);
 
@@ -1126,6 +1254,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
             await reportCurrentStatus();
         }
     } finally {
+        clearScanAssetInfoContext(scanContext);
         try { await finalizeScannerRun(runGeneration, runCallbacks); }
         finally { releaseOperation(); }
     }
@@ -1180,11 +1309,12 @@ export async function resumeOnce(
 
     useScannerStore.getState().setIsFinalizing(false);
     useScannerStore.getState().setIsRunning(true);
+    const scanContext = createScanAssetInfoContext();
 
     try {
         // Refresh the local index so a batch scan sees newly added photos and
         // removes records for assets deleted outside the app.
-        const accessibleAssetIds = await syncAssetsToDatabase();
+        const accessibleAssetIds = await syncAssetsToDatabase(scanContext);
         if (shouldStop) return;
 
         const visiblePhotoIds = accessibleAssetIds
@@ -1249,7 +1379,8 @@ export async function resumeOnce(
             assetIds,
             visiblePhotoIds,
             true,
-            accessibleAssetIds !== null
+            accessibleAssetIds !== null,
+            scanContext,
         );
         await reportProgress(visiblePhotoIds);
 
@@ -1267,6 +1398,7 @@ export async function resumeOnce(
             await reportCurrentStatus();
         }
     } finally {
+        clearScanAssetInfoContext(scanContext);
         try { await finalizeScannerRun(runGeneration, runCallbacks); }
         finally { releaseOperation(); }
     }
@@ -1367,8 +1499,9 @@ export async function startClassification(errorsOnly = false): Promise<void> {
     const generation = ++scannerRunGeneration;
     resetMLFailureState();
     store.setTask('classification'); store.setLastError(null); store.setIsRunning(true);
+    const scanContext = createScanAssetInfoContext();
     try {
-        const visible = await syncAssetsToDatabase();
+        const visible = await syncAssetsToDatabase(scanContext);
         if (shouldStop) return;
         const albums = useSettingsStore.getState().selectedAlbumIds ?? [];
         let scope = albums.length ? await getPhotoAssetIdsForAlbums(albums) : undefined;
@@ -1381,7 +1514,7 @@ export async function startClassification(errorsOnly = false): Promise<void> {
             await waitForInteractions();
             if (shouldStop) break;
             const before = await AIAnalysisRepository.getCounts([id]);
-            await processAIForAsset(id, visible);
+            await processAIForAsset(id, visible, scanContext);
             const after = await AIAnalysisRepository.getCounts([id]);
             const progress = useScannerStore.getState().classificationProgress;
             store.setClassificationProgress({
@@ -1398,6 +1531,7 @@ export async function startClassification(errorsOnly = false): Promise<void> {
     } catch {
         store.setLastError(new Error('AI backfill could not finish; existing results were preserved'));
     } finally {
+        clearScanAssetInfoContext(scanContext);
         try {
             // Reconcile changes outside this work set only once at completion.
             try { store.setClassificationProgress(await getClassificationStatus()); } catch { /* Keep the last known progress. */ }

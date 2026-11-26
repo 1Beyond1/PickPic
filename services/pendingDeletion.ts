@@ -9,7 +9,7 @@ export interface PendingDeletionQueues {
     pendingDeletionInfo?: Readonly<Record<string, PendingDeletionInfo>>;
 }
 export interface PendingDeletionResult {
-    status: 'success' | 'partial' | 'cancelled' | 'failed' | 'unavailable' | 'busy';
+    status: 'success' | 'partial' | 'cancelled' | 'failed' | 'unavailable' | 'protected' | 'busy';
     requestedIds: string[];
     deletedIds: string[];
     remainingIds: string[];

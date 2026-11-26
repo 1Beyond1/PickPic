@@ -322,3 +322,30 @@ it('ignores a late failure from the previous preview attempt after a same-URI re
     expect(within(screen.getByTestId('photo-preview')).queryByRole('alert')).toBeNull();
     expect(useMediaStore.getState().deleteQueue).toHaveLength(1);
 });
+
+it('P2: displays dedicated protected status without contradictory unavailable notice when all items are protected', async () => {
+    const protectedAlbums = require('../../services/protectedAlbums');
+    await protectedAlbums.saveProtectedAlbums([{ albumId: 'alb-vault', title: 'Vault', createdAt: 1 }]);
+    const shielded = { ...photo('shielded'), albumId: 'alb-vault' };
+    useMediaStore.setState({
+        deleteQueue: [shielded],
+        photoProcessedIds: ['shielded'],
+        protectedAlbums: [{ albumId: 'alb-vault', title: 'Vault', createdAt: 1 }],
+        protectedAssetIds: ['shielded'],
+    });
+    (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({
+        assets: [shielded], hasNextPage: false, endCursor: '', totalCount: 1,
+    });
+    readInfo.mockResolvedValue(shielded);
+
+    await renderAsync(<PendingDeletionReview />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认删除当前 1 项' })).toBeEnabled());
+    await fireEventAsync.press(screen.getByRole('button', { name: '确认删除当前 1 项' }));
+
+    await screen.findByTestId('pending-result');
+    expect(useMediaStore.getState().lastDeletionResult?.status).toBe('protected');
+    expect(screen.getByTestId('pending-result').props.children).toContain('受保护相册');
+    expect(screen.getByTestId('pending-result').props.children).not.toContain('请检查权限或重试');
+    expect(screen.queryByTestId('pending-protected-warning')).toBeNull();
+    expect(nativeDelete).not.toHaveBeenCalled();
+});

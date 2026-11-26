@@ -1,6 +1,6 @@
-# 截图与录屏相册快捷入口（开发分支）
+# 截图与录屏相册快捷入口
 
-本轮不新增识别模型。照片/视频的“整理范围”推荐名字匹配的截图/录屏相册，选择只改草稿相册范围，保留月份和顺序；确认后才开始新一轮，取消不改旧会话与决定。
+本功能不依赖额外识别模型。照片/视频的“整理范围”推荐名字匹配的截图/录屏相册，选择只改草稿相册范围，保留月份和顺序；确认后才开始新一轮，取消不改旧会话与决定。
 
 ## 证据级别
 
@@ -17,4 +17,4 @@ iOS PhotoKit 提供 photoScreenshot；后续若引入系统子类型筛选，应
 
 权限失效、查询失败、不可用与“没有可推荐的标题”分开。月统计及开始查询仍重新验证相册与媒体可见性，推荐不是可以永久复用的授权凭据；受限权限再次读取，事件代次变化丢弃旧推荐。识别不可靠时不自动扩大范围，不自动保留或删除。
 
-官方接口依据（核对日期 2026-10-04）：[Expo MediaLibrary SDK 54](https://docs.expo.dev/versions/v54.0.0/sdk/media-library/)、[MediaStore BUCKET_DISPLAY_NAME](https://developer.android.com/reference/android/provider/MediaStore.MediaColumns#BUCKET_DISPLAY_NAME)、[PhotoKit screenshot subtype](https://developer.apple.com/documentation/photos/phassetmediasubtype/photoscreenshot)。验收与尚未验证边界持续记录在 ITERATION_CHECKPOINT.md，不将本功能宣传为已发布 0.4.0 的能力。
+官方接口依据（核对日期 2026-10-04）：[Expo MediaLibrary SDK 54](https://docs.expo.dev/versions/v54.0.0/sdk/media-library/)、[MediaStore BUCKET_DISPLAY_NAME](https://developer.android.com/reference/android/provider/MediaStore.MediaColumns#BUCKET_DISPLAY_NAME)、[PhotoKit screenshot subtype](https://developer.apple.com/documentation/photos/phassetmediasubtype/photoscreenshot)。此功能已自 `v0.5.0` 起包含在正式发布版中（当前基线 `0.5.1`），验收与尚未验证边界记录在 `docs/archive/ITERATION_CHECKPOINT.md` 与 `docs/REAL_DEVICE_CHECKLIST.md`。

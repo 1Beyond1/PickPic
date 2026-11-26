@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 // App version for announcement tracking
-export const APP_VERSION = 'v0.5.0';
+export const APP_VERSION = 'v0.5.1';
 
 export type DisplayOrder = 'newest' | 'oldest' | 'random';
 export type ThemeSetting = 'light' | 'dark' | 'system';

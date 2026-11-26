@@ -272,6 +272,16 @@ export function parseBackupPayload(value: unknown, platform: string): BackupPayl
     throw new BackupError('invalid');
 }
 
+export function getRequiredBackupMediaPermissions(payload: BackupPayload): ('photo' | 'video')[] {
+    const required: ('photo' | 'video')[] = [];
+    const needsPhoto = payload.records.some(record => record.kind === 'photo')
+        || (payload.version === 2 && payload.reviewIgnores.some(ignore => ignore.ignoreType === 'blur'));
+    const needsVideo = payload.records.some(record => record.kind === 'video');
+    if (needsPhoto) required.push('photo');
+    if (needsVideo) required.push('video');
+    return required;
+}
+
 export function snapshotRecords(state: RecordSnapshot): RecordSnapshot {
     return {
         photoProcessedIds: [...state.photoProcessedIds],

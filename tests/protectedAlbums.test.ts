@@ -211,6 +211,7 @@ describe('Protected Albums three-layer anti-accidental-deletion defense', () => 
     expect(result.deletedIds).toEqual([]);
     expect(result.protectedSkippedIds).toEqual(['maybe-protected']);
     expect(result.remainingIds).toEqual(['maybe-protected']);
+    expect(result.status).toBe('protected');
   });
 
   it('deleteAssetsInBatches final guard strips protected IDs and albumIds before calling MediaLibrary.deleteAssetsAsync', async () => {

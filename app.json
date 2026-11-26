@@ -2,7 +2,7 @@
   "expo": {
     "name": "PickPic",
     "slug": "PickPic",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon_new.png",
     "scheme": "pickpic",
@@ -13,10 +13,11 @@
       "assets/ml/**/*"
     ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "buildNumber": "6"
     },
     "android": {
-      "versionCode": 5,
+      "versionCode": 6,
       "allowBackup": false,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",

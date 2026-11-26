@@ -301,3 +301,36 @@ it('clears stale organizing sessions and preserves limited-scope hidden queue pr
     expect(state.hiddenPhotoQueuedAssetIds).toEqual(['hidden-old']);
     expect(state.hiddenVideoQueuedAssetIds).toEqual(['hidden-video']);
 });
+
+it('P2: does not mutate in-memory media store when SQLCipher v2 merge fails, and rolls back memory if flushMediaProgress rejects', async () => {
+    const { flushMediaProgress } = require('../../services/mediaProgressStorage');
+    state.photoProcessedIds = ['existing-1'];
+    state.deleteQueue = [];
+
+    const v2Payload = {
+        version: 2 as const,
+        platform: 'android' as const,
+        records: [{
+            id: photo.id,
+            kind: 'photo' as const,
+            decision: 'keep' as const,
+            fingerprint: mediaFingerprint(photo),
+            contentFingerprint: buildContentFingerprint(photo, null),
+        }],
+        protectedAlbums: [{ albumId: 'android-alb-docs', title: 'Docs', createdAt: 50 }],
+        reviewIgnores: [],
+    };
+
+    jest.mocked(protectedAlbumsService.mergeProtectedAlbums).mockRejectedValueOnce(new Error('SQLCipher locked'));
+    await expect(restoreEncryptedRecords(v2Payload, false)).rejects.toThrow('SQLCipher locked');
+    expect(useMediaStore.setState).not.toHaveBeenCalled();
+    expect(state.photoProcessedIds).toEqual(['existing-1']);
+
+    // Now simulate flushMediaProgress failing after setState -> memory rolls back atomically.
+    jest.mocked(flushMediaProgress).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Disk full'));
+    await expect(restoreEncryptedRecords(file(), true)).rejects.toThrow('Disk full');
+    expect(state.photoProcessedIds).toEqual(['existing-1']);
+    expect(state.deleteQueue).toEqual([]);
+    expect(state.clearLoadedMedia).not.toHaveBeenCalled();
+    expect(state.notifyMediaLibraryRefresh).not.toHaveBeenCalled();
+});

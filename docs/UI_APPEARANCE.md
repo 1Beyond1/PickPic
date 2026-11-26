@@ -1,4 +1,4 @@
-# 主题与原生弹层外观（开发分支）
+# 主题与原生弹层外观
 
 设置支持浅色、深色、跟随系统。旧用户的明确浅/深色偏好及默认浅色不变；历史 WarmTerra / claude / PPstyle 仍映射为浅色。只在用户明确选择后保存 system，系统切换不重写偏好，也不修改整理范围、决定或扫描结果。
 
@@ -20,6 +20,6 @@
 
 ## 验证证据
 
-自动化验证手动主题不受系统影响、系统更新不重写偏好、未知系统外观、旧主题迁移、明确选择及真实 settings 加密重开。替身系统外观测试不证明 Android 的真实外观事件；原生构建/切换/重启/小屏证据以 ITERATION_CHECKPOINT.md 为准。真机与 iOS 仍延期；当前能力不是已发布 0.4.0 的声明。
+自动化验证手动主题不受系统影响、系统更新不重写偏好、未知系统外观、旧主题迁移、明确选择及真实 settings 加密重开。替身系统外观测试不证明 Android 的真实外观事件；原生构建/切换/重启/小屏证据以 `docs/archive/ITERATION_CHECKPOINT.md` 为准。此功能已自 `v0.5.0` 起包含在正式发布版中（当前基线 `0.5.1`），真机与 iOS 原生验收仍延期。
 
 依据（2026-10-04）：[React Native useColorScheme](https://reactnative.dev/docs/usecolorscheme)、[RN 0.81.5 Modal 源码](https://github.com/react/react-native/blob/v0.81.5/packages/react-native/ReactAndroid/src/main/java/com/facebook/react/views/modal/ReactModalHostView.kt)。

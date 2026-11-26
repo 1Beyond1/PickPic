@@ -128,7 +128,7 @@ export function PendingDeletionReview({ initialFilter = 'all', onContinue, onKee
                 ]} />
                 <Text style={[styles.secondary, { color: colors.textSecondary }]}>{t('pending_keep_hint')}</Text>
                 {resultText && <Text testID="pending-result" accessibilityRole={result?.status === 'success' ? 'text' : 'alert'} accessibilityLiveRegion="polite" style={[styles.secondary, { color: result?.status === 'success' ? colors.text : colors.danger }]}>{resultText}</Text>}
-                {!!result?.protectedSkippedIds?.length && (
+                {!!result?.protectedSkippedIds?.length && result?.status !== 'protected' && (
                     <Text testID="pending-protected-warning" accessibilityRole="alert" accessibilityLiveRegion="polite" style={[styles.secondary, { color: colors.danger }]}>
                         {t('pending_protected_skipped_warning', { count: result.protectedSkippedIds.length })}
                     </Text>

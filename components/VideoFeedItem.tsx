@@ -461,10 +461,10 @@ const VideoFeedItemComponent: React.FC<VideoFeedItemProps> = ({
     const railHeight = 4 * (32 + 12 + 4 + Math.ceil(11 * 1.4 * fontScale)) + 3 * 10;
     const compact = itemHeight < Math.max(360, railHeight + 136 + 8);
     const actions = [
-        { icon: isMuted ? 'volume-mute-outline' : 'volume-high-outline', label: t(isMuted ? 'video_muted' : 'video_sound'), onPress: toggleMute },
-        { icon: 'star-outline', label: t('video_favorite'), onPress: handleFavoritePress },
-        { icon: 'share-outline', label: t('video_share'), onPress: handleShare },
-        { icon: 'trash-outline', label: t('video_queue_delete'), onPress: handleDeletePress, destructive: true },
+        { id: 'mute', icon: isMuted ? 'volume-mute-outline' : 'volume-high-outline', label: t(isMuted ? 'video_muted' : 'video_sound'), onPress: toggleMute },
+        { id: 'favorite', icon: 'star-outline', label: t('video_favorite'), onPress: handleFavoritePress },
+        { id: 'share', icon: 'share-outline', label: t('video_share'), onPress: handleShare },
+        { id: 'delete', icon: 'trash-outline', label: t('video_queue_delete'), onPress: handleDeletePress, destructive: true },
     ] as const;
 
     return (
@@ -522,7 +522,7 @@ const VideoFeedItemComponent: React.FC<VideoFeedItemProps> = ({
             <View style={[styles.actions, compact && styles.compactActions]}>
                 {actions.map(action => (
                     <Pressable
-                        key={action.label}
+                        key={action.id}
                         accessibilityRole="button"
                         accessibilityLabel={action.label}
                         accessibilityHint={'destructive' in action ? t('video_queue_delete_hint') : undefined}

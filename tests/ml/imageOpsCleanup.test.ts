@@ -91,4 +91,88 @@ describe('scan grayscale temporary image cleanup', () => {
             { format: ImageManipulator.SaveFormat.JPEG, compress: 0.85 },
         );
     });
+
+    it('P1-5: computes 9x8 box-average dHash resilient to 1px shift and single-pixel impulse noise', () => {
+        const ops = new ImageOpsJS();
+        const width = 256;
+        const height = 256;
+
+        // Create a smooth multi-region luminance pattern (simulating a natural photo).
+        const makePattern = (shiftX = 0, shiftY = 0) => {
+            const data = new Uint8Array(width * height);
+            for (let y = 0; y < height; y++) {
+                const sy = Math.min(height - 1, Math.max(0, y + shiftY));
+                for (let x = 0; x < width; x++) {
+                    const sx = Math.min(width - 1, Math.max(0, x + shiftX));
+                    const wave = Math.sin((sx / width) * Math.PI * 3) * 60 + Math.cos((sy / height) * Math.PI * 2) * 50;
+                    data[y * width + x] = Math.max(0, Math.min(255, Math.round(128 + wave)));
+                }
+            }
+            return { width, height, data };
+        };
+
+        const base = makePattern(0, 0);
+        const shifted1px = makePattern(1, 1);
+        const noisy = makePattern(0, 0);
+        // Corrupt exact cell top-left sampling pixels (which old single-pixel dHash sampled!).
+        for (let gy = 0; gy < 8; gy++) {
+            const sy = Math.floor((gy * height) / 8);
+            for (let gx = 0; gx < 9; gx++) {
+                const sx = Math.floor((gx * width) / 9);
+                noisy.data[sy * width + sx] = gx % 2 === 0 ? 255 : 0;
+            }
+        }
+
+        const baseHash = ops.computeDHash64(base);
+        const shiftedHash = ops.computeDHash64(shifted1px);
+        const noisyHash = ops.computeDHash64(noisy);
+
+        expect(baseHash).toMatch(/^[0-9a-f]{16}$/);
+        // Box-average downsampling keeps both 1px-shifted and single-pixel-corrupted variants nearly identical.
+        expect(ops.hammingDistance64(baseHash, shiftedHash)).toBeLessThanOrEqual(2);
+        expect(ops.hammingDistance64(baseHash, noisyHash)).toBe(0);
+    });
+
+    it('P1-6: centerCropSquare falls back to direct target resize when EXIF-rotated crop fails instead of returning huge original', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            manipulate.mockClear();
+            manipulate
+                .mockRejectedValueOnce(new Error('Crop rectangle out of bounds after EXIF rotation'))
+                .mockResolvedValueOnce({ uri: 'file:///cache/resized-300.jpg', width: 300, height: 300 });
+
+            const uri = await new ImageOpsJS().centerCropSquare('file:///photos/48mp-exif.jpg', 8000, 6000, 300);
+
+            expect(uri).toBe('file:///cache/resized-300.jpg');
+            expect(manipulate).toHaveBeenCalledTimes(2);
+            expect(manipulate).toHaveBeenNthCalledWith(
+                2,
+                'file:///photos/48mp-exif.jpg',
+                [{ resize: { width: 300, height: 300 } }],
+                { format: ImageManipulator.SaveFormat.JPEG, compress: 0.8 },
+            );
+
+            // When metadata dimensions are missing (0), skip crop and resize directly.
+            manipulate.mockClear();
+            manipulate.mockResolvedValueOnce({ uri: 'file:///cache/direct-300.jpg', width: 300, height: 300 });
+            const zeroDimUri = await new ImageOpsJS().centerCropSquare('file:///photos/nodims.jpg', 0, 0, 300);
+            expect(zeroDimUri).toBe('file:///cache/direct-300.jpg');
+            expect(manipulate).toHaveBeenCalledTimes(1);
+            expect(manipulate).toHaveBeenCalledWith(
+                'file:///photos/nodims.jpg',
+                [{ resize: { width: 300, height: 300 } }],
+                { format: ImageManipulator.SaveFormat.JPEG, compress: 0.8 },
+            );
+
+            // Only if both crop and resize fail does it fall back to original URI.
+            manipulate.mockClear();
+            manipulate
+                .mockRejectedValueOnce(new Error('Crop failed'))
+                .mockRejectedValueOnce(new Error('Resize failed'));
+            const fallbackUri = await new ImageOpsJS().centerCropSquare('file:///photos/corrupt.jpg', 1000, 800, 300);
+            expect(fallbackUri).toBe('file:///photos/corrupt.jpg');
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
 });

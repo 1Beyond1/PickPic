@@ -31,7 +31,17 @@ import { AssetRepository, AssetStatus, AssetStatusType, DupGroupRepository, GLOB
 import { getDatabase, withTransaction } from '../../database/db';
 import { getImageOps } from '../../services/imageOps';
 import { MLKitService } from '../../services/ml/MLKitService';
-import { getStatus, getClassificationStatus, startClassification, isScanning, resumeOnce, start, stop } from '../../services/scanner/AIScanner';
+import {
+  createScanAssetInfoContext,
+  getClassificationStatus,
+  getReadableAssetInfo,
+  getStatus,
+  isScanning,
+  resumeOnce,
+  start,
+  startClassification,
+  stop,
+} from '../../services/scanner/AIScanner';
 import { hasFullPhotoLibraryAccess } from '../../stores/useMediaStore';
 import { useSettingsStore } from '../../stores/useSettingsStore';
 import { useScannerStore } from '../../stores/useScannerStore';
@@ -251,13 +261,13 @@ describe('AIScanner engine safety', () => {
       stop();
       await resumeOnce({ mode: 'count', count: 1 });
       expect(isScanning()).toBe(true);
-      expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one']);
+      expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one']);
       expect(onComplete).not.toHaveBeenCalled();
     } finally {
       pendingLabels.resolve([{ text: 'Cat', confidence: 0.9 }]);
       await pendingRun;
     }
-    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one', 'one']);
+    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one']);
     expect(ml.labelImage).toHaveBeenCalledTimes(1);
     expect(fs.deleteAsync).toHaveBeenCalledWith('file:///test-crop.jpg', { idempotent: true });
     expect(ops.dispose).toHaveBeenCalledTimes(1);
@@ -267,7 +277,7 @@ describe('AIScanner engine safety', () => {
 
     await resumeOnce({ mode: 'count', count: 1 }, { onComplete });
     expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 2, pending: 0, error: 0 });
-    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one', 'one', 'two', 'two', 'two']);
+    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one', 'two', 'two']);
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
 
@@ -286,7 +296,7 @@ describe('AIScanner engine safety', () => {
       pendingLabels.reject(new Error('Native ML timed out'));
       await pendingRun;
     }
-    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one', 'one']);
+    expect(media.getAssetInfoAsync.mock.calls.map(([asset]) => asset)).toEqual(['one']);
     expect(fs.deleteAsync).toHaveBeenCalledTimes(1);
     expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 1, pending: 1, error: 0 });
     expect(await database.getFirstAsync('SELECT status FROM ai_analysis WHERE asset_id = ?', ['one'])).toEqual({ status: AssetStatus.ERROR });
@@ -365,15 +375,16 @@ describe('AIScanner engine safety', () => {
     await startClassification();
     expect(ml.labelImage).toHaveBeenCalledTimes(2);
   });
-  it('analyzes Android photos without requesting location when the full-info API rejects EXIF access', async () => {
+  it('analyzes Android photos without requesting location by reusing synced metadata when EXIF access is rejected', async () => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
     media.getAssetInfoAsync.mockRejectedValue(new Error('missing ACCESS_MEDIA_LOCATION permission'));
     await start();
     expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 2, error: 0 });
     expect(ops.resizeToGray256).toHaveBeenCalledWith('file:///one.jpg');
-    expect(media.getAssetsAsync).toHaveBeenCalledWith(expect.objectContaining({
-      resolveWithFullInfo: false, createdAfter: 99, createdBefore: 101,
-    }));
+    expect(ops.resizeToGray256).toHaveBeenCalledWith('file:///two.jpg');
+    // Only the initial sync page was read — no per-photo O(N) fallback queries and only 1 probe of getAssetInfoAsync.
+    expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(1);
+    expect(media.getAssetsAsync).toHaveBeenCalledTimes(1);
   });
   it('backfills Android AI through metadata-only reads and rejects edits during inference', async () => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
@@ -403,26 +414,40 @@ describe('AIScanner engine safety', () => {
   it('stops a broken fallback cursor without analyzing a different photo', async () => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
     media.getAssetInfoAsync.mockRejectedValue(new Error('missing ACCESS_MEDIA_LOCATION permission'));
-    media.getAssetsAsync.mockImplementation(async options => options?.resolveWithFullInfo === false
-      ? page([photo('unrelated')], true, 'repeated-cursor') : page([photo('one')]));
-    await start();
-    expect((await AssetRepository.getById('one'))?.status).toBe(AssetStatus.ERROR);
-    expect(ops.resizeToGray256).not.toHaveBeenCalled();
+    media.getAssetsAsync.mockResolvedValue(page([photo('unrelated')], true, 'repeated-cursor'));
+    const ctx = createScanAssetInfoContext();
+    await expect(getReadableAssetInfo('one', 100, ctx)).rejects.toThrow('Could not resolve analysis asset');
     expect(media.getAssetsAsync.mock.calls.filter(([options]) => options?.resolveWithFullInfo === false)).toHaveLength(2);
   });
-  it('finds an Android photo with an unknown creation time on a later page without guessing a timestamp', async () => {
+  it('avoids O(N^2) full-library re-pagination for zero-timestamp Android screenshots via sync and fallback caches', async () => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
     media.getAssetInfoAsync.mockRejectedValue(new Error('missing ACCESS_MEDIA_LOCATION permission'));
-    media.getAssetsAsync.mockImplementation(async options => {
-      if (options?.resolveWithFullInfo === false) {
-        expect(options.createdAfter).toBeUndefined(); expect(options.createdBefore).toBeUndefined();
-        return options.after ? page([photo('one', 0)]) : page([], true, 'metadata-page');
-      }
-      return page([photo('one', 0)]);
-    });
+    const zeroTimePhotos = [photo('shot-1', 0), photo('shot-2', 0), photo('shot-3', 0)];
+    media.getAssetsAsync.mockResolvedValue(page(zeroTimePhotos));
+
     await start();
-    expect((await AssetRepository.getById('one'))?.status).toBe(AssetStatus.DONE);
-    expect(ops.resizeToGray256).toHaveBeenCalledTimes(1);
+
+    expect(await AssetRepository.getStatusCounts()).toMatchObject({ done: 3, error: 0 });
+    expect(ops.resizeToGray256).toHaveBeenCalledTimes(3);
+    // Sync ran once; zero-timestamp screenshots reused sync metadata in O(1) without extra getAssetsAsync calls!
+    expect(media.getAssetsAsync).toHaveBeenCalledTimes(1);
+    expect(media.getAssetInfoAsync).toHaveBeenCalledTimes(1);
+
+    // Also verify cache-miss fallback paginates without guessing a timestamp and caches all discovered pages once.
+    media.getAssetsAsync.mockClear();
+    media.getAssetsAsync.mockImplementation(async options => {
+      expect(options?.resolveWithFullInfo).toBe(false);
+      expect(options?.createdAfter).toBeUndefined();
+      expect(options?.createdBefore).toBeUndefined();
+      return options?.after ? page([photo('shot-2', 0)]) : page([photo('shot-1', 0)], true, 'metadata-page');
+    });
+    const ctx = createScanAssetInfoContext();
+    const first = await getReadableAssetInfo('shot-1', 0, ctx);
+    const second = await getReadableAssetInfo('shot-2', 0, ctx);
+    expect(first.localUri).toBe('file:///shot-1.jpg');
+    expect(second.localUri).toBe('file:///shot-2.jpg');
+    // Both pages were cached on the first zero-timestamp fallback pass; the second lookup made 0 extra calls!
+    expect(media.getAssetsAsync).toHaveBeenCalledTimes(2);
   });
 
   it('does not publish a classification when access is revoked during inference', async () => {

@@ -516,4 +516,71 @@ describe('VideosScreen processing behavior', () => {
     expect(screen.getByText('protected_delete_blocked')).toBeTruthy();
     await screen.unmountAsync();
   });
+
+  it('P1-4: silently rechecks permission on AppState -> active without unmounting FlatList or reloading when access is unchanged, and reloads only when access changes', async () => {
+    let appStateListener: ((state: string) => void) | null = null;
+    const addListenerSpy = jest.spyOn(ReactNative.AppState, 'addEventListener').mockImplementation((_event, handler) => {
+      appStateListener = handler as (state: string) => void;
+      return { remove: jest.fn() } as any;
+    });
+    try {
+      const screen = await renderScreen();
+      await waitFor(() => expect(mockLoadVideos).toHaveBeenCalledTimes(1));
+      const initialList = screen.UNSAFE_getByType(ReactNative.FlatList);
+      act(() => {
+        initialList.props.onViewableItemsChanged({ viewableItems: [{ key: videoTwo.id }] });
+      });
+      expect(screen.getByText('video_last_item')).toBeTruthy();
+
+      // Return from share sheet / notification shade with UNCHANGED permission:
+      // must NOT unmount FlatList, must NOT reload videos, must preserve activeId / end notice!
+      mockLoadVideos.mockClear();
+      mockGetPermissionsAsync.mockClear();
+      mockGetPermissionsAsync.mockResolvedValueOnce({
+        granted: true,
+        accessPrivileges: 'all',
+        canAskAgain: true,
+      });
+
+      await act(async () => {
+        appStateListener?.('background');
+        appStateListener?.('active');
+      });
+
+      await waitFor(() => expect(mockGetPermissionsAsync).toHaveBeenCalledTimes(1));
+      expect(mockLoadVideos).not.toHaveBeenCalled();
+      expect(screen.UNSAFE_getByType(ReactNative.FlatList)).toBeTruthy();
+      expect(screen.getByText('video_last_item')).toBeTruthy();
+
+      // Now simulate user changing accessPrivileges ('all' -> 'limited') in system settings:
+      // MUST update permission state and reload videos!
+      mockGetPermissionsAsync.mockResolvedValueOnce({
+        granted: true,
+        accessPrivileges: 'limited',
+        canAskAgain: true,
+      });
+      await act(async () => {
+        appStateListener?.('active');
+      });
+      await waitFor(() => expect(mockLoadVideos).toHaveBeenCalledTimes(1));
+
+      // Now simulate user revoking video permission in system settings ('granted: false'):
+      // MUST unmount feed and show permission screen without calling loadVideos.
+      mockLoadVideos.mockClear();
+      mockGetPermissionsAsync.mockResolvedValueOnce({
+        granted: false,
+        accessPrivileges: 'none',
+        canAskAgain: false,
+      });
+      await act(async () => {
+        appStateListener?.('active');
+      });
+      await waitFor(() => expect(screen.getByText('video_permission_denied_desc')).toBeTruthy());
+      expect(mockLoadVideos).not.toHaveBeenCalled();
+
+      await screen.unmountAsync();
+    } finally {
+      addListenerSpy.mockRestore();
+    }
+  });
 });

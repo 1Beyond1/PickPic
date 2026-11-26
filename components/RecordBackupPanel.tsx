@@ -71,7 +71,9 @@ export function RecordBackupPanel({ disabled = false }: { disabled?: boolean }) 
                         ? t('backup_error_invalid')
                         : code === 'size'
                             ? t('backup_error_size')
-                            : t('backup_error_generic'));
+                            : code === 'permission'
+                                ? t('privacy_wizard_restore_no_permission')
+                                : t('backup_error_generic'));
             }
         } finally {
             running.current = false;

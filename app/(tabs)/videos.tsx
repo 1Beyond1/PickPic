@@ -35,7 +35,7 @@ export default function VideosScreen() {
     } = useMediaStore(useShallow(state => ({
         videos: state.videos,
         loadVideos: state.loadVideos,
-        isLoading: state.isLoading,
+        isLoading: state.isLoadingVideos ?? state.isLoading,
         videoLoadFailed: state.videoLoadFailed,
         hasHydrated: state.hasHydrated,
         markVideoForTrash: state.markVideoForTrash,
@@ -80,6 +80,7 @@ export default function VideosScreen() {
     const [videoPermission, setVideoPermission] = useState<MediaLibrary.PermissionResponse | null>(null);
     const [videoPermissionChecked, setVideoPermissionChecked] = useState(false);
     const [requestingVideoPermission, setRequestingVideoPermission] = useState(false);
+    const videoPermissionRef = useRef<MediaLibrary.PermissionResponse | null>(null);
     const videoPermissionRequestIdRef = useRef(0);
     const isFocusedRef = useRef(isFocused);
     isFocusedRef.current = isFocused;
@@ -99,34 +100,50 @@ export default function VideosScreen() {
     const displayedVideosRef = useRef(videos);
     const hasLimitedVideoAccess = videoPermission?.accessPrivileges === 'limited';
 
-    const refreshVideoPermission = useCallback(async (): Promise<MediaLibrary.PermissionResponse | null> => {
+    const refreshVideoPermission = useCallback(async (
+        options: { silent?: boolean } = {},
+    ): Promise<{ permission: MediaLibrary.PermissionResponse | null; changed: boolean }> => {
         const requestId = ++videoPermissionRequestIdRef.current;
-        // Do not leave a previously loaded video batch visible while the OS
-        // permission state is being revalidated (for example after returning
-        // from system settings).
-        setVideoPermission(null);
-        setVideoPermissionChecked(false);
+        const previous = videoPermissionRef.current;
+        if (!options.silent) {
+            // Do not leave a previously loaded video batch visible while the OS
+            // permission state is being explicitly revalidated (for example on
+            // tab focus or manual access management).
+            videoPermissionRef.current = null;
+            setVideoPermission(null);
+            setVideoPermissionChecked(false);
+        }
         try {
             const permission = await MediaLibrary.getPermissionsAsync(false, ['video']);
-            if (requestId !== videoPermissionRequestIdRef.current) return null;
-            setVideoPermission(permission);
-            setVideoPermissionChecked(true);
-            const scope = !permission.granted
-                ? 'none'
-                : permission.accessPrivileges === 'limited'
-                    ? 'limited'
-                    : 'full';
-            const mediaStore = useMediaStore.getState();
-            mediaStore.refreshQueuedAssetVisibility(scope, 'video');
-            mediaStore.pruneUnavailableQueuedAssets(scope, 'video');
-            return permission;
+            if (requestId !== videoPermissionRequestIdRef.current) return { permission: null, changed: false };
+            const accessChanged = !previous
+                || previous.granted !== permission.granted
+                || previous.accessPrivileges !== permission.accessPrivileges;
+            const canAskChanged = !previous || previous.canAskAgain !== permission.canAskAgain;
+            if (!options.silent || accessChanged || canAskChanged) {
+                videoPermissionRef.current = permission;
+                setVideoPermission(permission);
+                setVideoPermissionChecked(true);
+            }
+            if (!options.silent || accessChanged) {
+                const scope = !permission.granted
+                    ? 'none'
+                    : permission.accessPrivileges === 'limited'
+                        ? 'limited'
+                        : 'full';
+                const mediaStore = useMediaStore.getState();
+                mediaStore.refreshQueuedAssetVisibility(scope, 'video');
+                mediaStore.pruneUnavailableQueuedAssets(scope, 'video');
+            }
+            return { permission, changed: accessChanged };
         } catch {
-            if (requestId !== videoPermissionRequestIdRef.current) return null;
+            if (requestId !== videoPermissionRequestIdRef.current) return { permission: null, changed: false };
             console.error('[Videos] Failed to refresh video permission.');
+            videoPermissionRef.current = null;
             setVideoPermission(null);
             setVideoPermissionChecked(true);
             useMediaStore.getState().refreshQueuedAssetVisibility('none', 'video');
-            return null;
+            return { permission: null, changed: true };
         }
     }, []);
 
@@ -158,7 +175,7 @@ export default function VideosScreen() {
         // Recheck a video permission change reported while this tab remains
         // mounted, including a grant made from system settings.
         if (hasHydrated && settingsHydrated && isFocused) {
-            void refreshVideoPermission().then(permission => {
+            void refreshVideoPermission().then(({ permission }) => {
                 if (active && permission?.granted && isFocusedRef.current) {
                     void loadVideos(50, displayOrder, selectedAlbumIds);
                 }
@@ -212,7 +229,7 @@ export default function VideosScreen() {
         if (!hasHydrated || !settingsHydrated) return;
         let active = true;
         const refreshAndLoad = async () => {
-            const permission = await refreshVideoPermission();
+            const { permission } = await refreshVideoPermission();
             if (active && permission?.granted) {
                 await loadVideos(50, displayOrder, selectedAlbumIds);
             }
@@ -234,8 +251,11 @@ export default function VideosScreen() {
         let active = true;
         const subscription = AppState.addEventListener('change', nextState => {
             if (!active || nextState !== 'active' || !hasHydrated || !settingsHydrated || !isFocusedRef.current) return;
-            void refreshVideoPermission().then(permission => {
-                if (active && permission?.granted && isFocusedRef.current) {
+            // Silently revalidate video permission on foreground return so brief
+            // overlays (share sheet, notification shade) do not unmount the feed
+            // or reset playback progress unless access actually changed.
+            void refreshVideoPermission({ silent: true }).then(({ permission, changed }) => {
+                if (active && changed && permission?.granted && isFocusedRef.current) {
                     void loadVideos(50, displayOrder, selectedAlbumIds);
                 }
             });
@@ -408,6 +428,7 @@ export default function VideosScreen() {
         try {
             const permission = await MediaLibrary.requestPermissionsAsync(false, ['video']);
             if (requestId !== videoPermissionRequestIdRef.current) return;
+            videoPermissionRef.current = permission;
             setVideoPermission(permission);
             setVideoPermissionChecked(true);
             const scope = !permission.granted
@@ -433,7 +454,7 @@ export default function VideosScreen() {
         if (requestingVideoPermission) return;
         setRequestingVideoPermission(true);
         try {
-            const permission = await refreshVideoPermission();
+            const { permission } = await refreshVideoPermission();
             if (permission?.granted && isFocusedRef.current) {
                 await useMediaStore.getState().loadProtectedAlbums?.();
                 await loadVideos(50, displayOrder, selectedAlbumIds);
@@ -451,7 +472,7 @@ export default function VideosScreen() {
             // were selected. Open the type-scoped picker instead of treating
             // that response as proof that the video feed is accessible.
             await MediaLibrary.presentPermissionsPickerAsync(['video']);
-            const permission = await refreshVideoPermission();
+            const { permission } = await refreshVideoPermission();
             if (permission?.granted && isFocusedRef.current) {
                 await useMediaStore.getState().loadProtectedAlbums?.();
                 await loadVideos(50, displayOrder, selectedAlbumIds);

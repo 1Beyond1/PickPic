@@ -209,17 +209,46 @@ export function selectExactDuplicateQueueIds(
         .map(member => member.assetId);
 }
 
+const PERCENT_ENCODED_SEQUENCE = /(%[0-9A-Fa-f]{2})/g;
+const HAS_PERCENT_ENCODED_SEQUENCE = /%[0-9A-Fa-f]{2}/;
+
+function encodeFilePathSegment(segment: string, preservePercentSequences: boolean): string {
+    if (!segment) return segment;
+    if (!preservePercentSequences) {
+        return encodeURIComponent(segment);
+    }
+    return segment
+        .split(PERCENT_ENCODED_SEQUENCE)
+        .map((part, index) => (index % 2 === 1 ? part : encodeURIComponent(part)))
+        .join('');
+}
+
+function encodeFileUriSegments(uri: string, preservePercentSequences: boolean): string {
+    if (!uri || !uri.startsWith('file://')) return uri;
+    const pathPart = uri.slice('file://'.length);
+    const encodedPath = pathPart
+        .split('/')
+        .map(segment => encodeFilePathSegment(segment, preservePercentSequences))
+        .join('/');
+    return `file://${encodedPath}`;
+}
+
 /**
- * Default Expo FileSystem byte reader for exact SHA-256 verification.
- * Checks existence and single-file byte limit before reading into memory.
+ * Normalize a raw `file://` URI (for example Android paths containing `#`, `?`,
+ * `%`, `[`, `]`, spaces, or non-ASCII characters) before passing it to RFC 3986
+ * URI parsers such as Expo `new File(uri)`.
+ *
+ * - Non-`file://` schemes (`content://`, `ph://`, etc.) are left untouched.
+ * - Valid percent-encoded triplets (`%XX`) are preserved without double-encoding,
+ *   so repeated calls are idempotent.
  */
-export async function readCandidateFileBytes(
-    candidate: ExactDuplicateCandidate,
-    maxFileBytes: number = MAX_EXACT_DUPLICATE_FILE_BYTES,
-): Promise<Uint8Array | null> {
-    if (!candidate.uri) return null;
+export function normalizeCandidateFileUri(uri: string): string {
+    return encodeFileUriSegments(uri, true);
+}
+
+async function readExpoFileBytes(uri: string, maxFileBytes: number): Promise<Uint8Array | null> {
     try {
-        const file = new File(candidate.uri);
+        const file = new File(uri);
         if (!file.exists) return null;
         if (typeof file.size === 'number' && file.size > maxFileBytes) return null;
         const bytes = await file.bytes();
@@ -230,6 +259,35 @@ export async function readCandidateFileBytes(
     } catch {
         return null;
     }
+}
+
+/**
+ * Default Expo FileSystem byte reader for exact SHA-256 verification.
+ * Normalizes raw `file://` URI segments and enforces the single-file byte cap
+ * before reading into memory.
+ */
+export async function readCandidateFileBytes(
+    candidate: ExactDuplicateCandidate,
+    maxFileBytes: number = MAX_EXACT_DUPLICATE_FILE_BYTES,
+): Promise<Uint8Array | null> {
+    if (!candidate.uri) return null;
+    const normalizedUri = normalizeCandidateFileUri(candidate.uri);
+    const bytes = await readExpoFileBytes(normalizedUri, maxFileBytes);
+    if (bytes) return bytes;
+
+    // If a raw `file://` path contained a literal `%XX` filename sequence on disk
+    // (and did not require other segment encodings), try encoding `%` literally.
+    if (
+        candidate.uri.startsWith('file://')
+        && normalizedUri === candidate.uri
+        && HAS_PERCENT_ENCODED_SEQUENCE.test(candidate.uri)
+    ) {
+        const literalPercentUri = encodeFileUriSegments(candidate.uri, false);
+        if (literalPercentUri !== normalizedUri) {
+            return readExpoFileBytes(literalPercentUri, maxFileBytes);
+        }
+    }
+    return null;
 }
 
 interface BudgetWaiter {
@@ -813,7 +871,8 @@ export async function scanExactDuplicatesFromIndexedPhotos(
 
     const candidates: ExactDuplicateCandidate[] = bucketedRows.map(({ row, fileSize }) => {
         const info = readableInfos.get(row.asset_id);
-        const uri = info?.localUri || info?.uri || null;
+        const rawUri = info?.localUri || info?.uri || null;
+        const uri = rawUri ? normalizeCandidateFileUri(rawUri) : null;
         return {
             assetId: row.asset_id,
             uri,

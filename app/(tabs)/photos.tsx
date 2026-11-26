@@ -40,7 +40,7 @@ export default function PhotosScreen() {
     } = useMediaStore(useShallow(state => ({
         photos: state.photos,
         loadPhotos: state.loadPhotos,
-        isLoading: state.isLoading,
+        isLoading: state.isLoadingPhotos ?? state.isLoading,
         photoLoadFailed: state.photoLoadFailed,
         hasHydrated: state.hasHydrated,
         photoProcessedIds: state.photoProcessedIds,

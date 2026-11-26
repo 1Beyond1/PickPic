@@ -10,9 +10,10 @@ it('keeps application and announcement versions aligned without changing depende
   const pkg = require('../package.json');
   const config = require('../app.json');
   const lock = require('../package-lock.json');
-  expect(pkg.version).toBe('0.5.0');
+  expect(pkg.version).toBe('0.5.1');
   expect(config.expo.version).toBe(pkg.version);
-  expect(config.expo.android.versionCode).toBe(5);
+  expect(config.expo.android.versionCode).toBe(6);
+  expect(config.expo.ios.buildNumber).toBe('6');
   expect(lock.version).toBe(pkg.version);
   expect(lock.packages[''].version).toBe(pkg.version);
   expect(APP_VERSION).toBe(`v${pkg.version}`);
