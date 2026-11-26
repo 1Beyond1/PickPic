@@ -275,13 +275,13 @@ export default {
     recent_result_failed: '无法读取或保存记录，请重试', recent_result_nothing: '没有可撤销的决定；已删除文件不能恢复',
     // Version history
     announcement_update_title: '本次更新',
-    announcement_update_ai: 'AI 扫描引擎：分析模糊与相似照片。在“设置 → 智能分析”中可打开“启用 AI 图片分类”（Beta，本地处理）。',
-    announcement_update_ui: '界面更新：统一浅色与深色主题、设置分组和底部弹层，整理与复核操作更清楚。',
-    announcement_update_review: '照片复核：点击一张只将这一张改为保留，仍算已整理，并留在复核页。全部保留后显示本组完成，点击继续再进入下一批。',
-    announcement_update_recovery: '读取恢复：照片、视频与相似组读取失败时显示提示；照片大图与复核预览支持重试。读取或预览不会改变整理决定。',
+    announcement_update_ai: '智能分析升级：新增字节级完全重复照片检测与相似对比「此组不相似」加密持久化，在“设置 → 智能分析”中可打开“启用 AI 图片分类”（Beta，全本地处理）。',
+    announcement_update_ui: '界面与筛选：支持跟随系统深浅色主题，整理范围新增陈旧截图（30/90 天前）、Android 大体积视频快捷筛选与大文件优先排序。',
+    announcement_update_review: '统一复核与精审：照片、视频与分析结果统一汇入待删除复核，支持双指缩放预览；点击保留只将单张改为保留，仍算已整理，并留在复核页。',
+    announcement_update_recovery: '可恢复会话与撤销：照片与视频整理支持中断续接、暂时跳过与近期决定撤销；读取失败支持安全重试，预览不会改变整理决定。',
     announcement_update_video: '视频整理：仅打开或离开页面不会记为已整理；已整理的视频仍可滑回查看，最后一个视频会显示提示。',
-    announcement_update_deletion: '删除兼容性：Android 16 及以上的大量待删除内容分批请求系统确认；成功批次及时移出列表，后续批次取消或失败时，未完成项仍保留，可再次复核。',
-    announcement_update_privacy: '隐私保护与备份：本机整理记录与扫描索引均离线加密存储，并支持带独立口令的加密导出与恢复。',
+    announcement_update_deletion: '删除兼容性：Android 11 及以上大批量删除统一按每批最多 1,000 项分批确认；成功批次及时移出列表，后续批次取消或失败时，未完成项仍保留，可再次复核。',
+    announcement_update_privacy: '隐私加密与保护相册：本机记录采用 AES-256-GCM 与 SQLCipher 离线加密，新增三层保护相册防误删、分域失密自救向导与 v2 跨设备口令加密备份。',
 
     // Developer options
     settings_dev_options: '开发者选项',

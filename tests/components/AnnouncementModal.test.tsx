@@ -9,7 +9,7 @@ jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null, Feather: () => nu
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 60, bottom: 24, left: 0, right: 0 }) }));
 jest.mock('../../hooks/useI18n', () => ({ useI18n: () => ({ t: (key: string) => require('../../i18n/zh').default[key] }) }));
 jest.mock('../../hooks/useThemeColor', () => ({ useThemeColor: () => ({ colors: require('../../constants/theme').COLORS }) }));
-jest.mock('../../stores/useSettingsStore', () => ({ APP_VERSION: 'v0.4.0' }));
+jest.mock('../../stores/useSettingsStore', () => ({ APP_VERSION: 'v0.5.0' }));
 
 it('keeps closing once distinct from dismissing for the version, including system back', () => {
   const once = jest.fn();
