@@ -77,6 +77,17 @@ export interface IImageOps {
      * @returns Path to cached processed image
      */
     centerCropSquare?(assetUri: string, width: number, height: number, targetSize?: number): Promise<string>;
+
+    /**
+     * Proportionally downscale large images so the longest edge does not exceed
+     * maxDimension before native face detection, reducing OOM risk on 48-200MP photos.
+     */
+    resizeForFaceDetection?(
+        assetUri: string,
+        width: number,
+        height: number,
+        maxDimension?: number,
+    ): Promise<{ uri: string; width: number; height: number }>;
 }
 
 /**

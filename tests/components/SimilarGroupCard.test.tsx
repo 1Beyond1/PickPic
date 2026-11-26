@@ -1,9 +1,9 @@
 import React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react-native';
-import { Image } from 'react-native';
+import { Image, Platform } from 'react-native';
 import * as MediaLibrary from 'expo-media-library';
 
-jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn() }));
+jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn(), getAssetsAsync: jest.fn() }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('../../hooks/useThemeColor', () => ({ useThemeColor: () => ({ colors: require('../../constants/theme').COLORS_DARK }) }));
 jest.mock('../../hooks/useI18n', () => ({ useI18n: () => ({
@@ -14,7 +14,7 @@ import { SimilarGroupCard } from '../../components/SimilarGroupCard';
 
 const props = { groupId: 'group', memberCount: 2, memberAssetIds: ['first', 'second'], onPress: jest.fn() };
 beforeEach(() => {
-  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ uri: `file:///${id}.jpg` }));
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` }));
 });
 
 it('describes the group and its actual count outside the preview images', async () => {
@@ -45,4 +45,42 @@ it('ignores a delayed old thumbnail request after a different group is shown', a
   await act(async () => { resolveOld({ uri: 'file:///old.jpg' }); });
   expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri)).toEqual(['file:///new-1.jpg', 'file:///new-2.jpg']);
   expect(screen.getByRole('button', { name: 'similar_group_detail_title, 3 photos' })).toBeTruthy();
+});
+
+it('does not leave loaded old thumbnails visible while another group is loading', async () => {
+  const view = render(<SimilarGroupCard {...props} />);
+  await waitFor(() => expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(2));
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(() => new Promise(() => {}));
+  view.rerender(<SimilarGroupCard {...props} groupId="new" memberAssetIds={['new-1', 'new-2']} />);
+  expect(screen.UNSAFE_queryAllByType(Image)).toHaveLength(0);
+});
+
+it('uses the existing metadata-only fallback for Android photos without location permission in one shared pass', async () => {
+  jest.replaceProperty(Platform, 'OS', 'android');
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockRejectedValue(new Error('Missing ACCESS_MEDIA_LOCATION permission'));
+  (MediaLibrary.getAssetsAsync as jest.Mock).mockResolvedValue({ assets: props.memberAssetIds.map(id => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })), hasNextPage: false });
+  render(<SimilarGroupCard {...props} />);
+  await waitFor(() => expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(2));
+  expect(MediaLibrary.getAssetsAsync).toHaveBeenCalledTimes(1);
+  expect(MediaLibrary.getAssetsAsync).toHaveBeenCalledWith(expect.objectContaining({ resolveWithFullInfo: false, mediaType: 'photo' }));
+  expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledWith('first', { shouldDownloadFromNetwork: false });
+});
+
+it('uses prefetched previewUris directly without issuing per-card media lookups', () => {
+  jest.clearAllMocks();
+  render(<SimilarGroupCard {...props} previewUris={['file:///prefetched-1.jpg', 'file:///prefetched-2.jpg']} />);
+  expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri)).toEqual([
+    'file:///prefetched-1.jpg',
+    'file:///prefetched-2.jpg',
+  ]);
+  expect(MediaLibrary.getAssetInfoAsync).not.toHaveBeenCalled();
+  expect(MediaLibrary.getAssetsAsync).not.toHaveBeenCalled();
+});
+
+it('does not show wrong-ID, wrong-type or URI-less results as group members', async () => {
+  (MediaLibrary.getAssetInfoAsync as jest.Mock).mockResolvedValueOnce({ id: 'other', mediaType: 'photo', uri: 'file:///other.jpg' })
+    .mockResolvedValueOnce({ id: 'second', mediaType: 'video', uri: 'file:///video.mp4' });
+  render(<SimilarGroupCard {...props} />);
+  await waitFor(() => expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledTimes(2));
+  expect(screen.UNSAFE_queryAllByType(Image)).toHaveLength(0);
 });

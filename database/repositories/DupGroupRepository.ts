@@ -15,6 +15,11 @@ export interface DupGroup {
     created_at: number;
 }
 
+export interface DupGroupsCursor {
+    createdAt: number | null;
+    groupId: string;
+}
+
 export interface DupMember {
     group_id: string;
     asset_id: string;
@@ -129,7 +134,7 @@ export async function repairDuplicateGroupsInDatabase(
     }
 }
 
-async function removeAssetsFromGroupsInDatabase(
+export async function removeAssetsFromGroupsInDatabase(
     db: SQLite.SQLiteDatabase,
     assetIds: readonly string[],
     preserveSingletonGroups: boolean,
@@ -469,6 +474,38 @@ export const DupGroupRepository = {
     },
 
     /**
+     * Batch-load members for multiple groups using SQLite-safe IN (...) chunks
+     * so result screens avoid per-group N+1 queries.
+     */
+    async getGroupMembersBatch(groupIds: readonly string[]): Promise<Map<string, DupMember[]>> {
+        const uniqueGroupIds = Array.from(new Set(groupIds));
+        const byGroupId = new Map<string, DupMember[]>();
+        for (const groupId of uniqueGroupIds) {
+            byGroupId.set(groupId, []);
+        }
+        if (uniqueGroupIds.length === 0) return byGroupId;
+
+        const db = await getDatabase();
+        for (let i = 0; i < uniqueGroupIds.length; i += 500) {
+            const batch = uniqueGroupIds.slice(i, i + 500);
+            const placeholders = batch.map(() => '?').join(', ');
+            const rows = await db.getAllAsync<DupMember>(
+                `SELECT group_id, asset_id, distance
+                 FROM dup_members
+                 WHERE group_id IN (${placeholders})
+                 ORDER BY group_id ASC, distance ASC, asset_id ASC`,
+                batch
+            );
+            for (const row of rows) {
+                const list = byGroupId.get(row.group_id);
+                if (list) list.push(row);
+                else byGroupId.set(row.group_id, [row]);
+            }
+        }
+        return byGroupId;
+    },
+
+    /**
      * Update best_asset_id for a group
      */
     async updateBestAsset(groupId: string, bestAssetId: string): Promise<void> {
@@ -508,9 +545,63 @@ export const DupGroupRepository = {
                      GROUP BY group_id
                      HAVING COUNT(*) >= 2
                  )
-                 ORDER BY created_at DESC`
+                 ORDER BY created_at DESC, group_id ASC`
             );
         });
+    },
+
+    /**
+     * Get a deterministic page of actionable duplicate groups. Supports stable
+     * keyset pagination via `cursor` (backed by `idx_dup_groups_created`) to
+     * prevent OFFSET drift when groups are inserted or deleted concurrently.
+     * Only the initial page runs the legacy repair pass (unless explicitly
+     * requested) so subsequent scroll pages stay read-only on the shared connection.
+     */
+    async getGroupsPage(options: {
+        limit?: number;
+        offset?: number;
+        cursor?: DupGroupsCursor | null;
+        repair?: boolean;
+    } = {}): Promise<DupGroup[]> {
+        const limit = options.limit ?? 30;
+        const offset = options.offset ?? 0;
+        const cursor = options.cursor ?? null;
+        if (limit <= 0 || (!cursor && offset < 0)) return [];
+        const shouldRepair = options.repair ?? (!cursor && offset === 0);
+
+        let cursorClause = '';
+        const params: (string | number)[] = [];
+        if (cursor) {
+            if (cursor.createdAt !== null && cursor.createdAt !== undefined) {
+                cursorClause = ' AND (created_at < ? OR (created_at = ? AND group_id > ?) OR created_at IS NULL)';
+                params.push(cursor.createdAt, cursor.createdAt, cursor.groupId);
+            } else {
+                cursorClause = ' AND (created_at IS NULL AND group_id > ?)';
+                params.push(cursor.groupId);
+            }
+            params.push(limit);
+        } else {
+            params.push(limit, offset);
+        }
+
+        const query = `SELECT * FROM dup_groups
+            WHERE group_id IN (
+                SELECT group_id FROM dup_members
+                GROUP BY group_id
+                HAVING COUNT(*) >= 2
+            )${cursorClause}
+            ORDER BY created_at DESC, group_id ASC
+            LIMIT ?${cursor ? '' : ' OFFSET ?'}`;
+
+        if (shouldRepair) {
+            return withTransaction(async db => {
+                await repairDuplicateGroupsInDatabase(db, { removeSingletonGroups: false });
+                return db.getAllAsync<DupGroup>(query, params);
+            });
+        }
+
+        const db = await getDatabase();
+        return db.getAllAsync<DupGroup>(query, params);
     },
 
     /**

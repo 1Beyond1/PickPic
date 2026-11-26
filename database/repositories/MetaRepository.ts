@@ -54,7 +54,7 @@ export const MetaRepository = {
         const storedVersion = parsedVersion ?? 0;
 
         if (value !== null && parsedVersion === null) {
-            console.warn(`[MetaRepository] Invalid stored algorithm version: ${value}`);
+            console.warn('[MetaRepository] Invalid stored algorithm version.');
         }
 
         // Keep existing databases aligned when the app ships a new scanner

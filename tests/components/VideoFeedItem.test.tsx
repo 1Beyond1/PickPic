@@ -5,6 +5,10 @@ const mockPlayer = {
   muted: false,
   play: jest.fn(),
   pause: jest.fn(),
+  currentTime: 0,
+  duration: 0,
+  timeUpdateEventInterval: 0,
+  addListener: jest.fn(() => ({ remove: jest.fn() })),
 };
 const mockEnterFullscreen = jest.fn().mockResolvedValue(undefined);
 const mockExitFullscreen = jest.fn().mockResolvedValue(undefined);
@@ -40,7 +44,7 @@ jest.mock('expo-sharing', () => ({
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
-jest.mock('../../constants/theme', () => ({ COLORS: { white: '#fff', danger: '#f00' } }));
+jest.mock('../../constants/theme', () => ({ ...jest.requireActual('../../constants/theme'), COLORS: { white: '#fff', danger: '#f00' } }));
 jest.mock('../../hooks/useThemeColor', () => ({
   useThemeColor: () => ({ colors: { text: '#fff', danger: '#f00', textSecondary: '#aaa' } }),
 }));
@@ -61,6 +65,7 @@ jest.mock('@expo/vector-icons', () => ({
 
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { Platform, StyleSheet } from 'react-native';
+import * as ReactNative from 'react-native';
 import { VideoFeedItem } from '../../components/VideoFeedItem';
 
 const video = {
@@ -98,6 +103,24 @@ describe('VideoFeedItem with expo-video', () => {
     mockEnterFullscreen.mockClear();
     mockExitFullscreen.mockClear();
     mockVideoViewProps.current = null;
+  });
+
+  it('uses the existing compact rail when large labels would clip a vertical action', () => {
+    const dimensions = jest.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width: 320, height: 640, scale: 2.625, fontScale: 1.5 });
+    try {
+      const view = renderVideo({ itemHeight: 370 });
+      const favorite = view.getByRole('button', { name: 'video_favorite' });
+      expect(view.queryByText('video_favorite')).toBeNull();
+      expect(StyleSheet.flatten(view.getByRole('button', { name: 'video_pause' }).props.style).marginBottom).toBeGreaterThanOrEqual(100);
+      expect(StyleSheet.flatten(favorite.props.style).minHeight).toBeGreaterThanOrEqual(44);
+      let rail = favorite.parent;
+      while (rail && StyleSheet.flatten(rail.props.style)?.flexDirection !== 'row') rail = rail.parent;
+      expect(rail).not.toBeNull();
+      const railStyle = StyleSheet.flatten(rail!.props.style);
+      const imageStyle = StyleSheet.flatten(view.getByRole('button', { name: 'video_pause' }).props.style);
+      expect(imageStyle.marginBottom).toBeGreaterThanOrEqual(railStyle.bottom + StyleSheet.flatten(favorite.props.style).minHeight + 8);
+      expect(view.getByRole('button', { name: 'video_queue_delete' })).toBeEnabled();
+    } finally { dimensions.mockRestore(); }
   });
 
   it('keeps player configuration and play/pause behavior', async () => {
@@ -193,6 +216,20 @@ describe('VideoFeedItem with expo-video', () => {
     await waitFor(() => expect(mockEnterFullscreen).toHaveBeenCalledTimes(1));
   });
 
+  it('does not log a private file path when native sharing rejects', async () => {
+    const sharing = require('expo-sharing');
+    const privateMarker = 'PRIVATE_VIDEO_PATH_FROM_NATIVE_PROVIDER';
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    sharing.isAvailableAsync.mockResolvedValueOnce(true);
+    sharing.shareAsync.mockRejectedValueOnce(new Error(privateMarker));
+    const screen = renderVideo();
+    fireEvent.press(screen.getByRole('button', { name: 'video_share' }));
+    await waitFor(() => expect(log).toHaveBeenCalled());
+    expect(sharing.shareAsync).toHaveBeenCalledWith(video.uri);
+    const logged = log.mock.calls.flat().map(value => value instanceof Error ? value.message : String(value)).join('\n');
+    expect(logged).not.toContain(privateMarker);
+  });
+
   it.each([
     { background: '#F7F8F7', text: '#1B211D', textSecondary: '#626B64', danger: '#A23E35', selectionBackground: '#E2E8E2' },
     { background: '#111212', text: '#F1F2EF', textSecondary: '#B1B8B0', danger: '#EAB0A4', selectionBackground: '#282D29' },
@@ -219,5 +256,130 @@ describe('VideoFeedItem with expo-video', () => {
     expect(screen.getByRole('button', { name: 'video_favorite' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'video_share' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'video_queue_delete' })).toBeTruthy();
+  });
+
+  it('lazy-mounts ActiveVideoPlayer only inside the decoder window, avoiding empty useVideoPlayer(null) and offscreen VideoTimeline', () => {
+    const { useVideoPlayer } = require('expo-video');
+    const MediaLibrary = require('expo-media-library');
+    (useVideoPlayer as jest.Mock).mockClear();
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockClear();
+
+    const phVideo = { ...video, id: 'video-far', uri: 'ph://video-far' };
+    const view = renderVideo({
+      video: phVideo,
+      isActive: false,
+      shouldPlay: false,
+      shouldLoadSource: false,
+    });
+
+    // Outside the decoder window: zero ExoPlayer instances and zero VideoTimeline mounts!
+    expect(useVideoPlayer).not.toHaveBeenCalled();
+    expect(view.queryByTestId('video-view')).toBeNull();
+    expect(view.queryByTestId('video-timeline')).toBeNull();
+    expect(MediaLibrary.getAssetInfoAsync).not.toHaveBeenCalled();
+    expect(mockPlayer.play).not.toHaveBeenCalled();
+
+    // Entering the decoder window mounts ActiveVideoPlayer with the concrete URI (never null).
+    view.rerender(
+      <VideoFeedItem
+        video={video}
+        isActive
+        isScreenFocused
+        shouldPlay
+        shouldLoadSource
+        isMuted={false}
+        toggleMute={jest.fn()}
+        onDelete={jest.fn()}
+        onFavorite={jest.fn()}
+        t={(key: string) => key}
+        colors={{}}
+        itemHeight={500}
+      />,
+    );
+    expect(useVideoPlayer).toHaveBeenCalledTimes(1);
+    expect(useVideoPlayer).toHaveBeenLastCalledWith(video.uri, expect.any(Function));
+    expect(view.getByTestId('video-view')).toBeTruthy();
+    expect(view.getByTestId('video-timeline')).toBeTruthy();
+
+    // Leaving the decoder window unmounts ActiveVideoPlayer completely without calling useVideoPlayer(null).
+    (useVideoPlayer as jest.Mock).mockClear();
+    view.rerender(
+      <VideoFeedItem
+        video={video}
+        isActive={false}
+        isScreenFocused
+        shouldPlay={false}
+        shouldLoadSource={false}
+        isMuted={false}
+        toggleMute={jest.fn()}
+        onDelete={jest.fn()}
+        onFavorite={jest.fn()}
+        t={(key: string) => key}
+        colors={{}}
+        itemHeight={500}
+      />,
+    );
+    expect(useVideoPlayer).not.toHaveBeenCalled();
+    expect(view.queryByTestId('video-view')).toBeNull();
+    expect(view.queryByTestId('video-timeline')).toBeNull();
+  });
+
+  it('unmounts the underlying feed player during Android fullscreen and preserves currentTime across enter/exit', async () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+
+    try {
+      mockPlayer.currentTime = 17.5;
+      const view = renderVideo();
+      expect(view.getAllByTestId('video-view')).toHaveLength(1);
+
+      fireEvent(view.getByRole('button', { name: 'video_pause' }), 'longPress');
+      await waitFor(() => expect(mockPlayer.pause).toHaveBeenCalled());
+
+      // Underlying feed VideoView is unmounted while fullscreen modal is active (1 decoder, not 2).
+      expect(view.getAllByTestId('video-view')).toHaveLength(1);
+      expect(view.queryByTestId('video-timeline')).toBeNull();
+      expect(mockPlayer.currentTime).toBe(17.5);
+
+      // Simulate playback progressing inside fullscreen, then exit and verify resume seek.
+      mockPlayer.currentTime = 32.5;
+      fireEvent.press(view.getByRole('button', { name: 'cancel' }));
+      await waitFor(() => expect(view.getByTestId('video-timeline')).toBeTruthy());
+      expect(view.getAllByTestId('video-view')).toHaveLength(1);
+      expect(mockPlayer.currentTime).toBe(32.5);
+    } finally {
+      mockPlayer.currentTime = 0;
+      if (platformDescriptor) {
+        Object.defineProperty(Platform, 'OS', platformDescriptor);
+      }
+    }
+  });
+
+  it('guards against native SharedObject release errors on player property access during rapid swipes', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { useVideoPlayer } = require('expo-video');
+    const throwingPlayer = {
+      get loop() { return true; },
+      set loop(_v: boolean) { throw new Error('SharedObject already released'); },
+      get muted() { return false; },
+      set muted(_v: boolean) { throw new Error('SharedObject already released'); },
+      get currentTime() { throw new Error('SharedObject already released'); },
+      set currentTime(_v: number) { throw new Error('SharedObject already released'); },
+      get duration() { throw new Error('SharedObject already released'); },
+      set timeUpdateEventInterval(_v: number) { throw new Error('SharedObject already released'); },
+      play: () => { throw new Error('SharedObject already released'); },
+      pause: () => { throw new Error('SharedObject already released'); },
+      addListener: () => { throw new Error('SharedObject already released'); },
+    };
+    (useVideoPlayer as jest.Mock).mockImplementationOnce((_src: string, setup: any) => {
+      setup?.(throwingPlayer);
+      return throwingPlayer;
+    });
+
+    try {
+      expect(() => renderVideo()).not.toThrow();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

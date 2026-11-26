@@ -2,6 +2,7 @@ import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useReducedMotion } from 'react-native-reanimated';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
@@ -22,9 +23,10 @@ export function BottomSheet({ visible, title, onClose, children, footer, closeLa
     const { t } = useI18n();
     const insets = useSafeAreaInsets();
     const { height } = useWindowDimensions();
+    const reducedMotion = useReducedMotion();
 
     return (
-        <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+        <Modal visible={visible} transparent animationType={reducedMotion ? 'none' : 'slide'} onRequestClose={onClose}>
             <View style={[styles.overlay, { backgroundColor: colors.overlay, paddingTop: insets.top + 16 }]}>
                 {dismissOnBackdrop ? (
                     <Pressable

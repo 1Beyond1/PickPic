@@ -25,4 +25,12 @@ describe('useI18n', () => {
       for (const term of terms) expect(messages[key].toLowerCase()).toContain(term);
     }
   });
+
+  it('keeps zh and en translation key sets completely aligned including recent and backup keys', () => {
+    expect(Object.keys(en).sort()).toEqual(Object.keys(zh).sort());
+    expect(en.recent_back).toBeTruthy();
+    expect(en.recent_filter).toBeTruthy();
+    expect(en.backup_export_label).toBeTruthy();
+    expect(zh.backup_export_label).toBeTruthy();
+  });
 });

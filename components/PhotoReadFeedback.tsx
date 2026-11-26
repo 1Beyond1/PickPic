@@ -1,17 +1,24 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
-import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
+import { COLORS_DARK, TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 
-export function PhotoReadFeedback({ onRetry }: { onRetry: () => void }) {
+export function PhotoReadFeedback({
+    onRetry,
+    appearance = 'theme',
+}: {
+    onRetry: () => void;
+    appearance?: 'theme' | 'dark';
+}) {
     const { t } = useI18n();
     const { colors } = useThemeColor();
+    const palette = appearance === 'dark' ? COLORS_DARK : colors;
     return (
         <ScrollView contentContainerStyle={styles.content}>
-            <Text accessibilityRole="alert" style={[styles.message, { color: colors.textSecondary }]}>{t('scan_photo_unavailable')}</Text>
-            <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.retry, { backgroundColor: colors.actionBackground }]}>
-                <Text style={[styles.retryText, { color: colors.actionForeground }]}>{t('retry')}</Text>
+            <Text accessibilityRole="alert" style={[styles.message, { color: palette.textSecondary }]}>{t('scan_photo_unavailable')}</Text>
+            <Pressable accessibilityRole="button" onPress={onRetry} style={[styles.retry, { backgroundColor: palette.actionBackground }]}>
+                <Text style={[styles.retryText, { color: palette.actionForeground }]}>{t('retry')}</Text>
             </Pressable>
         </ScrollView>
     );

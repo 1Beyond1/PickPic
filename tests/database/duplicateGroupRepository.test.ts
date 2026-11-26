@@ -120,4 +120,60 @@ describe('duplicate group repair', () => {
       { asset_id: 'c', distance: 2 },
     ]);
   });
+
+  it('paginates actionable duplicate groups and batch-loads members in O(1) SQL queries', async () => {
+    const dbModule = require('../../database/db');
+    (dbModule.getDatabase as jest.Mock).mockResolvedValue(database);
+    (dbModule.withTransaction as jest.Mock).mockImplementation(async (callback: (db: TestDatabase) => Promise<unknown>) => {
+      let result: unknown;
+      await database.withTransactionAsync(async () => { result = await callback(database); });
+      return result;
+    });
+
+    for (let g = 1; g <= 5; g++) {
+      const gid = `grp-${g}`;
+      await insertAsset(database, `${gid}-a`);
+      await insertAsset(database, `${gid}-b`);
+      await database.runAsync(
+        'INSERT INTO dup_groups (group_id, representative_asset_id, best_asset_id, created_at) VALUES (?, ?, ?, ?)',
+        [gid, `${gid}-a`, `${gid}-a`, g * 100],
+      );
+      await database.runAsync('INSERT INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)', [gid, `${gid}-a`, 0]);
+      await database.runAsync('INSERT INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)', [gid, `${gid}-b`, 2]);
+    }
+    // Singleton seed group must be excluded from actionable pages.
+    await insertAsset(database, 'solo-a');
+    await database.runAsync(
+      'INSERT INTO dup_groups (group_id, representative_asset_id, best_asset_id, created_at) VALUES (?, ?, ?, ?)',
+      ['solo', 'solo-a', 'solo-a', 9999],
+    );
+    await database.runAsync('INSERT INTO dup_members (group_id, asset_id, distance) VALUES (?, ?, ?)', ['solo', 'solo-a', 0]);
+
+    const { DupGroupRepository } = require('../../database/repositories/DupGroupRepository');
+    (dbModule.withTransaction as jest.Mock).mockClear();
+
+    const page1 = await DupGroupRepository.getGroupsPage({ limit: 3, offset: 0, repair: true });
+    const page2 = await DupGroupRepository.getGroupsPage({ limit: 3, offset: 3, repair: false });
+    expect(page1.map((g: any) => g.group_id)).toEqual(['grp-5', 'grp-4', 'grp-3']);
+    expect(page2.map((g: any) => g.group_id)).toEqual(['grp-2', 'grp-1']);
+    // Only the initial repair page opens a write transaction.
+    expect(dbModule.withTransaction).toHaveBeenCalledTimes(1);
+
+    const getAllSpy = jest.spyOn(database, 'getAllAsync');
+    const batched = await DupGroupRepository.getGroupMembersBatch(['grp-5', 'grp-4', 'grp-3', 'missing']);
+    expect(getAllSpy).toHaveBeenCalledTimes(1);
+    expect(batched.get('grp-5')?.map((m: any) => m.asset_id)).toEqual(['grp-5-a', 'grp-5-b']);
+    expect(batched.get('grp-4')?.map((m: any) => m.asset_id)).toEqual(['grp-4-a', 'grp-4-b']);
+    expect(batched.get('missing')).toEqual([]);
+
+    // Keyset cursor pagination must not skip or duplicate rows when a newer group is deleted mid-scroll.
+    await database.runAsync("DELETE FROM dup_members WHERE group_id = 'grp-5'");
+    await database.runAsync("DELETE FROM dup_groups WHERE group_id = 'grp-5'");
+    const keysetPage2 = await DupGroupRepository.getGroupsPage({
+      limit: 3,
+      cursor: { createdAt: page1[2].created_at, groupId: page1[2].group_id },
+      repair: false,
+    });
+    expect(keysetPage2.map((g: any) => g.group_id)).toEqual(['grp-2', 'grp-1']);
+  });
 });

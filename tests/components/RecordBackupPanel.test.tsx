@@ -1,0 +1,133 @@
+import React from 'react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { AppState, Platform, Switch, TextInput } from 'react-native';
+jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
+jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
+jest.mock('../../stores/useSettingsStore', () => ({ useSettingsStore: (selector: any) => selector({ language: 'zh' }) }));
+jest.mock('../../hooks/useI18n', () => ({
+    useI18n: () => ({
+        language: 'zh',
+        t: (key: string, params: Record<string, string | number> = {}) => {
+            let text: string = require('../../i18n/zh').default[key] ?? key;
+            for (const [name, value] of Object.entries(params)) {
+                text = text.replace(`{${name}}`, String(value));
+            }
+            return text;
+        },
+    }),
+}));
+jest.mock('../../hooks/useThemeColor', () => ({ useThemeColor: () => ({ colors: require('../../constants/theme').COLORS }) }));
+jest.mock('../../services/backup/records', () => ({ createEncryptedRecords: jest.fn(), openEncryptedRecords: jest.fn(), restoreEncryptedRecords: jest.fn() }));
+jest.mock('../../services/backup/files', () => ({ pickEncryptedFile: jest.fn(), saveEncryptedFile: jest.fn() }));
+import { RecordBackupPanel } from '../../components/RecordBackupPanel';
+import { createEncryptedRecords, openEncryptedRecords, restoreEncryptedRecords } from '../../services/backup/records';
+import { pickEncryptedFile, saveEncryptedFile } from '../../services/backup/files';
+import { BACKUP_REMINDER_THRESHOLD, useBackupReminderStore } from '../../services/backup/changeTracker';
+beforeEach(() => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    useBackupReminderStore.setState({ pendingChanges: 0, lastBackupAt: null, loaded: true });
+});
+
+it('keeps password fields masked and clears them when the sheet closes', () => {
+    render(<RecordBackupPanel />);
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    const fields = screen.UNSAFE_getAllByType(TextInput);
+    expect(fields.every(field => field.props.secureTextEntry && field.props.autoComplete === 'off')).toBe(true);
+    fireEvent.changeText(screen.getByLabelText('备份密码（至少 12 个字符）'), 'long-test-passphrase');
+    fireEvent.press(screen.getAllByRole('button', { name: '取消' })[0]);
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    expect(screen.getByLabelText('备份密码（至少 12 个字符）').props.value).toBe('');
+});
+it('saves ciphertext and erases the returned byte buffer after the picker finishes', async () => {
+    const bytes = new Uint8Array([10, 20, 30]);
+    jest.mocked(createEncryptedRecords).mockResolvedValue({ bytes, saved: 2, skipped: 0, protectedAlbums: 0, reviewIgnores: 0 });
+    jest.mocked(saveEncryptedFile).mockResolvedValue(true);
+    render(<RecordBackupPanel />);
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    fireEvent.changeText(screen.getByLabelText('备份密码（至少 12 个字符）'), 'long-test-passphrase');
+    fireEvent.changeText(screen.getByLabelText('再次输入密码'), 'long-test-passphrase');
+    fireEvent.press(screen.getByRole('button', { name: '加密并选择保存位置' }));
+    await waitFor(() => expect(screen.getByText(/加密备份已保存/)).toBeTruthy());
+    expect(saveEncryptedFile).toHaveBeenCalledTimes(1); expect([...bytes]).toEqual([0, 0, 0]);
+});
+it('requires a separate restore confirmation and leaves pending deletions unchecked', async () => {
+    const bytes = new Uint8Array([10]);
+    const payload = { version: 1 as const, platform: 'android' as const, records: [] };
+    jest.mocked(pickEncryptedFile).mockResolvedValue(bytes);
+    jest.mocked(openEncryptedRecords).mockResolvedValue({ payload, preview: { kept: 2, collected: 0, pendingDeletion: 1, skipped: 0, existing: 0, rebound: 0, ambiguousSkipped: 0, protectedAlbums: 0, reviewIgnores: 0 } });
+    jest.mocked(restoreEncryptedRecords).mockResolvedValue({ kept: 2, collected: 0, pendingDeletion: 1, skipped: 0, existing: 0, rebound: 0, ambiguousSkipped: 0, protectedAlbums: 0, reviewIgnores: 0 });
+    render(<RecordBackupPanel />);
+    fireEvent.press(screen.getByRole('button', { name: '从加密备份恢复' }));
+    fireEvent.press(screen.getByRole('button', { name: '选择备份文件' }));
+    await waitFor(() => expect(screen.getByLabelText('备份密码')).toBeTruthy());
+    fireEvent.changeText(screen.getByLabelText('备份密码'), 'long-test-passphrase');
+    fireEvent.press(screen.getByRole('button', { name: '解密并预览' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认恢复' })).toBeTruthy());
+    expect(restoreEncryptedRecords).not.toHaveBeenCalled();
+    expect(screen.UNSAFE_getByType(Switch).props.value).toBe(false);
+    fireEvent.press(screen.getByRole('button', { name: '确认恢复' }));
+    await waitFor(() => expect(restoreEncryptedRecords).toHaveBeenCalledWith(payload, false, expect.any(Function)));
+});
+it('cancels and clears the sheet when backgrounded during encryption', async () => {
+    let handler!: (state: string) => void;
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, callback: any) => { handler = callback; return { remove: jest.fn() }; });
+    render(<RecordBackupPanel />);
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    fireEvent.changeText(screen.getByLabelText('备份密码（至少 12 个字符）'), 'long-test-passphrase');
+    act(() => handler('background'));
+    expect(screen.queryByLabelText('备份密码（至少 12 个字符）')).toBeNull();
+});
+it('shows actual key derivation progress and ignores late updates after cancellation', async () => {
+    let cancelled!: () => boolean;
+    let progress!: (fraction: number) => void;
+    let finish!: (result: { bytes: Uint8Array; saved: number; skipped: number; protectedAlbums: number; reviewIgnores: number }) => void;
+    jest.mocked(createEncryptedRecords).mockImplementationOnce((_password, isCancelled, onProgress) => {
+        cancelled = isCancelled!; progress = onProgress!;
+        return new Promise(resolve => { finish = resolve; });
+    });
+    render(<RecordBackupPanel />);
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    fireEvent.changeText(screen.getByLabelText('备份密码（至少 12 个字符）'), 'long-test-passphrase');
+    fireEvent.changeText(screen.getByLabelText('再次输入密码'), 'long-test-passphrase');
+    fireEvent.press(screen.getByRole('button', { name: '加密并选择保存位置' }));
+    await waitFor(() => expect(progress).toBeDefined());
+    act(() => progress(0.426));
+    expect(screen.getByText(/密码保护计算 42%/)).toBeTruthy();
+    fireEvent.press(screen.getAllByRole('button', { name: '取消' })[0]);
+    expect(cancelled()).toBe(true);
+    const bytes = new Uint8Array([10, 20]);
+    await act(async () => { progress(0.9); finish({ bytes, saved: 1, skipped: 0, protectedAlbums: 0, reviewIgnores: 0 }); });
+    expect(screen.queryByText(/密码保护计算/)).toBeNull();
+    expect(saveEncryptedFile).not.toHaveBeenCalled();
+    expect([...bytes]).toEqual([0, 0]);
+});
+
+it('shows a gentle unbacked-up changes reminder badge when threshold is exceeded and clears it after successful backup', async () => {
+    useBackupReminderStore.setState({ pendingChanges: BACKUP_REMINDER_THRESHOLD + 3, lastBackupAt: null, loaded: true });
+    const bytes = new Uint8Array([1, 2, 3]);
+    jest.mocked(createEncryptedRecords).mockResolvedValue({ bytes, saved: 3, skipped: 0, protectedAlbums: 0, reviewIgnores: 0 });
+    jest.mocked(saveEncryptedFile).mockResolvedValue(true);
+
+    render(<RecordBackupPanel />);
+    expect(screen.getByTestId('backup-change-reminder-badge')).toBeTruthy();
+
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    fireEvent.changeText(screen.getByLabelText('备份密码（至少 12 个字符）'), 'long-test-passphrase');
+    fireEvent.changeText(screen.getByLabelText('再次输入密码'), 'long-test-passphrase');
+    fireEvent.press(screen.getByRole('button', { name: '加密并选择保存位置' }));
+
+    await waitFor(() => expect(screen.queryByTestId('backup-change-reminder-badge')).toBeNull());
+});
+
+it('displays an explicit Chinese size-limit message when BackupError("size") occurs', async () => {
+    const { BackupError } = require('../../services/backup/crypto');
+    jest.mocked(createEncryptedRecords).mockRejectedValueOnce(new BackupError('size'));
+
+    render(<RecordBackupPanel />);
+    fireEvent.press(screen.getByRole('button', { name: '加密备份整理记录' }));
+    fireEvent.changeText(screen.getByLabelText('备份密码（至少 12 个字符）'), 'long-test-passphrase');
+    fireEvent.changeText(screen.getByLabelText('再次输入密码'), 'long-test-passphrase');
+    fireEvent.press(screen.getByRole('button', { name: '加密并选择保存位置' }));
+
+    await waitFor(() => expect(screen.getByText(/备份文件过大或记录数量超出当前上限/)).toBeTruthy());
+});

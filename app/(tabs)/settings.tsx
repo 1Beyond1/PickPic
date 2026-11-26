@@ -1,6 +1,6 @@
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Linking, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlbumSelector } from '../../components/AlbumSelector';
@@ -10,6 +10,7 @@ import { ScanBatchModal } from '../../components/ScanBatchModal';
 import { SegmentedControl } from '../../components/SegmentedControl';
 import { SettingsRow } from '../../components/SettingsRow';
 import { SettingsChoiceSheet } from '../../components/SettingsChoiceSheet';
+import { RecordBackupPanel } from '../../components/RecordBackupPanel';
 import { SPACING, TYPOGRAPHY, UI_METRICS } from '../../constants/theme';
 
 import { useAIScanner } from '../../hooks/useAIScanner';
@@ -17,6 +18,9 @@ import { useI18n } from '../../hooks/useI18n';
 import { useThemeColor } from '../../hooks/useThemeColor';
 import { useMediaStore } from '../../stores/useMediaStore';
 import { APP_VERSION, useSettingsStore } from '../../stores/useSettingsStore';
+import { useScannerStore } from '../../stores/useScannerStore';
+import { BACKUP_REMINDER_THRESHOLD, useBackupReminderStore } from '../../services/backup/changeTracker';
+import { useShallow } from 'zustand/react/shallow';
 
 const SettingItem = ({ label, value, onValueChange, type = 'switch', options = [], colors, isDark, fonts, formatOption = (option: any) => option }: any) => {
     return (
@@ -66,15 +70,48 @@ export default function SettingsScreen() {
         totalPhotos, totalVideos, refreshTotalCounts,
         hasHydrated: mediaHydrated, getVisibleProcessedCounts, mediaLibraryRefreshVersion,
         isConfirmingDeletion, isConfirmingVideoTrash,
-    } = useMediaStore();
+        albums, protectedAlbums, missingProtectedAlbumIds, setProtectedAlbums,
+    } = useMediaStore(useShallow(state => ({
+        photoProcessedIds: state.photoProcessedIds,
+        videoProcessedIds: state.videoProcessedIds,
+        resetPhotoProgress: state.resetPhotoProgress,
+        resetVideoProgress: state.resetVideoProgress,
+        totalPhotos: state.totalPhotos,
+        totalVideos: state.totalVideos,
+        refreshTotalCounts: state.refreshTotalCounts,
+        hasHydrated: state.hasHydrated,
+        getVisibleProcessedCounts: state.getVisibleProcessedCounts,
+        mediaLibraryRefreshVersion: state.mediaLibraryRefreshVersion,
+        isConfirmingDeletion: state.isConfirmingDeletion,
+        isConfirmingVideoTrash: state.isConfirmingVideoTrash,
+        albums: state.albums,
+        protectedAlbums: state.protectedAlbums,
+        missingProtectedAlbumIds: state.missingProtectedAlbumIds,
+        setProtectedAlbums: state.setProtectedAlbums,
+    })));
+    const safeProtectedAlbums = useMemo(() => protectedAlbums ?? [], [protectedAlbums]);
+    const safeMissingProtectedAlbumIds = missingProtectedAlbumIds ?? [];
+    const safeAlbums = albums ?? [];
+    const protectedAlbumIds = useMemo(
+        () => safeProtectedAlbums.map(album => album.albumId),
+        [safeProtectedAlbums],
+    );
+    const unavailableProtectedItems = useMemo(
+        () => safeProtectedAlbums.map(album => ({ id: album.albumId, title: album.title })),
+        [safeProtectedAlbums],
+    );
+    const pendingBackupChanges = useBackupReminderStore(state => state.pendingChanges);
+    const showBackupReminder = pendingBackupChanges >= BACKUP_REMINDER_THRESHOLD;
 
     const [showAlbumSelector, setShowAlbumSelector] = useState(false);
+    const [showProtectedAlbumSelector, setShowProtectedAlbumSelector] = useState(false);
     const [showScanBatchModal, setShowScanBatchModal] = useState(false);
     const [page, setPage] = useState<'main' | 'scanner' | 'data' | 'help'>('main');
     const [choice, setChoice] = useState<'order' | 'theme' | 'language' | null>(null);
 
     // AI Scanner hook
-    const { progress, isRunning, isFinalizing, lastError, start, stop, resumeOnce, resetScan } = useAIScanner();
+    const { progress, classificationProgress, startClassification, isRunning, isFinalizing, lastError, start, stop, resumeOnce, resetScan } = useAIScanner();
+    const scanTask = useScannerStore(state => state.task);
     const scannerBusy = isRunning || isFinalizing;
 
     const handleResetPhotoProgress = () => {
@@ -88,14 +125,32 @@ export default function SettingsScreen() {
     const handleOpenGitHub = async (project = false) => {
         try {
             await Linking.openURL(project ? 'https://github.com/1Beyond1/PickPic' : 'https://github.com/1Beyond1');
-        } catch (error) {
-            console.error('[Settings] Failed to open GitHub:', error);
+        } catch {
+            console.error('[Settings] Failed to open GitHub.');
         }
     };
 
     const handleAlbumConfirm = (ids: string[]) => {
         setSelectedAlbums(ids);
         setShowAlbumSelector(false);
+    };
+
+    const handleProtectedAlbumsConfirm = (ids: string[]) => {
+        const albumTitleById = new Map<string, string>();
+        for (const album of safeAlbums) albumTitleById.set(album.id, album.title);
+        for (const existing of safeProtectedAlbums) {
+            if (!albumTitleById.has(existing.albumId)) {
+                albumTitleById.set(existing.albumId, existing.title);
+            }
+        }
+        const nextProtected = ids.map(albumId => ({
+            albumId,
+            title: albumTitleById.get(albumId) ?? albumId,
+        }));
+        setShowProtectedAlbumSelector(false);
+        void setProtectedAlbums?.(nextProtected).catch(() => {
+            console.error('[Settings] Failed to update protected albums.');
+        });
     };
 
     const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -133,7 +188,7 @@ export default function SettingsScreen() {
             })
             .catch(error => {
                 if (!active) return;
-                console.error('[Settings] Failed to refresh visible progress:', error);
+                console.error('[Settings] Failed to refresh visible progress.');
                 // Do not expose a stale count after a permission/read error.
                 setVisibleProcessedCounts({ photos: 0, videos: 0 });
             });
@@ -194,13 +249,11 @@ export default function SettingsScreen() {
         setIsResettingScanner(true);
         try {
             await resetScan();
-        } catch (error) {
-            console.error('[Settings] Failed to reset scanner', error);
+        } catch {
+            console.error('[Settings] Failed to reset scanner.');
             Alert.alert(
-                language === 'zh' ? '重置失败' : 'Reset failed',
-                language === 'zh'
-                    ? '扫描器未能及时停止，进度尚未重置，请稍后重试。'
-                    : 'The scanner did not stop in time, so progress was not reset. Please try again.'
+                t('settings_reset_failed_title'),
+                t('settings_reset_scanner_failed_message')
             );
         } finally {
             setIsResettingScanner(false);
@@ -209,7 +262,7 @@ export default function SettingsScreen() {
 
     const handleScanBatch = async (options: { mode: 'album' | 'count'; albumIds?: string[]; count?: number }) => {
         if (isResettingScanner || isFinalizing) return;
-        console.log('[Settings] Scan batch with options:', options);
+        console.log('[Settings] Starting a scan batch.');
         await resumeOnce(options);
     };
 
@@ -233,11 +286,11 @@ export default function SettingsScreen() {
     const choiceOptions = choice === 'order'
         ? (['newest', 'oldest', 'random'] as const).map(value => ({ value, label: t(`display_order_${value}`) }))
         : choice === 'theme'
-            ? (['light', 'dark'] as const).map(value => ({ value, label: t(`theme_${value}`) }))
+            ? (['light', 'dark', 'system'] as const).map(value => ({ value, label: t(`theme_${value}`) }))
             : [{ value: 'zh', label: '中文' }, { value: 'en', label: 'English' }];
     const handleChoice = (value: string) => {
         if (choice === 'order' && (value === 'newest' || value === 'oldest' || value === 'random')) setDisplayOrder(value);
-        if (choice === 'theme' && (value === 'light' || value === 'dark')) setTheme(value);
+        if (choice === 'theme' && (value === 'light' || value === 'dark' || value === 'system')) setTheme(value);
         if (choice === 'language' && (value === 'zh' || value === 'en')) setLanguage(value);
         setChoice(null);
     };
@@ -277,6 +330,21 @@ export default function SettingsScreen() {
                     <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
                     <SettingsRow label={t('settings_album_filter')} value={selectedAlbumIds.length === 0 ? t('album_filter_all') : t('album_filter_selected', { count: selectedAlbumIds.length })} onPress={() => setShowAlbumSelector(true)} />
                     <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
+                    <SettingsRow
+                        label={t('settings_protected_albums')}
+                        detail={t('settings_protected_albums_hint')}
+                        value={safeProtectedAlbums.length === 0 ? t('protected_albums_none') : t('protected_albums_count', { count: safeProtectedAlbums.length })}
+                        onPress={() => setShowProtectedAlbumSelector(true)}
+                    />
+                    {safeMissingProtectedAlbumIds.length > 0 && (
+                        <View testID="protected-albums-missing-warning" style={styles.errorRow}>
+                            <Ionicons name="warning-outline" size={16} color={colors.warning} />
+                            <Text accessibilityRole="alert" style={[styles.hintText, { flex: 1, color: colors.warning }]}>
+                                {t('protected_albums_missing_warning', { count: safeMissingProtectedAlbumIds.length })}
+                            </Text>
+                        </View>
+                    )}
+                    <View style={[styles.preferenceDivider, { backgroundColor: colors.divider }]} />
                     <SettingsRow label={t('settings_display_order')} value={t(`display_order_${displayOrder}`)} onPress={() => setChoice('order')} />
                 </GlassContainer>
 
@@ -302,7 +370,12 @@ export default function SettingsScreen() {
 
                 <Text style={[styles.groupCaption, { color: colors.textSecondary }]}>{t('settings_records_maintenance')}</Text>
                 <GlassContainer style={styles.section} elevated={false}>
-                    <SettingsRow label={t('settings_data_management')} detail={t('settings_data_management_hint')} onPress={() => setPage('data')} />
+                    <SettingsRow
+                        label={t('settings_data_management')}
+                        detail={t('settings_data_management_hint')}
+                        value={showBackupReminder ? t('backup_reminder_badge', { count: pendingBackupChanges }) : undefined}
+                        onPress={() => setPage('data')}
+                    />
                 </GlassContainer>
                 </>}
 
@@ -333,8 +406,8 @@ export default function SettingsScreen() {
                             <Ionicons name="sync" size={16} color={colors.primary} />
                             <Text style={[styles.statusText, { color: colors.primary }]}>
                                 {isFinalizing
-                                    ? (language === 'zh' ? '正在完成扫描…' : 'Finishing scan…')
-                                    : t('ai_scanner_scanning_batch', { batch: progress.currentBatch })}
+                                    ? t('ai_scanner_finishing')
+                                    : scanTask === 'classification' ? t('classification_running') : t('ai_scanner_scanning_batch', { batch: progress.currentBatch })}
                             </Text>
                         </View>
                     )}
@@ -389,11 +462,21 @@ export default function SettingsScreen() {
                     </View>
 
                 </GlassContainer>
+                <GlassContainer style={styles.section} elevated={false}>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('classification_title')}</Text>
+                    <Text style={[styles.progressText, { color: colors.textSecondary }]}>{t('classification_counts', { ...classificationProgress })}</Text>
+                    <Text style={[styles.hintText, { color: colors.textSecondary }]}>{t('classification_hint')}</Text>
+                    <SettingsRow label={t('classification_backfill')} onPress={() => { void startClassification(); }} disabled={!enableAIClassification || !aiClassificationAvailable || scannerBusy || isResettingScanner || classificationProgress.pending + classificationProgress.error === 0} />
+                    <SettingsRow label={t('classification_retry')} onPress={() => { void startClassification(true); }} disabled={!enableAIClassification || !aiClassificationAvailable || scannerBusy || isResettingScanner || classificationProgress.error === 0} />
+                </GlassContainer>
                 </>}
 
                 {/* Photo Progress */}
                 {page === 'data' && <>
                 <Text style={[styles.pageHint, { color: colors.textSecondary }]}>{t('settings_data_management_hint')}</Text>
+                <GlassContainer style={styles.section} elevated={false}>
+                    <RecordBackupPanel disabled={scannerBusy || isResettingScanner || isConfirmingDeletion || isConfirmingVideoTrash} />
+                </GlassContainer>
                 <GlassContainer style={styles.section} elevated={false}>
                     <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('settings_photo_records')}</Text>
                     <View style={styles.progressRow}>
@@ -465,10 +548,10 @@ export default function SettingsScreen() {
                             >
                                 <View style={{ flex: 1 }}>
                                     <Text style={[styles.label, { color: colors.text }]}>
-                                        {language === 'zh' ? '重置弹窗已读状态' : 'Reset Modal Read Status'}
+                                        {t('settings_reset_modal_read_status')}
                                     </Text>
                                     <Text style={[styles.hintText, { color: colors.textTertiary, fontSize: 12, marginTop: 2 }]}>
-                                        {language === 'zh' ? '让公告和引导弹窗再次显示' : 'Make announcement and guide show again'}
+                                        {t('settings_reset_modal_read_status_hint')}
                                     </Text>
                                 </View>
                                 <Ionicons name="refresh-circle" size={24} color={colors.primary} />
@@ -496,6 +579,17 @@ export default function SettingsScreen() {
                 initialSelection={selectedAlbumIds}
             />
 
+            {/* Protected Albums Selector Modal */}
+            <AlbumSelector
+                visible={showProtectedAlbumSelector}
+                onClose={() => setShowProtectedAlbumSelector(false)}
+                onConfirm={handleProtectedAlbumsConfirm}
+                initialSelection={protectedAlbumIds}
+                unavailableSelectionItems={unavailableProtectedItems}
+                titleKey="protected_albums_selector_title"
+                clearLabelKey="protected_albums_clear"
+            />
+
             {/* Scan Batch Modal */}
             <ScanBatchModal
                 visible={showScanBatchModal}
@@ -516,7 +610,7 @@ export default function SettingsScreen() {
 
             {showResetConfirm && (
                 <ConfirmationSheet
-                    title={language === 'zh' ? '重置 AI 扫描进度' : 'Reset AI Scanning Progress'}
+                    title={t('settings_reset_scan_title')}
                     message={t('settings_reset_scan_desc')}
                     confirmLabel={t('settings_confirm_reset')}
                     destructive
@@ -527,10 +621,8 @@ export default function SettingsScreen() {
 
             {showResetModalStatusConfirm && (
                 <ConfirmationSheet
-                    title={showResetSuccess
-                        ? (language === 'zh' ? '重置成功' : 'Reset Successful')
-                        : (language === 'zh' ? '重置弹窗状态' : 'Reset Modal Status')}
-                    message={showResetSuccess ? '' : (language === 'zh' ? '确定要重置公告和 AI 引导弹窗的状态吗？下次启动 App 时它们将重新显示。' : 'Reset status for announcement and AI guide? They will reappear on next launch.')}
+                    title={t(showResetSuccess ? 'settings_reset_modal_success' : 'settings_reset_modal_title')}
+                    message={showResetSuccess ? '' : t('settings_reset_modal_message')}
                     hideActions={showResetSuccess}
                     confirmLabel={t('confirm')}
                     onCancel={() => { setShowResetSuccess(false); setShowResetModalStatusConfirm(false); }}

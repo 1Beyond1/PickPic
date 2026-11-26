@@ -1,13 +1,13 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Image, Modal, ScrollView, StyleSheet } from 'react-native';
+import { act, fireEvent, fireEventAsync, renderAsync, screen, waitFor } from '@testing-library/react-native';
+import { Image, ScrollView, StyleSheet } from 'react-native';
 
 let mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
 const mockCardSizes = new Map<string, { maxWidth: number; maxHeight: number }>();
 
 const mockLoadPhotos = jest.fn().mockResolvedValue(undefined);
 const mockLoadAlbums = jest.fn().mockResolvedValue(undefined);
-const mockPhoto = (id: string) => ({ id, uri: `file:///${id}.jpg`, filename: `${id}.jpg`, creationTime: 1 });
+const mockPhoto = (id: string) => ({ id, uri: `file:///${id}.jpg`, filename: `${id}.jpg`, creationTime: 1, mediaType: 'photo' as const });
 const mockMediaState = {
   photos: [mockPhoto('one'), mockPhoto('two'), mockPhoto('three')],
   albums: [],
@@ -17,12 +17,20 @@ const mockMediaState = {
   photoLoadFailed: false,
   hasHydrated: true,
   photoProcessedIds: [] as string[],
+  organizingSessions: { photo: null, video: null },
+  startOrganizingSession: jest.fn().mockReturnValue({ sessionId: 'synthetic' }),
+  resumeOrganizingSession: jest.fn().mockResolvedValue({ status: 'ready' }),
+  deferSessionMedia: jest.fn(), revisitSessionDeferred: jest.fn(),
+  photoSessionRecoveryStatus: null, photoSessionUnavailableCount: 0,
   markForDeletion: jest.fn(),
   markAsSkipped: jest.fn(),
   undoAction: jest.fn(),
   keepPhotoFromDeleteQueue: jest.fn(),
   confirmDeletion: jest.fn(),
   deleteQueue: [] as ReturnType<typeof mockPhoto>[],
+  videoTrashBin: [], pendingDeletionInfo: {}, permissionRefreshVersion: 0,
+  isConfirmingVideoTrash: false,
+  keepPendingDeletion: jest.fn(), keepAllPendingDeletion: jest.fn((ids: readonly string[]) => ids.length), confirmPendingDeletion: jest.fn(),
   resetBatch: jest.fn(),
   isConfirmingDeletion: false,
   createAlbum: jest.fn(),
@@ -45,7 +53,7 @@ const mockSettingsState = {
 
 jest.mock('expo-media-library', () => ({
   getPermissionsAsync: jest.fn(),
-  getAssetInfoAsync: jest.fn(async (id: string) => ({ uri: `file:///${id}.jpg` })),
+  getAssetInfoAsync: jest.fn(async (id: string) => ({ id, mediaType: 'photo', uri: `file:///${id}.jpg` })),
   presentPermissionsPickerAsync: jest.fn(),
 }));
 jest.mock('expo-router', () => ({
@@ -82,7 +90,10 @@ jest.mock('../hooks/useThemeColor', () => ({
   }),
 }));
 jest.mock('../stores/useMediaStore', () => ({
-  useMediaStore: Object.assign(() => mockMediaState, { getState: () => mockMediaState }),
+  useMediaStore: Object.assign(
+    (selector?: (state: typeof mockMediaState) => unknown) => (selector ? selector(mockMediaState) : mockMediaState),
+    { getState: () => mockMediaState },
+  ),
 }));
 jest.mock('../stores/useSettingsStore', () => ({ useSettingsStore: () => mockSettingsState }));
 
@@ -90,7 +101,7 @@ import PhotosScreen from '../app/(tabs)/photos';
 import * as MediaLibrary from 'expo-media-library';
 
 describe('PhotosScreen visual entry', () => {
-  afterEach(() => jest.useRealTimers());
+  afterEach(async () => { await act(async () => {}); jest.useRealTimers(); });
 
   beforeEach(() => {
     mockInsets = { top: 0, bottom: 0, left: 0, right: 0 };
@@ -103,6 +114,10 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.hiddenPhotoQueuedAssetIds = null;
     mockMediaState.mediaLibraryRefreshVersion = 0;
     jest.clearAllMocks();
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'all' });
+    mockMediaState.keepPendingDeletion.mockImplementation((id: string) => mockMediaState.keepPhotoFromDeleteQueue(id));
+    mockMediaState.resetBatch.mockImplementation(() => { mockMediaState.photos = []; });
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => mockPhoto(id));
     mockMediaState.undoAction.mockImplementation((id: string) => {
       mockMediaState.deleteQueue = mockMediaState.deleteQueue.filter(photo => photo.id !== id);
       mockMediaState.photoProcessedIds = mockMediaState.photoProcessedIds.filter(processed => processed !== id);
@@ -116,66 +131,90 @@ describe('PhotosScreen visual entry', () => {
     mockCardSizes.clear();
   });
 
-  it('distinguishes a failed photo read from an empty library and retries without changing decisions', () => {
+  it('distinguishes a failed photo read from an empty library and retries without changing decisions', async () => {
     mockMediaState.photos = [];
     mockMediaState.photoLoadFailed = true;
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     expect(screen.getByRole('alert').props.children).toBe('photos_load_failed');
     expect(screen.queryByText('photos_empty')).toBeNull();
-    expect(screen.queryByText('0')).toBeNull();
+    expect(screen.getByText('—')).toBeTruthy(); // The pending-entry count is independent of a failed feed read.
     mockLoadPhotos.mockClear();
-    fireEvent.press(screen.getByRole('button', { name: 'photos_reload' }));
-    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', []);
+    await fireEventAsync.press(screen.getByRole('button', { name: 'photos_reload' }));
+    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', [], 'new');
     expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
     expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
     expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
   });
 
-  it('keeps a restored deletion queue reachable even if reading the next photo batch failed', () => {
+  it('keeps a restored deletion queue reachable even if reading the next photo batch failed', async () => {
     mockMediaState.photos = [];
     mockMediaState.photoLoadFailed = true;
     mockMediaState.deleteQueue = [mockPhoto('pending')];
     mockMediaState.photoProcessedIds = ['pending'];
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     expect(screen.getByTestId('photo-review')).toBeTruthy();
     expect(screen.getByText('photos_review_title')).toBeTruthy();
     expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
     expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
   });
 
-  it('shows the real current batch count, then opens the existing photo deck', () => {
+  it('shows the real current batch count, then opens the existing photo deck', async () => {
     mockMediaState.photos = [mockPhoto('one'), mockPhoto('two')];
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     expect(screen.getByText('2')).toBeTruthy();
     fireEvent.press(screen.getByText('photos_home_start'));
     fireEvent(screen.getByTestId('photos-deck-viewport'), 'layout', { nativeEvent: { layout: { width: 390, height: 500 } } });
     expect(screen.getByText('card:one')).toBeTruthy();
   });
 
-  it('does not duplicate the dock settings entry in the home header', () => {
-    render(<PhotosScreen />);
+  it('does not duplicate the dock settings entry in the home header', async () => {
+    await renderAsync(<PhotosScreen />);
     expect(screen.getByText('PickPic')).toBeTruthy();
     expect(screen.queryByLabelText('tab_settings')).toBeNull();
-    expect(screen.getByRole('button', { name: 'photos_home_album' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'scope_title' })).toBeTruthy();
     expect(screen.queryByText('photos_manage_access')).toBeNull();
   });
 
-  it('keeps the system top inset outside the scrollable home without changing the batch or filter', () => {
-    mockInsets = { top: 32, bottom: 24, left: 0, right: 0 };
-    const view = render(<PhotosScreen />);
-    expect(screen.getByTestId('photos-home')).toHaveStyle({ paddingTop: 32 });
+  it('keeps system insets and the Dock outside the scrollable home without changing the batch or filter', async () => {
+    mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
+    const view = await renderAsync(<PhotosScreen />);
+    expect(screen.getByTestId('photos-home')).toHaveStyle({ paddingTop: 32, paddingBottom: 89, paddingLeft: 4, paddingRight: 8 });
     const scrollContent = StyleSheet.flatten(view.UNSAFE_getByType(ScrollView).props.contentContainerStyle);
     expect(scrollContent.paddingTop).toBe(16);
-    expect(scrollContent.paddingBottom).toBe(24 + 65 + 24);
+    expect(scrollContent.paddingBottom).toBe(24);
     expect(screen.getByText('3')).toBeTruthy();
     expect(mockSettingsState.setSelectedAlbums).not.toHaveBeenCalled();
     expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
     expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
   });
 
-  it('reserves the Dock and safe areas before measuring space for media', () => {
+  it.each([1, 3])('places the primary organizing action before optional previews for a %s-photo batch', async count => {
+    mockMediaState.photos = Array.from({ length: count }, (_, index) => mockPhoto(`priority-${index}`));
+    const view = await renderAsync(<PhotosScreen />);
+    // Host traversal validates reading/layout order, not native pixel geometry.
+    // Small-screen position and hit targets still require the emulator check.
+    const nodes: any[] = [];
+    const visit = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(visit); return; }
+      nodes.push(node); node.children?.forEach(visit);
+    };
+    visit(view.toJSON());
+    const actionIndex = nodes.findIndex(node => node.props?.accessibilityRole === 'button'
+      && JSON.stringify(node.children).includes('photos_home_start'));
+    const previewIndex = nodes.findIndex(node => node.type === 'Image' && node.props.source?.uri === 'file:///priority-0.jpg');
+    expect(actionIndex).toBeGreaterThanOrEqual(0);
+    expect(previewIndex).toBeGreaterThan(actionIndex);
+    expect(mockMediaState.startOrganizingSession).not.toHaveBeenCalled();
+    await fireEventAsync.press(screen.getByRole('button', { name: 'photos_home_start' }));
+    expect(mockMediaState.startOrganizingSession).toHaveBeenCalledWith('photo', { albumIds: [], order: 'random' }, mockMediaState.photos.map(photo => photo.id));
+    expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
+    expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
+  });
+
+  it('reserves the Dock and safe areas before measuring space for media', async () => {
     mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     fireEvent.press(screen.getByText('photos_home_start'));
     expect(screen.getByTestId('photos-deck')).toHaveStyle({ paddingTop: 32, paddingBottom: 89, paddingLeft: 4, paddingRight: 8 });
     expect(screen.queryByText('card:one')).toBeNull();
@@ -185,8 +224,8 @@ describe('PhotosScreen visual entry', () => {
     expect(mockMediaState.markAsSkipped).not.toHaveBeenCalled();
   });
 
-  it('updates all card bounds when the viewport changes without changing batch or filters', () => {
-    render(<PhotosScreen />);
+  it('updates all card bounds when the viewport changes without changing batch or filters', async () => {
+    await renderAsync(<PhotosScreen />);
     fireEvent.press(screen.getByText('photos_home_start'));
     fireEvent(screen.getByTestId('photos-deck-viewport'), 'layout', { nativeEvent: { layout: { width: 320, height: 360 } } });
     expect(mockCardSizes.get('one')).toEqual({ maxWidth: 280, maxHeight: 344 });
@@ -198,8 +237,8 @@ describe('PhotosScreen visual entry', () => {
     expect(mockSettingsState.setSelectedAlbums).not.toHaveBeenCalled();
   });
 
-  it('keeps readable, wrapping gesture directions distinct from the later deletion review', () => {
-    render(<PhotosScreen />);
+  it('keeps readable, wrapping gesture directions distinct from the later deletion review', async () => {
+    await renderAsync(<PhotosScreen />);
     fireEvent.press(screen.getByText('photos_home_start'));
     const hint = screen.getByText('hint_swipe_up');
     expect(hint.props.numberOfLines).toBeUndefined();
@@ -216,7 +255,7 @@ describe('PhotosScreen visual entry', () => {
     mockMediaState.permissionScope = 'limited';
     (MediaLibrary.presentPermissionsPickerAsync as jest.Mock).mockResolvedValue(undefined);
     (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'limited' });
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     fireEvent.press(screen.getByRole('button', { name: 'photos_manage_access' }));
     await waitFor(() => expect(mockMediaState.notifyPermissionRefresh).toHaveBeenCalledTimes(1));
     expect(MediaLibrary.presentPermissionsPickerAsync).toHaveBeenCalledWith(['photo']);
@@ -232,7 +271,7 @@ describe('PhotosScreen visual entry', () => {
     let finishPicker!: () => void;
     (MediaLibrary.presentPermissionsPickerAsync as jest.Mock).mockReturnValueOnce(new Promise<void>(resolve => { finishPicker = resolve; }));
     (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'limited' });
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     fireEvent.press(screen.getByRole('button', { name: 'photos_manage_access' }));
     const busyEntry = screen.getByRole('button', { name: 'permission_requesting' });
     expect(busyEntry.props.accessibilityState).toMatchObject({ disabled: true, busy: true });
@@ -247,7 +286,7 @@ describe('PhotosScreen visual entry', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     mockMediaState.permissionScope = 'limited';
     (MediaLibrary.presentPermissionsPickerAsync as jest.Mock).mockRejectedValueOnce(new Error('Picker unavailable'));
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     fireEvent.press(screen.getByRole('button', { name: 'photos_manage_access' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'photos_manage_access' }).props.accessibilityState.disabled).toBe(false));
     expect(mockMediaState.notifyPermissionRefresh).not.toHaveBeenCalled();
@@ -256,10 +295,10 @@ describe('PhotosScreen visual entry', () => {
     expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
   });
 
-  it.each([1, 2, 3, 30])('previews at most three real photos from a %s-photo batch without reordering it', count => {
+  it.each([1, 2, 3, 30])('previews at most three real photos from a %s-photo batch without reordering it', async count => {
     mockMediaState.photos = Array.from({ length: count }, (_, index) => mockPhoto(`photo-${index}`));
     const originalIds = mockMediaState.photos.map(photo => photo.id);
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     expect(screen.getByText(String(count))).toBeTruthy();
     expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri))
       .toEqual(mockMediaState.photos.slice(0, 3).map(photo => photo.uri));
@@ -268,389 +307,121 @@ describe('PhotosScreen visual entry', () => {
     expect(mockMediaState.markForDeletion).not.toHaveBeenCalled();
   });
 
-  it('keeps the deck open as an in-memory batch is processed', () => {
-    const view = render(<PhotosScreen />);
+  it('keeps the deck open as an in-memory batch is processed', async () => {
+    const view = await renderAsync(<PhotosScreen />);
     fireEvent.press(screen.getByText('photos_home_start'));
     fireEvent(screen.getByTestId('photos-deck-viewport'), 'layout', { nativeEvent: { layout: { width: 390, height: 500 } } });
     mockMediaState.photoProcessedIds = ['one'];
-    view.rerender(<PhotosScreen />);
+    await view.rerenderAsync(<PhotosScreen />);
     expect(screen.queryByText('photos_home_start')).toBeNull();
     expect(screen.getByText('card:two')).toBeTruthy();
   });
 
-  it('keeps the deletion review reachable when the batch is finished', () => {
+  it('keeps the deletion review reachable when the batch is finished', async () => {
     mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
     mockMediaState.deleteQueue = [mockPhoto('one')];
-    render(<PhotosScreen />);
-    expect(screen.getByText('photos_confirm')).toBeTruthy();
+    await renderAsync(<PhotosScreen />);
+    expect(screen.getByText('pending_confirm')).toBeTruthy();
   });
 
-  it('returns to an empty home after the final batch without reopening processed photos', () => {
-    const view = render(<PhotosScreen />);
+  it('returns to an empty home after the final batch without reopening processed photos', async () => {
+    const view = await renderAsync(<PhotosScreen />);
     fireEvent.press(screen.getByText('photos_home_start'));
     mockMediaState.photos = [];
     mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
-    view.rerender(<PhotosScreen />);
+    await view.rerenderAsync(<PhotosScreen />);
 
     fireEvent.press(screen.getByText('photos_back_home'));
     expect(screen.getByText('PickPic')).toBeTruthy();
-    expect(screen.getByText('photos_home_album')).toBeTruthy();
+    expect(screen.getByText('scope_title')).toBeTruthy();
     expect(screen.queryByText('photos_home_start')).toBeNull();
     expect(mockMediaState.photoProcessedIds).toEqual(['one', 'two', 'three']);
     expect(screen.queryByText('card:one')).toBeNull();
   });
 
-  it('opens an empty home safely when there are no photos at launch', () => {
+  it('opens an empty home safely when there are no photos at launch', async () => {
     mockMediaState.photos = [];
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     expect(screen.getByText('PickPic')).toBeTruthy();
     expect(screen.getByText('photos_empty')).toBeTruthy();
     expect(screen.getByText('photos_reload')).toBeTruthy();
   });
 
-  it('keeps a restored delete queue in review even when no photos remain', () => {
+  it('keeps a restored delete queue in review even when no photos remain', async () => {
     mockMediaState.photos = [];
     mockMediaState.deleteQueue = [mockPhoto('one')];
-    render(<PhotosScreen />);
-    expect(screen.getByText('photos_confirm')).toBeTruthy();
+    await renderAsync(<PhotosScreen />);
+    expect(screen.getByText('pending_confirm')).toBeTruthy();
     expect(screen.queryByText('PickPic')).toBeNull();
   });
 
-  it('keeps permission management available from the empty home', () => {
+  it('keeps permission management available from the empty home', async () => {
     mockMediaState.photos = [];
     mockMediaState.permissionScope = 'limited';
-    render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
     expect(screen.getByText('photos_manage_access')).toBeTruthy();
     expect(screen.getByText('photos_limited_access_desc')).toBeTruthy();
   });
 
-  it('lets users preview and keep a queued photo beyond the first nine without changing earlier items', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
-    render(<PhotosScreen />);
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_previous' }));
-    expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri))
-      .toEqual(mockMediaState.deleteQueue.slice(0, 9).map(photo => photo.uri));
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
-    const tenth = screen.UNSAFE_getAllByType(Image).find(image => image.props.source.uri === 'file:///queued-9.jpg')!;
-    expect(tenth).toBeTruthy();
-    fireEvent(tenth, 'longPress');
-    expect(screen.UNSAFE_getAllByType(Image).some(image => (
-      image.props.source.uri === 'file:///queued-9.jpg' && image.props.resizeMode === 'contain'
-    ))).toBe(true);
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-    fireEvent(screen.UNSAFE_getByType(Modal), 'requestClose');
-    fireEvent.press(tenth);
-    expect(mockMediaState.keepPhotoFromDeleteQueue).toHaveBeenCalledTimes(1);
-    expect(mockMediaState.keepPhotoFromDeleteQueue).toHaveBeenCalledWith('queued-9');
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-  });
-
-  it('keeps only the tapped photo processed and stays in review without reloading the batch', () => {
-    mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
-    mockMediaState.deleteQueue = [...mockMediaState.photos];
-    const view = render(<PhotosScreen />);
-    mockLoadPhotos.mockClear();
-    fireEvent.press(screen.UNSAFE_getAllByType(Image)[1]);
-    view.rerender(<PhotosScreen />);
-    expect(mockMediaState.deleteQueue.map(photo => photo.id)).toEqual(['one', 'three']);
-    expect(mockMediaState.photoProcessedIds).toEqual(['one', 'two', 'three']);
-    expect(screen.getByTestId('photo-review')).toBeTruthy();
-    expect(screen.queryByText('card:two')).toBeNull();
-    expect(mockLoadPhotos).not.toHaveBeenCalled();
-    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
-    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
-  });
-
-  it('shows completion after keeping the last restored item and waits for explicit continue', () => {
+  // Shared paging, preview, permission, keep/undo, partial deletion and busy
+  // invariants now live in PendingDeletionReview.test.tsx using the real store.
+  it('keeps the last restored photo organized and stays until explicitly continued', async () => {
     mockMediaState.photos = [];
     mockMediaState.deleteQueue = [mockPhoto('restored')];
     mockMediaState.photoProcessedIds = ['restored'];
-    const view = render(<PhotosScreen />);
+    await renderAsync(<PhotosScreen />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'pending_confirm' })).toBeEnabled());
     mockLoadPhotos.mockClear();
-    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
-    view.rerender(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'pending_keep' }));
     expect(screen.getByTestId('photo-review')).toBeTruthy();
-    expect(screen.getByText('photos_finished')).toBeTruthy();
-    expect(screen.queryByText('photos_confirm')).toBeNull();
+    expect(screen.getByText('pending_empty')).toBeTruthy();
     expect(mockMediaState.photoProcessedIds).toEqual(['restored']);
     expect(mockLoadPhotos).not.toHaveBeenCalled();
-    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
-    fireEvent.press(screen.getByText('continue_next_batch'));
+    fireEvent.press(screen.getByRole('button', { name: 'pending_continue' }));
     expect(mockMediaState.resetBatch).toHaveBeenCalledWith([]);
     expect(mockLoadPhotos).toHaveBeenCalledTimes(1);
-    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
-    view.rerender(<PhotosScreen />);
-    expect(screen.queryByTestId('photo-review')).toBeNull();
+    expect(screen.getByText('PickPic')).toBeTruthy();
+    expect(mockMediaState.confirmPendingDeletion).not.toHaveBeenCalled();
   });
 
-  it('preserves a valid review page and falls back one page when its final item is kept', () => {
+  it('returns home without losing a pending queue or widening the album filter', async () => {
     mockMediaState.photos = [];
-    mockMediaState.deleteQueue = Array.from({ length: 19 }, (_, i) => mockPhoto(`queued-${i}`));
-    mockMediaState.photoProcessedIds = mockMediaState.deleteQueue.map(photo => photo.id);
-    const view = render(<PhotosScreen />);
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
-    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
-    view.rerender(<PhotosScreen />);
-    expect(screen.UNSAFE_getAllByType(Image)[0].props.source.uri).toBe('file:///queued-10.jpg');
-    // 18 items now fill two pages. Remove eight more on the second page.
-    for (let i = 0; i < 8; i++) {
-      fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
-      view.rerender(<PhotosScreen />);
-    }
-    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
-    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
-    view.rerender(<PhotosScreen />);
-    expect(screen.UNSAFE_getAllByType(Image).map(image => image.props.source.uri))
-      .toEqual(Array.from({ length: 9 }, (_, i) => `file:///queued-${i}.jpg`));
-    expect(screen.getByTestId('photo-review')).toBeTruthy();
-    expect(mockMediaState.photoProcessedIds).toHaveLength(19);
+    mockMediaState.deleteQueue = [mockPhoto('pending')];
+    await renderAsync(<PhotosScreen />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'pending_confirm' })).toBeEnabled());
+    mockLoadPhotos.mockClear();
+    fireEvent.press(screen.getByRole('button', { name: 'pending_continue' }));
+    expect(screen.getByText('PickPic')).toBeTruthy();
+    expect(mockMediaState.deleteQueue).toEqual([mockPhoto('pending')]);
+    expect(mockMediaState.resetBatch).toHaveBeenCalledWith([]);
+    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', []);
+    expect(mockMediaState.confirmPendingDeletion).not.toHaveBeenCalled();
   });
 
-  it('keeps hidden limited-access decisions when the last visible item is kept and continued', () => {
+  it('keeps a hidden limited-access decision while returning home after keeping a readable one', async () => {
     mockMediaState.photos = [];
     mockMediaState.permissionScope = 'limited';
-    mockMediaState.hiddenPhotoQueuedAssetIds = ['hidden'];
     mockMediaState.deleteQueue = [mockPhoto('visible'), mockPhoto('hidden')];
     mockMediaState.photoProcessedIds = ['visible', 'hidden'];
-    const view = render(<PhotosScreen />);
-    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
-    view.rerender(<PhotosScreen />);
-    expect(screen.getByText('photos_finished')).toBeTruthy();
+    (MediaLibrary.getPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true, accessPrivileges: 'limited' });
+    (MediaLibrary.getAssetInfoAsync as jest.Mock).mockImplementation(async (id: string) => id === 'hidden' ? null : mockPhoto(id));
+    await renderAsync(<PhotosScreen />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'pending_confirm' })).toBeEnabled());
+    fireEvent.press(screen.getAllByRole('button', { name: 'pending_keep' })[0]);
+    fireEvent.press(screen.getByRole('button', { name: 'pending_continue' }));
     expect(mockMediaState.deleteQueue.map(photo => photo.id)).toEqual(['hidden']);
     expect(mockMediaState.photoProcessedIds).toEqual(['visible', 'hidden']);
-    fireEvent.press(screen.getByText('continue_next_batch'));
     expect(mockMediaState.resetBatch).toHaveBeenCalledWith([]);
-    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+    expect(mockMediaState.confirmPendingDeletion).not.toHaveBeenCalled();
   });
 
-  it('invalidates the local kept-all completion on a media-library refresh', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('restored')];
-    mockMediaState.photoProcessedIds = ['restored'];
-    const view = render(<PhotosScreen />);
-    fireEvent.press(screen.UNSAFE_getAllByType(Image)[0]);
-    expect(screen.getByText('photos_finished')).toBeTruthy();
-    mockMediaState.mediaLibraryRefreshVersion++;
-    view.rerender(<PhotosScreen />);
-    expect(screen.queryByTestId('photo-review')).toBeNull();
-    expect(mockMediaState.photoProcessedIds).toEqual(['restored']);
-    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
-  });
-
-  it('confirms the complete visible queue rather than just the selected review page', async () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
-    mockMediaState.confirmDeletion.mockResolvedValue([]);
-    render(<PhotosScreen />);
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
-    fireEvent.press(screen.getByText('photos_confirm'));
-    await waitFor(() => expect(mockMediaState.confirmDeletion).toHaveBeenCalledWith(
-      mockMediaState.deleteQueue.map(photo => photo.id)
-    ));
-  });
-
-  it('closes a preview by tapping its media without undoing or confirming a decision', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('one')];
-    render(<PhotosScreen />);
-    const thumbnail = screen.UNSAFE_getAllByType(Image)[0];
-    fireEvent(thumbnail, 'longPress');
-    const preview = screen.UNSAFE_getAllByType(Image).find(image => image.props.resizeMode === 'contain')!;
-    fireEvent.press(preview);
-    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
-  });
-
-  it('explains a failed review preview and retries without undoing the queue or closing the preview', async () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('one')];
-    render(<PhotosScreen />);
-    fireEvent(screen.UNSAFE_getAllByType(Image)[0], 'longPress');
-    const preview = screen.UNSAFE_getAllByType(Image).find(image => image.props.resizeMode === 'contain')!;
-    fireEvent(preview, 'error', { nativeEvent: { error: 'Decoder failed' } });
-    expect(screen.getByText('scan_photo_unavailable')).toBeTruthy();
-    fireEvent.press(screen.getByRole('button', { name: 'retry' }));
-    await waitFor(() => expect(screen.UNSAFE_getAllByType(Image).some(image => image.props.resizeMode === 'contain')).toBe(true));
-    expect(screen.UNSAFE_getByType(Modal).props.visible).toBe(true);
-    expect(mockMediaState.deleteQueue.map(photo => photo.id)).toEqual(['one']);
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
+  it('offers the same pending queue from the home and the organizing deck', async () => {
+    const view = await renderAsync(<PhotosScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'pending_open' }));
+    expect(screen.getByTestId('pending-deletion-review')).toBeTruthy();
     fireEvent.press(screen.getByRole('button', { name: 'close' }));
-    expect(screen.UNSAFE_getByType(Modal).props.visible).toBe(false);
-  });
-
-  it('names thumbnail undo actions and disables all review actions while deletion is pending', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('one')];
-    mockMediaState.isConfirmingDeletion = true;
-    render(<PhotosScreen />);
-    expect(screen.getByRole('button', { name: 'photos_review_undo' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'photos_confirm' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'photos_skip' })).toBeDisabled();
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_undo' }));
-    expect(mockMediaState.keepPhotoFromDeleteQueue).not.toHaveBeenCalled();
-  });
-
-  it('provides a visible named close action for the long-press preview without changing the queue', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('one')];
-    render(<PhotosScreen />);
-    fireEvent(screen.UNSAFE_getAllByType(Image)[0], 'longPress');
-    fireEvent.press(screen.getByRole('button', { name: 'close' }));
-    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
-  });
-
-  it('fits nine thumbnails in the inset-aware width and keeps final actions outside the scrolling grid', () => {
-    jest.spyOn(require('react-native'), 'useWindowDimensions').mockReturnValue({ width: 320, height: 719, scale: 1, fontScale: 1.4 });
-    mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = Array.from({ length: 9 }, (_, i) => mockPhoto(`queued-${i}`));
-    render(<PhotosScreen />);
-    expect(screen.getByTestId('photo-review')).toHaveStyle({ paddingTop: 32, paddingBottom: 89, paddingLeft: 4, paddingRight: 8 });
-    for (const image of screen.UNSAFE_getAllByType(Image)) {
-      expect(StyleSheet.flatten(image.props.style)).toMatchObject({ width: 84, height: 84 });
-    }
-    const scroll = screen.UNSAFE_getByType(ScrollView);
-    expect(scroll.findAll((node: { props: { testID?: string } }) => node.props.testID === 'photo-review-actions')).toHaveLength(0);
-    expect(screen.getByTestId('photo-review-actions')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'photos_confirm' })).toHaveStyle({ minHeight: 50 });
-  });
-
-  it('keeps preview safe areas and closing controls independent of the image', () => {
-    mockInsets = { top: 32, bottom: 24, left: 4, right: 8 };
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('one')];
-    render(<PhotosScreen />);
-    fireEvent(screen.UNSAFE_getAllByType(Image)[0], 'longPress');
-    expect(screen.getByTestId('photo-preview')).toHaveStyle({ paddingTop: 40, paddingBottom: 24, paddingLeft: 4, paddingRight: 8 });
-    expect(screen.getByRole('button', { name: 'close' })).toHaveStyle({ width: 44, height: 44, flexShrink: 0 });
-    expect(screen.getByTestId('photo-preview-touch-area')).toHaveStyle({ flex: 1, minHeight: 0 });
-    expect(screen.UNSAFE_getByType(Modal).props).toMatchObject({ statusBarTranslucent: true, navigationBarTranslucent: true });
-  });
-
-  it('dismisses a stale preview on a library refresh without changing pending decisions', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('one')];
-    const view = render(<PhotosScreen />);
-    fireEvent(screen.UNSAFE_getAllByType(Image)[0], 'longPress');
-    mockMediaState.mediaLibraryRefreshVersion++;
-    view.rerender(<PhotosScreen />);
-    expect(screen.UNSAFE_getByType(Modal).props.visible).toBe(false);
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
-  });
-
-  it('shows a wrapping complete state with a reachable continue action and no dangerous confirmation', () => {
-    mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
-    render(<PhotosScreen />);
-    expect(screen.getByRole('header', { name: 'photos_finished' }).props.numberOfLines).toBeUndefined();
-    expect(screen.getByRole('button', { name: 'continue_next_batch' })).toHaveStyle({ minHeight: 50 });
-    expect(screen.queryByText('photos_confirm')).toBeNull();
-  });
-
-  it('skips the whole visible queue without deleting media or undoing processed records', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
-    render(<PhotosScreen />);
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
-    mockLoadPhotos.mockClear();
-    fireEvent.press(screen.getByText('photos_skip'));
-    expect(mockMediaState.resetBatch).toHaveBeenCalledWith(mockMediaState.deleteQueue.map(photo => photo.id));
-    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', []);
-    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-  });
-
-  it('clears only confirmed deleted IDs rather than losing failed visibility checks', async () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('one'), mockPhoto('two')];
-    mockMediaState.confirmDeletion.mockResolvedValueOnce(['one']);
-    render(<PhotosScreen />);
-    fireEvent.press(screen.getByText('photos_confirm'));
-    await waitFor(() => expect(mockMediaState.resetBatch).toHaveBeenCalledWith(['one']));
-    expect(mockMediaState.confirmDeletion).toHaveBeenCalledWith(['one', 'two']);
-  });
-
-  it('does not include hidden limited-grant queue entries in review or confirmation', async () => {
-    mockMediaState.permissionScope = 'limited';
-    mockMediaState.hiddenPhotoQueuedAssetIds = ['two'];
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = [mockPhoto('one'), mockPhoto('two')];
-    mockMediaState.confirmDeletion.mockResolvedValueOnce([]);
-    render(<PhotosScreen />);
-    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(1);
-    fireEvent.press(screen.getByText('photos_confirm'));
-    await waitFor(() => expect(mockMediaState.confirmDeletion).toHaveBeenCalledWith(['one']));
-  });
-
-  it('continues a no-deletion batch with the original filter without calling native deletion', () => {
-    mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
-    render(<PhotosScreen />);
-    fireEvent.press(screen.getByText('continue_next_batch'));
-    expect(mockMediaState.resetBatch).toHaveBeenCalledWith([]);
-    expect(mockLoadPhotos).toHaveBeenCalledWith(10, 'random', []);
-    expect(mockMediaState.confirmDeletion).not.toHaveBeenCalled();
-  });
-
-  it.each(['finished batch', 'restored queue'])('shows native deletion failure in %s review without clearing decisions', async source => {
-    jest.useFakeTimers();
-    jest.spyOn(console, 'error').mockImplementation(() => undefined);
-    if (source === 'restored queue') mockMediaState.photos = [];
-    else mockMediaState.photoProcessedIds = ['one', 'two', 'three'];
-    mockMediaState.deleteQueue = [mockPhoto('one')];
-    mockMediaState.confirmDeletion.mockRejectedValueOnce(new Error('Native deletion failed'));
-    render(<PhotosScreen />);
-    mockLoadPhotos.mockClear();
-
-    fireEvent.press(screen.getByText('photos_confirm'));
-
-    await waitFor(() => expect(screen.getByText('photos_delete_failed')).toBeTruthy());
-    expect(mockMediaState.resetBatch).not.toHaveBeenCalled();
-    expect(mockLoadPhotos).not.toHaveBeenCalled();
-    expect(mockMediaState.deleteQueue.map(photo => photo.id)).toEqual(['one']);
-    expect(screen.getByText('photos_confirm')).toBeTruthy();
-    act(() => jest.advanceTimersByTime(1500));
-    expect(screen.queryByText('photos_delete_failed')).toBeNull();
-    expect(screen.getByText('photos_confirm')).toBeTruthy();
-  });
-
-  it('clamps review pagination after the queue shrinks and prevents duplicate undo during deletion', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = Array.from({ length: 10 }, (_, i) => mockPhoto(`queued-${i}`));
-    const view = render(<PhotosScreen />);
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
-    mockMediaState.deleteQueue = mockMediaState.deleteQueue.slice(0, 9);
-    mockMediaState.isConfirmingDeletion = true;
-    view.rerender(<PhotosScreen />);
-    const first = screen.UNSAFE_getAllByType(Image).find(image => image.props.source.uri === 'file:///queued-0.jpg')!;
-    expect(first).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'photos_review_next' })).toBeNull();
-    fireEvent.press(first);
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-  });
-
-  it('renders a bounded review page for a large restored queue', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = Array.from({ length: 1000 }, (_, i) => mockPhoto(`queued-${i}`));
-    render(<PhotosScreen />);
-    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(9);
-    fireEvent.press(screen.getByRole('button', { name: 'photos_review_next' }));
-    expect(screen.UNSAFE_getAllByType(Image)).toHaveLength(9);
-    expect(mockMediaState.undoAction).not.toHaveBeenCalled();
-  });
-
-  it('allows tall deletion-review content to grow past the viewport instead of flex-shrinking its actions offscreen', () => {
-    mockMediaState.photos = [];
-    mockMediaState.deleteQueue = Array.from({ length: 9 }, (_, i) => mockPhoto(`queued-${i}`));
-    render(<PhotosScreen />);
-    const style = StyleSheet.flatten(screen.UNSAFE_getByType(ScrollView).props.contentContainerStyle);
-    expect(style.flex).not.toBe(1);
-    expect(style.flexShrink).toBe(0);
-    expect(style.flexGrow).toBe(1);
+    fireEvent.press(screen.getByText('photos_home_start'));
+    expect(screen.getByRole('button', { name: 'pending_open' })).toBeTruthy();
+    await view.unmountAsync();
   });
 });

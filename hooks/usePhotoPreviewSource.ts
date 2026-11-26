@@ -1,4 +1,4 @@
-import * as MediaLibrary from 'expo-media-library';
+import { getReadableMediaInfo } from '../services/readableMedia';
 import { useEffect, useState } from 'react';
 
 /** Callers key the preview by asset/URI. Normal display uses the supplied URI;
@@ -11,7 +11,7 @@ export function usePhotoPreviewSource(uri: string, assetId?: string) {
         if (attempt === 0) return;
         let active = true;
         setImage(null);
-        void (assetId ? MediaLibrary.getAssetInfoAsync(assetId) : Promise.resolve({ uri, localUri: undefined })).then(info => {
+        void (assetId ? getReadableMediaInfo(assetId) : Promise.resolve({ uri, localUri: undefined })).then(info => {
             const nextUri = info?.localUri || info?.uri || '';
             if (active) setImage({ uri: nextUri, failed: !nextUri, attempt });
         }).catch(() => {

@@ -5,6 +5,7 @@ jest.mock('../../database/db', () => ({
 
 jest.mock('../../database/repositories/DupGroupRepository', () => ({
   addAssetToMatchingGroupsInDatabase: jest.fn(),
+  removeAssetsFromGroupsInDatabase: jest.fn().mockResolvedValue(undefined),
   repairDuplicateGroupsInDatabase: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -121,5 +122,164 @@ describe('AssetRepository', () => {
     const candidates = await AssetRepository.getScanCandidateBatch(4, 20, ['inside']);
 
     expect(candidates.map(asset => asset.asset_id)).toEqual(['inside']);
+  });
+
+  it('batch-reads assets by ID across SQLite-safe chunks without opening transactions', async () => {
+    await expect(AssetRepository.getByIds([])).resolves.toEqual(new Map());
+
+    const ids: string[] = [];
+    for (let i = 0; i < 450; i++) {
+      const id = `chunk-asset-${i}`;
+      ids.push(id);
+      await database.runAsync(
+        'INSERT INTO assets (asset_id, taken_at, width, height, file_signature, status) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, 1000 + i, 1200, 900, `1700000000_${1000 + i}`, AssetStatus.DONE],
+      );
+    }
+
+    (withTransaction as jest.Mock).mockClear();
+    const getAllSpy = jest.spyOn(database, 'getAllAsync');
+
+    const map = await AssetRepository.getByIds([...ids, 'chunk-asset-0', 'missing-id']);
+
+    expect(withTransaction).not.toHaveBeenCalled();
+    expect(getAllSpy).toHaveBeenCalledTimes(2);
+    expect(map.size).toBe(450);
+    expect(map.get('chunk-asset-0')?.file_signature).toBe('1700000000_1000');
+    expect(map.get('chunk-asset-449')?.taken_at).toBe(1449);
+    expect(map.has('missing-id')).toBe(false);
+  });
+
+  it('upserts multiple assets in a single transaction while preserving omitted vs null semantics', async () => {
+    (withTransaction as jest.Mock).mockClear();
+    await AssetRepository.upsertBatch([]);
+    expect(withTransaction).not.toHaveBeenCalled();
+
+    await AssetRepository.upsertBatch([
+      {
+        asset_id: 'batch-1',
+        taken_at: 100,
+        width: 1000,
+        height: 800,
+        file_signature: 'sig-1',
+        status: AssetStatus.DONE,
+        labels_json: '["cat"]',
+      },
+      {
+        asset_id: 'batch-2',
+        taken_at: 200,
+        width: 1200,
+        height: 900,
+        file_signature: 'sig-2',
+        status: AssetStatus.PENDING,
+      },
+    ]);
+
+    expect(withTransaction).toHaveBeenCalledTimes(1);
+
+    await AssetRepository.upsertBatch([
+      { asset_id: 'batch-1', width: 1024, labels_json: null },
+    ]);
+
+    expect(withTransaction).toHaveBeenCalledTimes(2);
+    expect(await AssetRepository.getById('batch-1')).toMatchObject({
+      width: 1024,
+      height: 800,
+      status: AssetStatus.DONE,
+      labels_json: null,
+    });
+    expect(await AssetRepository.getById('batch-2')).toMatchObject({
+      taken_at: 200,
+      status: AssetStatus.PENDING,
+    });
+  });
+
+  it('paginates blurry assets deterministically across full and >500-ID scoped queries', async () => {
+    const seeded = Array.from({ length: 65 }, (_, index) => ({
+      asset_id: `blur-${String(index).padStart(3, '0')}`,
+      taken_at: 1000 + index,
+      width: 1000,
+      height: 800,
+      blur_score: index + 1,
+      mean_luma: 90,
+      status: AssetStatus.DONE,
+    }));
+    await AssetRepository.upsertBatch(seeded);
+
+    const page1 = await AssetRepository.getBlurryAssets(undefined, 25, 0);
+    const page2 = await AssetRepository.getBlurryAssets(undefined, 25, 25);
+    const page3 = await AssetRepository.getBlurryAssets(undefined, 25, 50);
+
+    expect(page1).toHaveLength(25);
+    expect(page2).toHaveLength(25);
+    expect(page3).toHaveLength(15);
+    expect([...page1, ...page2, ...page3].map(item => item.asset_id)).toEqual(
+      seeded.map(item => item.asset_id),
+    );
+
+    // Multi-chunk limited scope (>500 IDs) must still return exact global page slices.
+    const wideScope = [
+      ...Array.from({ length: 510 }, (_, idx) => `missing-${idx}`),
+      ...seeded.map(item => item.asset_id),
+    ];
+    const scopedPage2 = await AssetRepository.getBlurryAssets(wideScope, 10, 50);
+    expect(scopedPage2.map(item => item.asset_id)).toEqual(
+      seeded.slice(50, 60).map(item => item.asset_id),
+    );
+  });
+
+  it('applies BlurDetector brightness-adaptive 0.7x SQL threshold for dark (<40) and overexposed (>220) photos', async () => {
+    await AssetRepository.upsertBatch([
+      { asset_id: 'dark-not-blurry', blur_score: 80, mean_luma: 25, status: AssetStatus.DONE },
+      { asset_id: 'dark-boundary-70', blur_score: 70, mean_luma: 30, status: AssetStatus.DONE },
+      { asset_id: 'dark-truly-blurry', blur_score: 65, mean_luma: 25, status: AssetStatus.DONE },
+      { asset_id: 'bright-not-blurry', blur_score: 85, mean_luma: 235, status: AssetStatus.DONE },
+      { asset_id: 'bright-truly-blurry', blur_score: 69.5, mean_luma: 235, status: AssetStatus.DONE },
+      { asset_id: 'luma-40-normal', blur_score: 85, mean_luma: 40, status: AssetStatus.DONE },
+      { asset_id: 'luma-220-normal', blur_score: 90, mean_luma: 220, status: AssetStatus.DONE },
+      { asset_id: 'normal-sharp', blur_score: 100, mean_luma: 120, status: AssetStatus.DONE },
+    ]);
+
+    const results = await AssetRepository.getBlurryAssets(undefined, 50, 0);
+    expect(results.map(item => item.asset_id)).toEqual([
+      'dark-truly-blurry',
+      'bright-truly-blurry',
+      'luma-40-normal',
+      'luma-220-normal',
+    ]);
+  });
+
+  it('paginates blurry assets stably with keyset cursor even when earlier rows are deleted mid-scroll', async () => {
+    await AssetRepository.upsertBatch(
+      Array.from({ length: 10 }, (_, idx) => ({
+        asset_id: `k-${String(idx).padStart(2, '0')}`,
+        blur_score: idx < 4 ? 10 : 20 + idx,
+        mean_luma: 120,
+        status: AssetStatus.DONE,
+      })),
+    );
+
+    const page1 = await AssetRepository.getBlurryAssets(undefined, 3, 0);
+    expect(page1.map(item => item.asset_id)).toEqual(['k-00', 'k-01', 'k-02']);
+
+    // Delete an earlier item before fetching page 2: OFFSET would skip 'k-03', keyset must not!
+    await database.runAsync("DELETE FROM assets WHERE asset_id = 'k-00'");
+    const last = page1[page1.length - 1];
+    const page2 = await AssetRepository.getBlurryAssets(undefined, 3, 0, {
+      blurScore: last.blur_score,
+      assetId: last.asset_id,
+    });
+    expect(page2.map(item => item.asset_id)).toEqual(['k-03', 'k-04', 'k-05']);
+
+    // Multi-chunk (>500 IDs) keyset pagination stays accurate and bounded per chunk.
+    const wideScope = [
+      ...Array.from({ length: 510 }, (_, idx) => `pad-${idx}`),
+      ...Array.from({ length: 10 }, (_, idx) => `k-${String(idx).padStart(2, '0')}`),
+    ];
+    const scopedPage2 = await AssetRepository.getBlurryAssets(wideScope, 3, 0, {
+      blurScore: last.blur_score,
+      assetId: last.asset_id,
+    });
+    expect(scopedPage2.map(item => item.asset_id)).toEqual(['k-03', 'k-04', 'k-05']);
   });
 });

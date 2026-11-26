@@ -18,6 +18,7 @@ const mockMedia = {
   mediaLibraryRefreshVersion: 0, isConfirmingDeletion: false, isConfirmingVideoTrash: false,
 };
 const mockScanner = {
+  classificationProgress: { pending: 2, done: 4, error: 1 }, startClassification: jest.fn(),
   progress: { totalPending: 0, totalDone: 7, totalError: 0, currentBatch: 0 },
   isRunning: false, isFinalizing: false, lastError: null,
   start: jest.fn(), stop: jest.fn(), resumeOnce: jest.fn(), resetScan: jest.fn().mockResolvedValue(undefined),
@@ -37,7 +38,9 @@ jest.mock('../hooks/useAIScanner', () => ({ useAIScanner: () => mockScanner }));
 jest.mock('../stores/useSettingsStore', () => ({
   APP_VERSION: 'v0.4.0', useSettingsStore: Object.assign(() => mockSettings, { getState: () => mockSettings }),
 }));
-jest.mock('../stores/useMediaStore', () => ({ useMediaStore: () => mockMedia }));
+jest.mock('../stores/useMediaStore', () => ({
+  useMediaStore: (selector?: (state: typeof mockMedia) => unknown) => (selector ? selector(mockMedia) : mockMedia),
+}));
 jest.mock('../hooks/useThemeColor', () => ({
   useThemeColor: () => {
     const palette = require('../constants/theme');
@@ -94,6 +97,7 @@ it('exposes ordinary preferences and classification without putting destructive 
 
 it.each([
   ['theme', zh.settings_theme, zh.theme_light, zh.theme_dark, 'dark', mockSettings.setTheme],
+  ['theme', zh.settings_theme, zh.theme_light, '跟随系统', 'system', mockSettings.setTheme],
   ['order', zh.settings_display_order, zh.display_order_random, zh.display_order_newest, 'newest', mockSettings.setDisplayOrder],
   ['language', zh.settings_language, '中文', 'English', 'en', mockSettings.setLanguage],
 ] as const)('writes the selected %s value only after an explicit choice', async (_kind, label, initial, next, value, setter) => {
@@ -366,4 +370,19 @@ it('does not start another scan from either control while finalizing', async () 
   expect(mockScanner.start).not.toHaveBeenCalled();
   expect(mockScanner.resumeOnce).not.toHaveBeenCalled();
   expectNoReset();
+});
+
+it('displays a gentle warning when protected albums are missing or renamed on the device', async () => {
+  Object.assign(mockMedia, {
+    protectedAlbums: [{ albumId: 'missing-1', title: 'Old Folder', createdAt: 1 }],
+    missingProtectedAlbumIds: ['missing-1'],
+  });
+  try {
+    render(<SettingsScreen />);
+    await waitFor(() => expect(mockMedia.getVisibleProcessedCounts).toHaveBeenCalled());
+    expect(screen.getByTestId('protected-albums-missing-warning')).toBeTruthy();
+    expect(screen.getByText(/有 1 个保护相册已不存在或已改名/)).toBeTruthy();
+  } finally {
+    Object.assign(mockMedia, { protectedAlbums: [], missingProtectedAlbumIds: [] });
+  }
 });

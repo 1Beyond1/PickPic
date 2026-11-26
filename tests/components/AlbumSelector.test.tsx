@@ -11,7 +11,10 @@ const mockAlbums = [
 ];
 let mockVisibleAlbums = mockAlbums;
 jest.mock('../../stores/useMediaStore', () => ({
-    useMediaStore: () => ({ albums: mockVisibleAlbums, loadAlbums: mockLoadAlbums }),
+    useMediaStore: (selector?: (state: { albums: typeof mockAlbums; loadAlbums: typeof mockLoadAlbums }) => unknown) => {
+        const state = { albums: mockVisibleAlbums, loadAlbums: mockLoadAlbums };
+        return selector ? selector(state) : state;
+    },
     hasFullPhotoLibraryAccess: () => mockFullAccess(),
 }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null, Feather: () => null }));
@@ -116,4 +119,63 @@ it('keeps the final album in a long list selectable without applying its draft o
     fireEvent.press(selector.getByRole('button', { name: 'cancel' }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
+});
+
+it('displays unavailable/deleted protected albums and allows removing them individually without clearing valid ones', async () => {
+    const onConfirm = jest.fn();
+    render(
+        <AlbumSelector
+            visible
+            onClose={jest.fn()}
+            onConfirm={onConfirm}
+            initialSelection={['photos', 'deleted-vault']}
+            unavailableSelectionItems={[
+                { id: 'photos', title: 'Camera' },
+                { id: 'deleted-vault', title: 'Deleted Vault' },
+            ]}
+        />,
+    );
+    const unavailableRow = await screen.findByTestId('album-unavailable-deleted-vault');
+    expect(screen.getByText('Deleted Vault')).toBeTruthy();
+    expect(screen.getByText('protected_album_unavailable_tag')).toBeTruthy();
+
+    // Removing the single unavailable item keeps the valid 'photos' album selected.
+    fireEvent.press(unavailableRow);
+    expect(screen.queryByTestId('album-unavailable-deleted-vault')).toBeNull();
+    fireEvent.press(screen.getByRole('button', { name: 'confirm' }));
+    expect(onConfirm).toHaveBeenCalledWith(['photos']);
+});
+
+it('keeps draft edits when initialSelection reference changes while open and syncs latest selection after reopen', async () => {
+    const onConfirm = jest.fn();
+    const onClose = jest.fn();
+    const view = render(
+        <AlbumSelector visible onClose={onClose} onConfirm={onConfirm} initialSelection={['photos']} />,
+    );
+    const movies = await screen.findByRole('checkbox', { name: 'Movies' });
+    expect(mockLoadAlbums).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(movies);
+    expect(screen.getByRole('checkbox', { name: 'Movies', checked: true })).toBeTruthy();
+
+    // Parent re-renders with a new initialSelection array reference while visible remains true.
+    view.rerender(
+        <AlbumSelector visible onClose={onClose} onConfirm={onConfirm} initialSelection={['photos']} />,
+    );
+    await act(async () => {
+        await Promise.resolve();
+    });
+    expect(mockLoadAlbums).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('checkbox', { name: 'Movies', checked: true })).toBeTruthy();
+
+    // Closing and reopening reads the latest initialSelection and reloads once.
+    view.rerender(
+        <AlbumSelector visible={false} onClose={onClose} onConfirm={onConfirm} initialSelection={['videos']} />,
+    );
+    view.rerender(
+        <AlbumSelector visible onClose={onClose} onConfirm={onConfirm} initialSelection={['videos']} />,
+    );
+    await waitFor(() => expect(mockLoadAlbums).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('checkbox', { name: 'Movies', checked: true })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Camera', checked: false })).toBeTruthy();
 });

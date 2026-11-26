@@ -7,9 +7,22 @@ import { AppState, Platform, StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AIScanGuideModal } from '../components/AIScanGuideModal';
 import { AnnouncementModal } from '../components/AnnouncementModal';
+import { PrivacyRecoveryScreen } from '../components/PrivacyRecoveryScreen';
 import { MLBridge } from '../components/MLBridge';
 import { useThemeColor } from '../hooks/useThemeColor';
-import { AssetRepository } from '../database';
+import { syncModalAppearance } from '../services/modalAppearance';
+import { AssetRepository, closeDatabase, getDatabase } from '../database';
+import { flushMediaProgress } from '../services/mediaProgressStorage';
+import { loadBackupChangeState } from '../services/backup/changeTracker';
+import { canWriteEncryptedStorage } from '../services/privacy/encryptedStorage';
+import { flushSettings } from '../services/privacy/settingsStorage';
+import { clearLegacyMediaCache } from '../services/privacy/mediaCache';
+import {
+  recoverFromEncryptedBackup,
+  resetLocalPrivacyIndex,
+  resolvePrimaryFailureDomain,
+} from '../services/privacy/recovery';
+import { LocalPrivacyError, usePrivacyStore } from '../stores/usePrivacyStore';
 import { isScanning, start as startScanner, stop as stopScanner } from '../services/scanner';
 import { useMediaStore } from '../stores/useMediaStore';
 import { useScannerStore } from '../stores/useScannerStore';
@@ -17,13 +30,19 @@ import { APP_VERSION, useSettingsStore } from '../stores/useSettingsStore';
 
 // Keep splash screen visible while loading
 void SplashScreen.preventAutoHideAsync().catch(error => {
-  console.error('[RootLayout] Failed to keep splash screen visible:', error);
+  console.error('[RootLayout] Failed to keep splash screen visible.');
 });
 
 export default function RootLayout() {
   const { colors, isDark } = useThemeColor();
+  useEffect(() => { void syncModalAppearance(isDark); }, [isDark]);
   const router = useRouter();
   const pathname = usePathname();
+  const privacyFailures = usePrivacyStore(state => state.failures);
+  const privacyReasons = usePrivacyStore(state => state.reasons);
+  const privacyRecovering = usePrivacyStore(state => Boolean(state.recovering));
+  const mediaHydrated = useMediaStore(state => state.hasHydrated);
+  const [privacyRetrying, setPrivacyRetrying] = useState(false);
   const [mediaPermission, , getMediaPermission] = MediaLibrary.usePermissions({
     // Keep the global gate scoped to the required photo workflow. Android
     // reports a combined request as denied when video is refused, even though
@@ -42,7 +61,7 @@ export default function RootLayout() {
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [showAIGuide, setShowAIGuide] = useState(false);
   const [appReady, setAppReady] = useState(false);
-  const mediaHasHydrated = useMediaStore(state => state.hasHydrated);
+  const privacyReady = appReady && settingsHydrated && mediaHydrated && Object.keys(privacyFailures).length === 0 && !privacyRecovering;
   const mediaPermissionGrantedRef = useRef(false);
   const mediaPermissionScopeRef = useRef<'none' | 'limited' | 'full' | null>(null);
   const previousMediaPermissionRef = useRef<typeof mediaPermission>(null);
@@ -69,7 +88,7 @@ export default function RootLayout() {
   // snapshot, and an unrelated render would otherwise restore the stale
   // granted value before the next delayed onboarding callback runs.
   useEffect(() => {
-    if (!mediaPermission) return;
+    if (!privacyReady || !mediaPermission) return;
 
     const currentScope = !mediaPermission.granted
       ? 'none'
@@ -102,14 +121,17 @@ export default function RootLayout() {
       if (currentScope !== 'none') {
         const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
         void mediaStore.loadAlbums();
+        void mediaStore.loadProtectedAlbums?.();
         void mediaStore.refreshTotalCounts();
-        void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+        // A saved session is recovered by the photo page's generation-aware
+        // refresh. Do not also sample a replacement batch here.
+        if (!mediaStore.organizingSessions.photo) void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
       }
     }
 
     const mediaStore = useMediaStore.getState();
     mediaStore.setPermissionScope(currentScope);
-    if (mediaHasHydrated && (!queueVisibilityInitializedRef.current || mediaSnapshotChanged)) {
+    if (!queueVisibilityInitializedRef.current || mediaSnapshotChanged) {
       mediaStore.refreshQueuedAssetVisibility(currentScope, 'photo');
       mediaStore.pruneUnavailableQueuedAssets(currentScope, 'photo');
       queueVisibilityInitializedRef.current = true;
@@ -121,12 +143,19 @@ export default function RootLayout() {
     }
     previousMediaPermissionRef.current = mediaPermission;
     mediaPermissionScopeRef.current = currentScope;
-  }, [mediaHasHydrated, mediaPermission]);
+  }, [privacyReady, mediaPermission]);
+
+  useEffect(() => {
+    if (!privacyReady && isScanning()) stopScanner();
+  }, [privacyReady]);
 
   // Permissions can be revoked in system settings after the initial route
   // has already replaced the permission screen. Keep the gate active for
   // every route and send the user back when access is no longer granted.
   useEffect(() => {
+    // The recovery/loading screen deliberately does not mount routes. Do not
+    // navigate or subscribe until protected state has opened successfully.
+    if (!privacyReady) return;
     let mounted = true;
 
     const redirectIfPermissionRevoked = async () => {
@@ -146,8 +175,8 @@ export default function RootLayout() {
         } else if (mounted) {
           mediaPermissionGrantedRef.current = permission.granted;
         }
-      } catch (error) {
-        console.error('[RootLayout] Failed to refresh media permission:', error);
+      } catch {
+        console.error('[RootLayout] Failed to refresh media permission.');
       }
     };
 
@@ -162,7 +191,7 @@ export default function RootLayout() {
       mounted = false;
       subscription.remove();
     };
-  }, [getMediaPermission, router]);
+  }, [privacyReady, getMediaPermission, router]);
 
   // MediaLibrary reports both ordinary asset changes and iOS changes to the
   // selected subset while the permission remains `limited`. The privilege
@@ -170,61 +199,58 @@ export default function RootLayout() {
   // media state and notify result/detail screens explicitly. Web has no native
   // listener.
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    if (!privacyReady || Platform.OS === 'web') return;
+
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleIncrementalRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (Object.keys(usePrivacyStore.getState().failures).length) return;
+        const mediaStore = useMediaStore.getState();
+        const scope = mediaPermissionScopeRef.current ?? 'none';
+        mediaStore.refreshQueuedAssetVisibility(scope, 'photo');
+        mediaStore.pruneUnavailableQueuedAssets(scope, 'photo');
+        if (mediaPermissionGrantedRef.current && !isScanning()) {
+          void mediaStore.loadAlbums();
+          void mediaStore.loadProtectedAlbums?.();
+          void mediaStore.refreshTotalCounts();
+        }
+        mediaStore.notifyMediaLibraryRefresh();
+      }, 300);
+    };
 
     const subscription = MediaLibrary.addListener(event => {
+      if (Object.keys(usePrivacyStore.getState().failures).length) return;
       const isPermissionScopeChange = event.hasIncrementalChanges === false;
       const isIncrementalMediaChange = event.hasIncrementalChanges === true || Platform.OS === 'android';
       if (!isPermissionScopeChange && !isIncrementalMediaChange) return;
 
       const mediaStore = useMediaStore.getState();
-      mediaStore.clearLoadedMedia();
-      let indexCleanupPromise: Promise<void> | null = null;
       if (isPermissionScopeChange) {
+        if (refreshTimer) {
+          clearTimeout(refreshTimer);
+          refreshTimer = null;
+        }
+        mediaStore.clearLoadedMedia();
         // The permission hook has not necessarily published the new scope
         // yet. Hide all persisted queue items until it does so.
         mediaStore.refreshQueuedAssetVisibility('none', 'photo');
         mediaStore.notifyPermissionRefresh();
-      } else {
-        const deletedAssetIds = event.deletedAssets?.map(asset => asset.id) ?? [];
-        if (deletedAssetIds.length > 0) {
-          // Incremental deletion events identify media that is genuinely gone.
-          // Permission-scope changes use hasIncrementalChanges=false and must
-          // not remove progress that may become visible again later.
-          mediaStore.removeDeletedAssets(deletedAssetIds);
-          indexCleanupPromise = AssetRepository.removeAssetsAndDerivedData(deletedAssetIds)
-            .catch(error => {
-              // The media is already gone. Keep the UI refresh, and let the
-              // next complete scan repair the index if this cleanup failed.
-              console.error('[RootLayout] Failed to clean externally deleted assets from scan index:', error);
-            });
+        if (isScanning()) {
+          stopScanner();
         }
-        mediaStore.refreshQueuedAssetVisibility(mediaPermissionScopeRef.current ?? 'none', 'photo');
-        mediaStore.pruneUnavailableQueuedAssets(mediaPermissionScopeRef.current ?? 'none', 'photo');
-        if (!indexCleanupPromise) {
-          mediaStore.notifyMediaLibraryRefresh();
+
+        if (mediaPermissionGrantedRef.current) {
+          const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
+          void mediaStore.loadAlbums();
+          void mediaStore.loadProtectedAlbums?.();
+          void mediaStore.refreshTotalCounts();
+          if (!mediaStore.organizingSessions.photo) {
+            void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
+          }
         }
-      }
-      if (isScanning()) {
-        stopScanner();
-      }
 
-      if (mediaPermissionGrantedRef.current) {
-        const { groupSize, displayOrder, selectedAlbumIds } = useSettingsStore.getState();
-        void mediaStore.loadAlbums();
-        void mediaStore.refreshTotalCounts();
-        void mediaStore.loadPhotos(groupSize, displayOrder, selectedAlbumIds);
-      }
-
-      if (indexCleanupPromise) {
-        void indexCleanupPromise.then(() => {
-          // Refresh scanner status only after the index transaction has
-          // committed, otherwise deleted rows can be reported once more.
-          useMediaStore.getState().notifyMediaLibraryRefresh();
-        });
-      }
-
-      if (isPermissionScopeChange) {
         void getMediaPermission()
           .then(permission => {
             // A limited-to-limited selection change keeps the same coarse
@@ -243,14 +269,39 @@ export default function RootLayout() {
             refreshedStore.refreshQueuedAssetVisibility(refreshedScope, 'photo');
             refreshedStore.pruneUnavailableQueuedAssets(refreshedScope, 'photo');
           })
-          .catch(error => {
-            console.error('[RootLayout] Failed to refresh permission after media-library scope change:', error);
+          .catch(() => {
+            console.error('[RootLayout] Failed to refresh permission after media-library scope change.');
           });
+        return;
       }
+
+      // Incremental media changes (e.g. a new screenshot or edit outside the
+      // app) should not clear an active video feed or stop an in-progress AI
+      // scan. Remove explicitly deleted assets immediately and debounce the
+      // lightweight visibility/metadata refresh.
+      const deletedAssetIds = event.deletedAssets?.map(asset => asset.id) ?? [];
+      if (deletedAssetIds.length > 0) {
+        mediaStore.removeDeletedAssets(deletedAssetIds);
+        void AssetRepository.removeAssetsAndDerivedData(deletedAssetIds)
+          .catch(() => {
+            // The media is already gone. Keep the UI refresh, and let the
+            // next complete scan repair the index if this cleanup failed.
+            console.error('[RootLayout] Failed to clean externally deleted assets from scan index.');
+          })
+          .finally(() => {
+            scheduleIncrementalRefresh();
+          });
+        return;
+      }
+
+      scheduleIncrementalRefresh();
     });
 
-    return () => subscription.remove();
-  }, [getMediaPermission]);
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      subscription.remove();
+    };
+  }, [privacyReady, getMediaPermission]);
 
   // Initialize app
   useEffect(() => {
@@ -258,10 +309,17 @@ export default function RootLayout() {
 
     async function initializeApp() {
       try {
+        await clearLegacyMediaCache();
+        await getDatabase(); // Migrate/validate the protected scanner index before showing the app.
+        // Ensure protected album rules and asset membership are loaded BEFORE
+        // routes mount and trigger cold-start card loading.
+        await useMediaStore.getState().loadProtectedAlbums?.();
+        void loadBackupChangeState().catch(() => undefined);
         // Refresh media counts on app start
         await useMediaStore.getState().refreshTotalCounts();
-      } catch (error) {
-        console.error('[RootLayout] Failed to initialize app data:', error);
+      } catch {
+        // Native storage errors can contain SQL, identifiers or paths.
+        // The protected database reports only a generic recovery state.
       } finally {
         if (mounted) {
           setAppReady(true);
@@ -269,8 +327,8 @@ export default function RootLayout() {
 
         try {
           await SplashScreen.hideAsync();
-        } catch (error) {
-          console.error('[RootLayout] Failed to hide splash screen:', error);
+        } catch {
+          console.error('[RootLayout] Failed to hide splash screen.');
         }
       }
     }
@@ -286,7 +344,7 @@ export default function RootLayout() {
   useEffect(() => {
     // Do not cover the permission gate with onboarding. On a fresh install
     // the user must grant media access before the AI guide can start a scan.
-    if (!appReady || !settingsHydrated || !mediaPermission?.granted || initialCheckDone.current) return;
+    if (!privacyReady || !mediaPermission?.granted || initialCheckDone.current) return;
 
     initialCheckDone.current = true;
 
@@ -304,8 +362,7 @@ export default function RootLayout() {
       return () => clearTimeout(timer);
     }
   }, [
-    appReady,
-    settingsHydrated,
+    privacyReady,
     mediaPermission?.granted,
     dismissedAnnouncementVersion,
     aiGuideShownVersion,
@@ -348,6 +405,52 @@ export default function RootLayout() {
     setShowAIGuide(false);
     dismissAIGuide(APP_VERSION);
   };
+
+  const retryPrivacy = async () => {
+    if (privacyRetrying) return;
+    setPrivacyRetrying(true);
+    try {
+      if (isScanning()) {
+        stopScanner();
+        const deadline = Date.now() + 20000;
+        while (isScanning() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+        if (isScanning()) throw new LocalPrivacyError();
+      }
+      await clearLegacyMediaCache();
+      const failures = usePrivacyStore.getState().failures;
+      if (failures.scanner) await closeDatabase();
+      await getDatabase();
+      const needsSettingsRehydrate = failures.settings === 'read'
+        || !useSettingsStore.getState().hasHydrated
+        || !canWriteEncryptedStorage('settings', 'photoapp-settings');
+      if (needsSettingsRehydrate) await useSettingsStore.persist.rehydrate();
+      else await flushSettings();
+      const needsRecordsRehydrate = failures.records === 'read'
+        || !useMediaStore.getState().hasHydrated
+        || !canWriteEncryptedStorage('records', 'photoapp-media-progress');
+      if (needsRecordsRehydrate) await useMediaStore.persist.rehydrate();
+      else await flushMediaProgress();
+    } catch {
+      // The privacy gate retains the data and a non-sensitive failure state.
+    } finally { setPrivacyRetrying(false); }
+  };
+
+  const failureKinds = Object.values(privacyFailures);
+  if (!privacyReady) {
+    const failure = failureKinds.includes('read') ? 'read' : failureKinds.length ? 'write' : null;
+    const failureDomain = resolvePrimaryFailureDomain(privacyFailures, privacyReasons ?? {});
+    return <GestureHandlerRootView style={[styles.container, { backgroundColor: colors.background }]}>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <PrivacyRecoveryScreen
+        failure={failure}
+        failureDomain={failureDomain}
+        busy={privacyRetrying}
+        onRetry={() => { void retryPrivacy(); }}
+        onResetLocalIndex={resetLocalPrivacyIndex}
+        onRecoverFromBackup={recoverFromEncryptedBackup}
+      />
+    </GestureHandlerRootView>;
+  }
 
   return (
     <GestureHandlerRootView style={[styles.container, { backgroundColor: colors.background }]}>

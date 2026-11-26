@@ -12,14 +12,13 @@ jest.mock('expo-router', () => ({
   useRouter: () => mockRouter,
   useLocalSearchParams: () => mockParams,
 }));
-jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn() }));
+jest.mock('expo-media-library', () => ({ getAssetInfoAsync: jest.fn(), getAssetsAsync: jest.fn() }));
 jest.mock('expo-sharing', () => ({ isAvailableAsync: jest.fn(), shareAsync: jest.fn() }));
 jest.mock('expo-image', () => ({
   Image: (props: object) => require('react').createElement(require('react-native').View, {
     ...props, testID: 'detail-image',
   }),
 }));
-jest.mock('expo-blur', () => ({ BlurView: ({ children }: { children: React.ReactNode }) => children }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: () => null }));
 jest.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => mockInsets }));
 jest.mock('../components/ScalablePressable', () => ({
@@ -174,5 +173,37 @@ describe('Photo detail navigation and sharing', () => {
     await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith('/(tabs)/photos'));
     expect(MediaLibrary.getAssetInfoAsync).toHaveBeenCalledWith('photo', { shouldDownloadFromNetwork: false });
     expect(Sharing.shareAsync).not.toHaveBeenCalled();
+  });
+
+  it('detects external deletion on Android without ACCESS_MEDIA_LOCATION via getReadableMediaInfo fallback', async () => {
+    const { Platform } = require('react-native');
+    const originalOS = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+    try {
+      jest.mocked(MediaLibrary.getAssetInfoAsync).mockRejectedValue(
+        new Error('Cannot access ExifInterface because of missing ACCESS_MEDIA_LOCATION permission'),
+      );
+      jest.mocked(MediaLibrary.getAssetsAsync).mockResolvedValueOnce({
+        assets: [{ id: 'photo', mediaType: 'photo', uri: 'file:///photo.jpg' }],
+        hasNextPage: false,
+      } as any);
+
+      const view = render(<PhotoDetailScreen />);
+      mockMediaState.mediaLibraryRefreshVersion++;
+      view.rerender(<PhotoDetailScreen />);
+      await waitFor(() => expect(MediaLibrary.getAssetsAsync).toHaveBeenCalledTimes(1));
+      expect(mockRouter.replace).not.toHaveBeenCalled();
+
+      // Now the photo is deleted externally: fallback scan no longer contains it.
+      jest.mocked(MediaLibrary.getAssetsAsync).mockResolvedValueOnce({
+        assets: [],
+        hasNextPage: false,
+      } as any);
+      mockMediaState.mediaLibraryRefreshVersion++;
+      view.rerender(<PhotoDetailScreen />);
+      await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith('/(tabs)/photos'));
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOS });
+    }
   });
 });

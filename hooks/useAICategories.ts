@@ -1,9 +1,8 @@
 import * as MediaLibrary from 'expo-media-library';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssetRecord, AssetRepository } from '../database';
-import { hasDocumentContext, selectImageCategory } from '../services/ml/LabelClassifier';
-import { translateLabel } from '../services/ml/LabelTranslator';
-import { ImageLabel } from '../services/ml/MLKitService';
+import { selectImageCategories } from '../services/ml/LabelClassifier';
+import { AlbumCategory, categoryTitle } from '../services/ml/CategoryGrouper';
 import { useI18n } from './useI18n';
 
 const MEDIA_PAGE_SIZE = 100;
@@ -25,6 +24,7 @@ async function getLimitedPhotoIds(): Promise<ReadonlySet<string> | null> {
         const result = await MediaLibrary.getAssetsAsync({
             mediaType: 'photo',
             first: MEDIA_PAGE_SIZE,
+            resolveWithFullInfo: false,
             ...(after ? { after } : {}),
         });
 
@@ -92,108 +92,37 @@ export function useAICategories(enabled = true): AICategoriesState {
             const labeledAssets = visiblePhotoIds
                 ? allLabeledAssets.filter(asset => visiblePhotoIds.has(asset.asset_id))
                 : allLabeledAssets;
-            const peopleAssets = labeledAssets.filter(asset => (asset.face_count ?? 0) > 0);
-
-            // Simple grouping by face count for now (e.g., "1 Person", "2 People", etc.)
-            // In a real app, we would cluster by face vectors
             const categorizedAssetIds = new Set<string>();
-            const peopleMap = new Map<string, AssetRecord[]>();
-
-            peopleAssets.forEach(asset => {
-                // Check if this asset should be disqualified from "People" despite having faces
-                // (Common false positives: Screenshots, Ads, Anime)
+            const categoryAssets = new Map<AlbumCategory, AssetRecord[]>();
+            for (const asset of labeledAssets) {
+                let labels: unknown[] = [];
                 if (asset.labels_json) {
                     try {
-                        const labels: ImageLabel[] = JSON.parse(asset.labels_json);
-                        if (Array.isArray(labels) && hasDocumentContext(labels)) {
-                            // Skip adding to people map.
-                            // Do NOT add to categorizedAssetIds, so it falls through to Object/Scene categorization.
-                            return;
-                        }
-                    } catch (e) {
-                        // Ignore parse error
+                        const parsed: unknown = JSON.parse(asset.labels_json);
+                        if (Array.isArray(parsed)) labels = parsed;
+                    } catch {
+                        // Malformed historical labels remain unclassified. Never
+                        // log identifiers, paths, labels or the stored payload.
                     }
                 }
-
-                categorizedAssetIds.add(asset.asset_id);
-                // peopleAssets only contains assets with at least one face.
-                const count = asset.face_count ?? 1;
-                // Simplify to Single vs Group
-                const key = count > 1 ? 'people_group' : 'people_single';
-
-                if (!peopleMap.has(key)) {
-                    peopleMap.set(key, []);
-                }
-                peopleMap.get(key)?.push(asset);
-            });
-
-            const peopleResult: CategoryGroup[] = Array.from(peopleMap.entries()).map(([title, assets]) => ({
-                id: `people_${title}`,
-                title,
-                count: assets.length,
-                coverAsset: assets[0],
-                assets,
-            })).sort((a, b) => b.count - a.count);
-
-            // 2. Load Object/Scene Assets from the same completed snapshot.
-            const labelMap = new Map<string, AssetRecord[]>();
-
-            const humanAssets: AssetRecord[] = [];
-
-            labeledAssets.forEach(asset => {
-                // Skip if already categorized as people (via face detection)
-                if (categorizedAssetIds.has(asset.asset_id)) return;
-
-                try {
-                    if (!asset.labels_json) return;
-                    const labels: ImageLabel[] = JSON.parse(asset.labels_json);
-
-                    const selection = Array.isArray(labels) ? selectImageCategory(labels) : null;
-                    if (!selection) return;
-                    if (selection.category === 'people') {
-                        humanAssets.push(asset);
-                        categorizedAssetIds.add(asset.asset_id);
-                        return;
-                    }
-                    const category = translateLabel(selection.category, language as 'en' | 'zh');
-                    if (!labelMap.has(category)) labelMap.set(category, []);
-                    labelMap.get(category)?.push(asset);
+                for (const category of selectImageCategories(labels, asset.face_count ?? 0)) {
+                    const items = categoryAssets.get(category) ?? [];
+                    items.push(asset);
+                    categoryAssets.set(category, items);
                     categorizedAssetIds.add(asset.asset_id);
-                } catch (e) {
-                    console.warn('Failed to parse labels for asset', asset.asset_id, e);
-                }
-            });
-
-            // Re-construct People Groups with Human Assets (Merge into 'people_single')
-            let finalPeopleGroups = peopleResult;
-            if (humanAssets.length > 0) {
-                // Find existing single group or create new
-                const singleGroupIndex = finalPeopleGroups.findIndex(g => g.title === 'people_single');
-                if (singleGroupIndex !== -1) {
-                    finalPeopleGroups[singleGroupIndex].assets.push(...humanAssets);
-                    finalPeopleGroups[singleGroupIndex].count += humanAssets.length;
-                } else {
-                    finalPeopleGroups.push({
-                        id: 'people_single',
-                        title: 'people_single',
-                        count: humanAssets.length,
-                        coverAsset: humanAssets[0],
-                        assets: humanAssets
-                    });
                 }
             }
-            // Sort groups (Single vs Group)
-            finalPeopleGroups.sort((a, b) => b.count - a.count);
-
-            const objectResult: CategoryGroup[] = Array.from(labelMap.entries()).map(([title, assets]) => ({
-                id: `obj_${title}`,
-                title,
+            const groups: CategoryGroup[] = [...categoryAssets.entries()].map(([category, assets]) => ({
+                id: `category_${category}`,
+                title: categoryTitle(category, language),
                 count: assets.length,
                 coverAsset: assets[0],
                 assets,
-            })).sort((a, b) => b.count - a.count);
+            })).sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
+            const finalPeopleGroups = groups.filter(group => group.id === 'category_people');
+            const objectResult = groups.filter(group => group.id !== 'category_people');
 
-            // 3. Handle Uncategorized & Processing Counts
+            // Count media once even when independent evidence gives two tags.
             const statusCounts = await AssetRepository.getStatusCounts(
                 visiblePhotoIds ? Array.from(visiblePhotoIds) : undefined
             ); // { pending, done, error }
@@ -232,7 +161,7 @@ export function useAICategories(enabled = true): AICategoriesState {
             }
 
         } catch (error) {
-            console.error('Failed to load AI categories:', error);
+            console.error('[AICategories] Failed to load saved categories.');
             if (requestId === loadRequestIdRef.current) setHasError(true);
         } finally {
             if (requestId === loadRequestIdRef.current) {

@@ -1,23 +1,16 @@
+简体中文 | [English](README.en.md)
+
 # PickPic
 
-PickPic 是一款本地照片与视频整理工具。逐张浏览，决定保留或删除，在清理相册的同时记录整理进度。支持浅色与深色界面，以及设备端照片分析。
+PickPic 是一款离线优先的本地照片与视频整理工具。逐张浏览，决定保留、跳过或加入待删除队列，在清理相册的同时在设备本地安全记录整理进度。支持浅色、深色与跟随系统主题，以及完全在设备端运行的模糊检测、相似照片对比与可选图像分类。
 
-当前版本 **0.4.0**，目前面向 Android，iOS 支持仍在完善中。
+当前公开发布版本为 **0.5.0**，目前面向 Android，iOS 支持仍在完善中。更多加密架构与设计文档见 [开发文档索引](docs/README.md) 与 [加密与 SDK 补丁说明](docs/ENCRYPTED_BACKUP.md)。
 
-## 下载
+## 下载（0.5.0 发布版）
 
-下载 [0.4.0 Android APK](https://github.com/1Beyond1/PickPic/releases/download/v0.4.0/PickPic-v0.4.0-arm64.apk)，或查看 [完整更新说明与校验文件](https://github.com/1Beyond1/PickPic/releases/tag/v0.4.0)。安装包支持 **Android 10 及以上、ARM64（arm64-v8a）**，内置运行资源，无需 Expo Go 或开发服务器。其他版本见 [GitHub Releases](https://github.com/1Beyond1/PickPic/releases)。
+下载 [0.5.0 Android APK](https://github.com/1Beyond1/PickPic/releases/download/v0.5.0/PickPic-v0.5.0-arm64.apk)，或查看 [完整更新说明与校验文件](https://github.com/1Beyond1/PickPic/releases/tag/v0.5.0)。安装包支持 **Android 10 及以上、ARM64（arm64-v8a）**，内置运行资源，无需 Expo Go 或开发服务器。其他版本见 [GitHub Releases](https://github.com/1Beyond1/PickPic/releases)。
 
-**旧版安装提醒：** 0.4.0 开始使用独立发布签名，与 0.3.1 的调试签名不同。旧版通常无法直接覆盖升级，需要先卸载再安装；卸载会清除应用内整理、扫描及偏好记录，不会删除原照片或视频。如需保留旧版待删除决定，请先自行记录；重装不会迁移队列或替你执行删除。
-
-## 0.4.0 更新
-
-- 统一浅色、深色界面，调整设置分组、整理操作与底部弹层。
-- 照片复核时逐张改为保留，保持已整理；全部保留后仍可继续下一组。
-- 视频仅在明确整理操作后记录进度，支持回看已整理内容及末条提示。
-- 照片、视频与相似组读取失败可恢复，照片大图与复核预览支持重试。
-- Android 16 及以上的大量待删除内容按系统上限分批确认；成功批次及时记账，后续取消或失败时保留未完成项。
-- 完善删除风险与云同步边界说明，项目原创代码许可证改为 Apache-2.0。
+**旧版升级提醒**：`0.5.0` 沿用 `0.4.0` 的同一正式发布签名，`0.4.0` 用户可直接覆盖升级并自动迁移本地记录至加密存储；`0.3.1` 及更早版本使用调试签名，无法直接覆盖升级，需先卸载再安装（卸载会清除应用内整理、扫描及偏好记录，不会删除原照片或视频）。
 
 ## 界面预览
 
@@ -33,56 +26,57 @@ PickPic 是一款本地照片与视频整理工具。逐张浏览，决定保留
   <a href="assets/screenshots/settings-dark.jpg"><img src="assets/screenshots/settings-dark.jpg" alt="深色设置界面" width="42%" /></a>
 </p>
 
-## 整理方式
+## 核心功能
 
-### 照片
+### 照片与视频整理
 
-按批次逐张整理，也可以只查看指定相册。
+- **照片卡片整理**：按批次（10 / 20 / 30 张）逐张整理；上滑加入待删除列表，下滑保留，操作本身不会立即删除原照片。
+- **视频流式整理**：上下滑动浏览，侧边提供静音、收藏、分享、保留与加入待删除操作；仅打开或离开视频页不会误记为已整理，支持回看已整理视频与长按全屏。
+- **可恢复会话、跳过与近期决定**：照片与视频会话支持重启后继续原范围与进度；支持「暂时跳过」供后续回访，并在本机保留最多 100 条近期决定支持撤销。
+- **多维度整理范围与快捷筛选**：支持按相册、自然月份、最新 / 最早 / 随机顺序筛选；提供**「陈旧截图（30 天前 / 90 天前）」**与 Android **「大体积视频」**一键快捷预设，并通过自有原生模块 `PickPicMediaIndex` 读取 `MediaStore` 大小字段支持「大文件优先」排序。
+- **统一待删除复核**：照片、视频及设备端分析结果页均统一汇总至待删除复核界面，按类型/来源筛选；点击缩略图预览，使用独立的「改为保留」操作撤回待删除并保持已整理状态，经确认后才请求系统删除。
 
-- 上滑加入待删除列表，下滑保留；上滑本身不会删除原照片。
-- 每批结束后进入删除前复核，确认后才请求系统删除。
-- 复核时点击缩略图，将这一张改为保留，保持已整理，页面不会跳回整理页；长按可查看完整照片。
-- 全部改为保留后，点击继续进入下一批，无需重新整理这些照片。
+### 设备端分析与相似照片对比
 
-### 视频
+- **完全本地运行**：模糊检测（拉普拉斯方差 / 亮度均值）、感知哈希（64-bit dHash）与时间窗口相似照片分组均在设备本地计算，不向云端 AI 服务上传媒体，也不会触发自动删除。
+- **分页批量同步**：图库索引同步按页（每页 100 张）批量读取并跳过已有效且未变动的资产文件检查，受控并发（上限 16）查询新增或变更项，并以单次 SQLCipher 事务提交整页变更，同时响应中途暂停/停止并安全续扫；大图人脸检测前自动缩放并及时清理临时文件。
+- **相似照片并排与 A/B 对比**：支持并排与 A/B 视图、联动缩放与参数查看；先明确保留一张或多张，再将其余选中项加入待删除并完成本组，推荐保留综合参考分辨率、清晰度与亮度评分。支持在卡片、详情或对比视图直接标记**「此组不相似」**，稳定键同步写入 SQLCipher 与 AES-256-GCM 加密存储并随 v2 加密备份跨设备恢复，重扫后不再反复弹出。
+- **字节级完全重复照片检测**：在智能分析结果页提供独立「完全重复」标签（与 dHash 视觉相似严格区分）：先按精确 `fileSize` 分桶，仅对同字节大小且数量 ≥ 2 的候选照片在 32 MiB 单文件上限、16 MiB 全局在途字节预算与大文件（≥ 8 MiB）串行降级保护下计算 SHA-256 内容哈希，显式报告未知大小（iOS 尚未接入原生大小索引）、超限或无权限跳过项；自动遵守保护相册规则，支持放大预览与「保护相册/最早拍摄优先保留」，多余副本仅送入统一待删除复核队列。
+- **可选图片分类与人物检测**：默认关闭，可在「设置 → 智能分析」开启。分类使用随包 `EfficientNet-Lite4`（TFLite），人物检测使用 ML Kit（高分辨率原图先缩放再检测）。支持在「扫描管理」中按需补扫缺失分类或重试失败项，保留已有清晰度与相似组结果；开启开关不会自动启动扫描。
 
-上下滑动浏览，侧边提供静音、收藏、分享和待删除操作。
+### 本地加密、口令备份与隐私保护
 
-- 仅打开或离开视频页不会记为已整理；完成向下一条的切换，或明确加入待删除列表后才记录。
-- 可以滑回查看已整理的视频，回看不撤销整理记录；末条视频有到达提示。
-- 加入废纸篓后仍可撤回，最终删除需在废纸篓中确认。
-- 长按可进入视频全屏模式。
+- **本机加密存储、三层保护相册与分域失密自救**：整理记录、待删除/收藏队列、会话与设置使用本机 AES-256-GCM 认证加密；扫描索引数据库使用 SQLCipher 加密；各域随机设备密钥由 `expo-secure-store`（Android Keystore / iOS Keychain）托管。提供三层保护相册防线（默认整理跳过、全队列入口拦截、物理删除前实时复核且失败关闭）。发生密钥库不可用、密库解密失败或索引结构异常时，进入分域自救向导，支持先验密后恢复备份或排空写入队列后重置本地隐私索引（绝不触碰原媒体）。
+- **口令加密备份与恢复（v2）**：可在「设置 → 数据管理」导出/恢复整理决定、收藏、待删除队列、保护相册与复核忽略清单（含模糊忽略与「此组不相似」设备无关稳定键，兼容导入 v1；不含原媒体、缩略图、EXIF 或位置）。上限 **32 MiB** 密文负载，使用 `react-native-quick-crypto` 原生异步 `scrypt`（`N=65536, r=8, p=2`）与 AES-256-GCM 加密，支持跨设备唯一内容指纹重绑定、导入前预览与冲突保护。
+- **缓存与系统备份边界**：不申请位置权限（`isAccessMediaLocationEnabled: false`）；相册预览使用内存缓存，启动与扫描阶段清理自有临时图片并在清理失败时触发隐私门禁；Android/iOS 配置插件排除应用私有数据的系统自动备份。
+- **SDK 隐私日志脱敏补丁**：通过 `scripts/apply-privacy-patches.js` 对 ML Kit（含 Android Kotlin、iOS Swift 与 JS/TS）及 `expo-media-library` 共 **14 个**文件进行受版本与 SHA-256 指纹校验的日志脱敏，配合 `scripts/check-privacy-config.mjs` 静态校验权限与源码构建配置，并在 Android 上强制 `expo-media-library` 与 `expo-image` 从源码构建以防预编译库绕过补丁。
 
-### 设备端分析
+更多加密与备份设计说明见 [ENCRYPTED_BACKUP.md](docs/ENCRYPTED_BACKUP.md)。
 
-查找疑似模糊照片、相似照片组，并提供可选的图片分类。分析在设备上进行，不向云端 AI 服务上传媒体，结果不会触发自动删除。
+## 删除与云同步风险提示
 
-图片分类默认关闭，可在「设置 → 智能分析」中开启。当前分类使用 EfficientNet-Lite4，人物检测使用 ML Kit。分类仍为 Beta，开启后会增加扫描耗时；已有扫描结果不会自动补充分类，如需重新分析，可重置扫描记录后重新扫描。
+**请先备份重要照片和视频。** PickPic 的待删除列表只是系统确认前的本地队列，不是用于恢复已删除文件的系统回收站。
 
-### 偏好与记录
+- 当前删除接口不保证媒体进入系统回收站。Android 11 及以上使用 `MediaStore.createDeleteRequest`，请求的是直接永久删除而非移入回收站，参见 [Android 官方文档](https://developer.android.com/training/data-storage/shared/media#manage-groups-media-files)。
+- Android 11（API 30）及以上的大批量删除统一按每批最多 **1,000 项**分批请求系统确认，规避大队列 Binder 事务超限；成功批次即时记账，后续取消或失败时保留未完成项在待删除队列中。
+- PickPic 不管理云端相册，也无法保证「只删本地、云端保留」。开启 iCloud 照片或其他云同步服务时，删除决定可能同步至云端与其他设备，参见 [Apple 官方说明](https://support.apple.com/en-nz/104967)。
 
-支持每组 10 / 20 / 30 张、最新 / 最早 / 随机顺序、相册范围选择、浅色 / 深色主题及中文 / English。整理记录保存在本机；照片整理、视频整理和扫描记录可分别重置，重置不会删除原媒体。
+## 技术架构
 
-## 删除与云同步
+- **框架与 UI**：React Native `0.81.5`（New Architecture + React Compiler）、Expo SDK `54`、TypeScript `~5.9`、Expo Router `~6.0`、Zustand `^5.0`、Reanimated `~4.1`、Gesture Handler、expo-media-library、expo-video、expo-image。
+- **本地安全与加密**：`expo-sqlite`（SQLCipher）、`expo-secure-store`、`@noble/ciphers`、`@noble/hashes`、`react-native-quick-crypto`（Nitro 原生异步 scrypt）。
+- **设备端图像与 ML**：`@infinitered/react-native-mlkit-core` / `image-labeling` / `face-detection`（`5.0.0`）、随包 `assets/ml/efficientnet-lite4.tflite`、`expo-image-manipulator`、`jpeg-js`。
+- **自有原生模块与插件**：
+  - `modules/pickpic-media-index`：Android Kotlin 只读 `MediaStore` 大小批量查询模块（单批 ≤ 200）。
+  - `modules/pickpic-system-ui`：Android Kotlin 弹窗状态栏/导航栏明暗外观原地同步模块。
+  - `plugins/withNativeCryptoToolchain.js` & `plugins/withPrivateRecordsBackup.js`：原生加密工具链对齐与系统备份排除配置插件。
 
-**请先备份重要照片和视频。** PickPic 的待删除列表和视频废纸篓只是确认前的队列，不是用于恢复已删除文件的系统回收站。
+## 从源码运行与验证
 
-当前删除接口不保证媒体进入系统回收站。Android 11 及以上的相关删除流程使用 `MediaStore.createDeleteRequest`，请求的是直接永久删除，而不是先移入回收站，参见 [Android 官方说明](https://developer.android.com/training/data-storage/shared/media#manage-groups-media-files)。
+### 环境要求
 
-Android 16 及以上的大量删除请求会拆为每批最多 2,000 项，可能需要多次系统确认。取消或失败不会自动重试后续批次，未完成项保留在应用的待删除列表中。
-
-AI 结果页提供独立的删除入口，不经过照片整理的组末复核，操作前请仔细确认。
-
-PickPic 不管理云端备份，也不能保证「只删除本地，云端一定保留」。不同相册服务可能重新下载媒体，也可能同步删除决定。例如，启用 iCloud 照片时，删除会影响同一账号的其他设备，见 [Apple 官方说明](https://support.apple.com/en-nz/104967)。
-
-## 从源码运行
-
-项目基于 React Native 0.81、Expo SDK 54 和 TypeScript，使用 Expo Router、Zustand、Reanimated、Gesture Handler、expo-media-library 与 expo-video。
-
-### 环境
-
-- Node.js 20.19.4 或更新版本、npm；完整自动化测试推荐 Node.js 24.11.1，与当前 CI 一致。
-- Android 本地开发：JDK 17、Android SDK，以及手机或模拟器。
+- Node.js `20.19.4+` 与 npm（CI 与完整自动化测试使用 **Node.js `24.11.1`**）。
+- Android 本地开发：JDK 17、Android SDK，以及模拟器或真机。
 - iOS 本地开发：macOS 与 Xcode。
 
 ```bash
@@ -97,32 +91,37 @@ npm run android
 npx expo start --dev-client
 ```
 
-项目包含 ML Kit 原生模块，不能仅用 Expo Go 运行完整应用。新增或修改原生依赖后需要重新构建开发客户端；普通 JS / TS 改动可通过 Metro 更新。参见 [Expo 开发构建说明](https://docs.expo.dev/workflow/customizing/)。
+项目包含 ML Kit、SQLCipher、Quick Crypto 与自有 Kotlin 原生模块，不能仅使用 Expo Go 运行完整应用；改动原生依赖后需重新构建开发客户端。详见 [Expo 开发构建说明](https://docs.expo.dev/workflow/customizing/)。
 
-### 检查与构建
+`npm ci` 会自动通过 `postinstall` 运行 `scripts/apply-privacy-patches.js`。若环境禁用了 npm 生命周期脚本，构建前必须显式执行补丁并通过 `--check` 校验，不可跳过。
+
+### 自动化检查与构建
 
 ```bash
+# 与 CI (.github/workflows/ci.yml) 一致的五项必过校验
+node scripts/apply-privacy-patches.js --check
+node scripts/check-privacy-config.mjs
 npm run typecheck
 npm run lint
 npm run test:ci
 
-# EAS 云端预览 APK：需要 Expo 账号和对应项目权限
+# EAS 云端预览 APK（需 Expo 账号与项目权限）
 npx eas-cli build -p android --profile preview
 
-# macOS / Linux 本地 EAS 预览 APK：另需本机构建工具和 EAS 登录
+# macOS / Linux 本地 EAS 预览 APK（Windows 原生不支持 EAS --local）
 npx eas-cli build -p android --profile preview --local
 ```
 
-`npm run android` 生成用于开发的客户端，需要 Metro，不等同于独立发布 APK。EAS 的 `preview` 配置输出 APK，`production` 配置输出 AAB。
+### 自动化测试覆盖
 
-Windows 可进行本地 Android 开发构建，但 EAS `--local` 不支持原生 Windows，WSL 也不是官方支持的构建环境。参见 [EAS 本地构建说明](https://docs.expo.dev/build-reference/local-builds/)。
+当前仓库包含 **98 套测试 / 963 项测试用例**（覆盖内存 SQLite 事务、AES-256-GCM / `scrypt` 加密、v2 跨设备恢复与隐私门禁、保护相册与完全重复检测、快捷筛选与「此组不相似」持久化、扫描批处理与并发上限、SDK 隐私补丁指纹与静态配置校验等），并与 TypeScript、ESLint、配置门禁及补丁检查一起纳入 CI。真机测试项目见 [REAL_DEVICE_CHECKLIST.md](docs/REAL_DEVICE_CHECKLIST.md)。
 
 ## 反馈与贡献
 
-通过 [Issues](https://github.com/1Beyond1/PickPic/issues) 反馈问题时，请提供应用版本、手机型号、系统版本和复现步骤。
-
-提交代码前请运行上述检查，避免提交签名密钥、本机配置等本地或敏感文件。
+- 协作者请先阅读 [AGENTS.md](AGENTS.md) 与 [docs/README.md](docs/README.md)。
+- 通过 [Issues](https://github.com/1Beyond1/PickPic/issues) 反馈问题时，请提供应用版本、设备型号、系统版本与复现步骤。
+- 提交代码前请确保上述五项检查全部通过，避免提交签名密钥、`build-artifacts/`、`*.pickpic` 等本地或敏感文件。
 
 ## 许可证
 
-项目原创代码采用 [Apache License 2.0](LICENSE)，署名信息见 [NOTICE](NOTICE)。第三方依赖与模型保留各自的许可证。
+项目原创代码采用 [Apache License 2.0](LICENSE)，署名信息见 [NOTICE](NOTICE)。第三方依赖与预训练模型保留各自许可证。

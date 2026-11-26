@@ -6,7 +6,8 @@
 import * as SQLite from 'expo-sqlite';
 import { Platform } from 'react-native';
 import { runMigrations } from './migrations';
-import { DB_NAME } from './schema';
+import { openEncryptedDatabase, withEncryptedTransaction } from './encryptedDatabase';
+import { LocalPrivacyError, usePrivacyStore } from '../stores/usePrivacyStore';
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 let initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -48,13 +49,23 @@ async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
 
     let db: SQLite.SQLiteDatabase | null = null;
     try {
-        db = await SQLite.openDatabaseAsync(DB_NAME);
+        // Web has no device SecureStore/SQLCipher in this integration. Keep
+        // existing browser data untouched instead of silently using plaintext.
+        if (Platform.OS === 'web') throw new LocalPrivacyError('keystore_unavailable');
+        db = await openEncryptedDatabase();
 
-        // Enable WAL mode for better performance
-        await db.execAsync('PRAGMA journal_mode = WAL;');
+        try {
+            // Enable WAL mode for better performance
+            await db.execAsync('PRAGMA journal_mode = WAL;');
 
-        // Run migrations
-        await runMigrations(db);
+            // Run migrations
+            await runMigrations(db);
+        } catch (migrationError) {
+            throw migrationError instanceof LocalPrivacyError
+                ? migrationError
+                : new LocalPrivacyError('schema_corrupt');
+        }
+        usePrivacyStore.getState().clear('scanner');
 
         console.log('[DB] Database ready.');
         return db;
@@ -63,21 +74,35 @@ async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
         // close that handle before allowing a retry so a transient failure
         // cannot accumulate open connections or leave a lock behind.
         if (db) {
-            await db.closeAsync().catch(closeError => {
-                console.warn('[DB] Failed to close an aborted initialization:', closeError);
-            });
+            await db.closeAsync().catch(() => undefined);
         }
-        throw error;
+        const reason = error instanceof LocalPrivacyError ? error.reason : 'cipher_decrypt_failed';
+        usePrivacyStore.getState().block('scanner', 'read', reason);
+        throw new LocalPrivacyError(reason);
     }
 }
 
 /**
- * Close the database connection
+ * Close the database connection after waiting for any in-flight
+ * initialization or queued transactions to settle.
  */
 export async function closeDatabase(): Promise<void> {
-    if (dbInstance) {
-        await dbInstance.closeAsync();
-        dbInstance = null;
+    while (true) {
+        const pendingInit = initPromise;
+        const pendingTx = transactionQueue;
+        if (pendingInit) {
+            await pendingInit.catch(() => undefined);
+        }
+        await pendingTx.catch(() => undefined);
+        if (initPromise === null && transactionQueue === pendingTx) {
+            break;
+        }
+    }
+
+    const current = dbInstance;
+    dbInstance = null;
+    if (current) {
+        await current.closeAsync();
     }
 }
 
@@ -85,33 +110,22 @@ export async function closeDatabase(): Promise<void> {
  * Execute a transaction with automatic rollback on error
  */
 export function withTransaction<T>(
-    fn: (db: SQLite.SQLiteDatabase) => Promise<T>
+    fn: (db: SQLite.SQLiteDatabase) => Promise<T>,
+    options: { blockOnFailure?: boolean } = {},
 ): Promise<T> {
     const operation = transactionQueue.then(async () => {
-        const db = await getDatabase();
+        if (options.blockOnFailure === false) {
+            if (Object.keys(usePrivacyStore.getState().failures).length > 0 || !dbInstance) {
+                throw new LocalPrivacyError('storage_io');
+            }
+        } else {
+            await getDatabase();
+        }
 
         // Expo's regular async transaction is not exclusive: unrelated async
-        // queries can run between BEGIN and COMMIT. Native callers therefore
-        // use an exclusive transaction so UI deletes and scanner writes cannot
-        // be interleaved into the same unit of work. Web does not implement
-        // the exclusive API, so retain the queued fallback there.
-        if (Platform.OS !== 'web') {
-            let result!: T;
-            await db.withExclusiveTransactionAsync(async transactionDb => {
-                result = await fn(transactionDb);
-            });
-            return result;
-        }
-
-        await db.execAsync('BEGIN TRANSACTION;');
-        try {
-            const result = await fn(db);
-            await db.execAsync('COMMIT;');
-            return result;
-        } catch (error) {
-            await db.execAsync('ROLLBACK;');
-            throw error;
-        }
+        // queries can run between BEGIN and COMMIT. Use a separately keyed
+        // connection so UI deletes and scanner writes cannot interleave.
+        return withEncryptedTransaction(fn, options);
     });
 
     // Keep the queue usable after a failed transaction while preserving the

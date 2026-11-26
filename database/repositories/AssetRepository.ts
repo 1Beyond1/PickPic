@@ -5,6 +5,7 @@
 import { getDatabase, withTransaction } from '../db';
 import {
     addAssetToMatchingGroupsInDatabase,
+    removeAssetsFromGroupsInDatabase,
     repairDuplicateGroupsInDatabase,
 } from './DupGroupRepository';
 import type { SimilarityCandidate } from './DupGroupRepository';
@@ -13,6 +14,9 @@ import {
     repairFaceDataInDatabase,
 } from './FaceRepository';
 import { AssetStatus, AssetStatusType, GLOBAL_ALGO_VERSION, MetaKeys } from '../schema';
+import { removeBlurIgnoresForAssetsInDatabase } from './ReviewIgnoreRepository';
+import { removeSimilarReviewsForAssets } from './SimilarReviewRepository';
+import { DEFAULT_BLUR_CONFIG } from '../../services/imageOps/IImageOps';
 
 export interface AssetRecord {
     asset_id: string;
@@ -43,7 +47,41 @@ export interface BlurryAsset {
     mean_luma: number;
 }
 
+export interface BlurryAssetsCursor {
+    blurScore: number;
+    assetId: string;
+}
+
+export interface CompletedAssetSummary {
+    asset_id: string;
+    taken_at: number | null;
+    width: number | null;
+    height: number | null;
+    file_signature: string | null;
+}
+
+export interface LibraryAssetSyncInput {
+    assetId: string;
+    takenAt: number;
+    width: number;
+    height: number;
+    fileSignature: string | null;
+}
+
+export interface LibraryMetadataSyncBatchOptions {
+    preserveSingletonGroups?: boolean;
+    markForWiderDuplicateScan?: boolean;
+}
+
+export interface LibraryMetadataSyncBatchResult {
+    insertedCount: number;
+    updatedCount: number;
+    invalidatedAssetIds: string[];
+    shouldResetCursor: boolean;
+}
+
 const BATCH_SIZE = 20;
+const QUERY_ID_CHUNK_SIZE = 400;
 
 interface AssetScope {
     clause: string;
@@ -107,11 +145,14 @@ async function removeAssetsAndDerivedDataInDatabase(
         const batch = uniqueAssetIds.slice(i, i + 500);
         const placeholders = batch.map(() => '?').join(', ');
 
+        await removeSimilarReviewsForAssets(db, batch);
+        await removeBlurIgnoresForAssetsInDatabase(db, batch);
         await db.runAsync(
             `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
             batch
         );
         await removeFaceInstancesInDatabase(db, batch);
+        await db.runAsync(`DELETE FROM ai_analysis WHERE asset_id IN (${placeholders})`, batch);
         await db.runAsync(
             `DELETE FROM assets WHERE asset_id IN (${placeholders})`,
             batch
@@ -138,6 +179,7 @@ async function markDoneInDatabase(
     // Remove the old instances before publishing the new DONE result so a
     // later face-group read cannot observe stale detections.
     const removedFaceInstances = await removeFaceInstancesInDatabase(db, [assetId]);
+    await db.runAsync('DELETE FROM ai_analysis WHERE asset_id = ?', [assetId]);
 
     await db.runAsync(
         `UPDATE assets SET
@@ -179,87 +221,135 @@ WHERE asset_id = ?`,
     }
 }
 
-export const AssetRepository = {
-    /**
-     * Upsert an asset (insert or update)
-     */
-    async upsert(asset: Partial<AssetRecord> & { asset_id: string }): Promise<void> {
-        await withTransaction(async db => {
-            const now = Date.now();
-            const updateClauses = [
-                // `undefined` means the caller omitted a field and the
-                // existing value must survive. An explicit `null` clears a
-                // nullable field, which is different from a partial update.
-                asset.taken_at === undefined
-                    ? 'taken_at = taken_at'
-                    : 'taken_at = excluded.taken_at',
-                asset.width === undefined
-                    ? 'width = width'
-                    : 'width = excluded.width',
-                asset.height === undefined
-                    ? 'height = height'
-                    : 'height = excluded.height',
-                asset.file_signature === undefined
-                    ? 'file_signature = file_signature'
-                    : 'file_signature = excluded.file_signature',
-                asset.algo_version === undefined
-                    ? 'algo_version = algo_version'
-                    : 'algo_version = excluded.algo_version',
-                asset.blur_score === undefined
-                    ? 'blur_score = blur_score'
-                    : 'blur_score = excluded.blur_score',
-                asset.mean_luma === undefined
-                    ? 'mean_luma = mean_luma'
-                    : 'mean_luma = excluded.mean_luma',
-                asset.phash === undefined
-                    ? 'phash = phash'
-                    : 'phash = excluded.phash',
-            ];
+async function getByIdsInDatabase(
+    db: Awaited<ReturnType<typeof getDatabase>>,
+    assetIds: readonly string[]
+): Promise<Map<string, AssetRecord>> {
+    const result = new Map<string, AssetRecord>();
+    const uniqueIds = Array.from(new Set(assetIds));
+    if (uniqueIds.length === 0) {
+        return result;
+    }
 
-            updateClauses.push(
-                asset.face_count === undefined
-                    ? 'face_count = face_count'
-                    : 'face_count = excluded.face_count',
-                asset.labels_json === undefined
-                    ? 'labels_json = labels_json'
-                    : 'labels_json = excluded.labels_json',
-            );
-            if (asset.status !== undefined && asset.status !== null) {
-                updateClauses.push('status = excluded.status');
-            }
-            updateClauses.push(
-                asset.error_message === undefined
-                    ? 'error_message = error_message'
-                    : 'error_message = excluded.error_message',
-                'updated_at = ?'
-            );
+    for (let i = 0; i < uniqueIds.length; i += QUERY_ID_CHUNK_SIZE) {
+        const chunk = uniqueIds.slice(i, i + QUERY_ID_CHUNK_SIZE);
+        const placeholders = chunk.map(() => '?').join(', ');
+        const rows = await db.getAllAsync<AssetRecord>(
+            `SELECT * FROM assets WHERE asset_id IN (${placeholders})`,
+            chunk
+        );
+        for (const row of rows) {
+            result.set(row.asset_id, row);
+        }
+    }
 
-            await db.runAsync(
-                `INSERT INTO assets (
+    return result;
+}
+
+async function upsertInDatabase(
+    db: Awaited<ReturnType<typeof getDatabase>>,
+    asset: Partial<AssetRecord> & { asset_id: string },
+    now: number
+): Promise<void> {
+    const updateClauses = [
+        // `undefined` means the caller omitted a field and the
+        // existing value must survive. An explicit `null` clears a
+        // nullable field, which is different from a partial update.
+        asset.taken_at === undefined
+            ? 'taken_at = taken_at'
+            : 'taken_at = excluded.taken_at',
+        asset.width === undefined
+            ? 'width = width'
+            : 'width = excluded.width',
+        asset.height === undefined
+            ? 'height = height'
+            : 'height = excluded.height',
+        asset.file_signature === undefined
+            ? 'file_signature = file_signature'
+            : 'file_signature = excluded.file_signature',
+        asset.algo_version === undefined
+            ? 'algo_version = algo_version'
+            : 'algo_version = excluded.algo_version',
+        asset.blur_score === undefined
+            ? 'blur_score = blur_score'
+            : 'blur_score = excluded.blur_score',
+        asset.mean_luma === undefined
+            ? 'mean_luma = mean_luma'
+            : 'mean_luma = excluded.mean_luma',
+        asset.phash === undefined
+            ? 'phash = phash'
+            : 'phash = excluded.phash',
+    ];
+
+    updateClauses.push(
+        asset.face_count === undefined
+            ? 'face_count = face_count'
+            : 'face_count = excluded.face_count',
+        asset.labels_json === undefined
+            ? 'labels_json = labels_json'
+            : 'labels_json = excluded.labels_json',
+    );
+    if (asset.status !== undefined && asset.status !== null) {
+        updateClauses.push('status = excluded.status');
+    }
+    updateClauses.push(
+        asset.error_message === undefined
+            ? 'error_message = error_message'
+            : 'error_message = excluded.error_message',
+        'updated_at = ?'
+    );
+
+    await db.runAsync(
+        `INSERT INTO assets (
         asset_id, taken_at, width, height, file_signature,
         algo_version, blur_score, mean_luma, phash, face_count, labels_json,
         status, error_message, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(asset_id) DO UPDATE SET
         ${updateClauses.map(clause => `        ${clause}`).join(',\n')}`,
-                [
-                    asset.asset_id,
-                    asset.taken_at ?? null,
-                    asset.width ?? null,
-                    asset.height ?? null,
-                    asset.file_signature ?? null,
-                    asset.algo_version ?? null,
-                    asset.blur_score ?? null,
-                    asset.mean_luma ?? null,
-                    asset.phash ?? null,
-                    asset.face_count === undefined ? 0 : asset.face_count,
-                    asset.labels_json ?? null,
-                    asset.status ?? AssetStatus.PENDING,
-                    asset.error_message ?? null,
-                    now,
-                    now,
-                ]
-            );
+        [
+            asset.asset_id,
+            asset.taken_at ?? null,
+            asset.width ?? null,
+            asset.height ?? null,
+            asset.file_signature ?? null,
+            asset.algo_version ?? null,
+            asset.blur_score ?? null,
+            asset.mean_luma ?? null,
+            asset.phash ?? null,
+            asset.face_count === undefined ? 0 : asset.face_count,
+            asset.labels_json ?? null,
+            asset.status ?? AssetStatus.PENDING,
+            asset.error_message ?? null,
+            now,
+            now,
+        ]
+    );
+}
+
+export const AssetRepository = {
+    /**
+     * Upsert an asset (insert or update)
+     */
+    async upsert(asset: Partial<AssetRecord> & { asset_id: string }): Promise<void> {
+        await withTransaction(async db => {
+            await upsertInDatabase(db, asset, Date.now());
+        });
+    },
+
+    /**
+     * Upsert multiple assets inside a single SQLCipher transaction.
+     */
+    async upsertBatch(
+        assets: readonly (Partial<AssetRecord> & { asset_id: string })[]
+    ): Promise<void> {
+        if (assets.length === 0) return;
+
+        await withTransaction(async db => {
+            const now = Date.now();
+            for (const asset of assets) {
+                await upsertInDatabase(db, asset, now);
+            }
         });
     },
 
@@ -272,6 +362,154 @@ export const AssetRepository = {
             'SELECT * FROM assets WHERE asset_id = ?',
             [assetId]
         );
+    },
+
+    /**
+     * Batch-read assets by ID using SQLite-safe IN (...) chunks on the shared
+     * read connection without opening per-item SQLCipher transactions.
+     */
+    async getByIds(assetIds: readonly string[]): Promise<Map<string, AssetRecord>> {
+        if (assetIds.length === 0) {
+            return new Map();
+        }
+        const db = await getDatabase();
+        return getByIdsInDatabase(db, assetIds);
+    },
+
+    /**
+     * Insert newly discovered assets and refresh changed media-library metadata
+     * in a single SQLCipher transaction. Invalidated assets also clear their
+     * stale AI analysis, face instances, and duplicate-group memberships within
+     * the same transaction so restarts cannot observe partially reset records.
+     */
+    async syncLibraryMetadataBatch(
+        items: readonly LibraryAssetSyncInput[],
+        options: LibraryMetadataSyncBatchOptions = {}
+    ): Promise<LibraryMetadataSyncBatchResult> {
+        if (items.length === 0) {
+            return {
+                insertedCount: 0,
+                updatedCount: 0,
+                invalidatedAssetIds: [],
+                shouldResetCursor: false,
+            };
+        }
+
+        // Deduplicate within the batch (last write wins) to keep inserts safe.
+        const dedupedById = new Map<string, LibraryAssetSyncInput>();
+        for (const item of items) {
+            dedupedById.set(item.assetId, item);
+        }
+        const uniqueItems = Array.from(dedupedById.values());
+
+        return withTransaction(async db => {
+            const existingById = await getByIdsInDatabase(
+                db,
+                uniqueItems.map(item => item.assetId)
+            );
+            const now = Date.now();
+            let insertedCount = 0;
+            let updatedCount = 0;
+            const invalidatedAssetIds: string[] = [];
+
+            for (const item of uniqueItems) {
+                const existing = existingById.get(item.assetId);
+                if (!existing) {
+                    await db.runAsync(
+                        `INSERT INTO assets (
+                            asset_id, taken_at, width, height, file_signature,
+                            face_count, status, updated_at
+                         ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+                        [
+                            item.assetId,
+                            item.takenAt,
+                            item.width,
+                            item.height,
+                            item.fileSignature,
+                            AssetStatus.PENDING,
+                            now,
+                        ]
+                    );
+                    insertedCount += 1;
+                    continue;
+                }
+
+                const signatureChanged = item.fileSignature !== null
+                    && existing.file_signature !== item.fileSignature;
+                const scanOrderChanged = existing.taken_at !== item.takenAt;
+                const metadataChanged = scanOrderChanged
+                    || existing.width !== item.width
+                    || existing.height !== item.height
+                    || signatureChanged;
+
+                if (!metadataChanged) continue;
+
+                if (signatureChanged || scanOrderChanged) {
+                    await db.runAsync(
+                        `UPDATE assets SET
+                         taken_at = ?, width = ?, height = ?, file_signature = COALESCE(?, file_signature),
+                         status = ?, algo_version = NULL, blur_score = NULL,
+                         mean_luma = NULL, phash = NULL, face_count = 0,
+                         labels_json = NULL, error_message = NULL, updated_at = ?
+                         WHERE asset_id = ?`,
+                        [
+                            item.takenAt,
+                            item.width,
+                            item.height,
+                            item.fileSignature,
+                            AssetStatus.PENDING,
+                            now,
+                            item.assetId,
+                        ]
+                    );
+                    invalidatedAssetIds.push(item.assetId);
+                    updatedCount += 1;
+                } else {
+                    await db.runAsync(
+                        `UPDATE assets SET
+                         taken_at = ?, width = ?, height = ?,
+                         file_signature = COALESCE(?, file_signature), updated_at = ?
+                         WHERE asset_id = ?`,
+                        [
+                            item.takenAt,
+                            item.width,
+                            item.height,
+                            item.fileSignature,
+                            now,
+                            item.assetId,
+                        ]
+                    );
+                    updatedCount += 1;
+                }
+            }
+
+            if (invalidatedAssetIds.length > 0) {
+                for (let i = 0; i < invalidatedAssetIds.length; i += QUERY_ID_CHUNK_SIZE) {
+                    const chunk = invalidatedAssetIds.slice(i, i + QUERY_ID_CHUNK_SIZE);
+                    const placeholders = chunk.map(() => '?').join(', ');
+                    await db.runAsync(
+                        `DELETE FROM ai_analysis WHERE asset_id IN (${placeholders})`,
+                        chunk
+                    );
+                }
+
+                await removeFaceInstancesInDatabase(db, invalidatedAssetIds);
+                await repairFaceDataInDatabase(db);
+                await removeAssetsFromGroupsInDatabase(
+                    db,
+                    invalidatedAssetIds,
+                    options.preserveSingletonGroups ?? false,
+                    options.markForWiderDuplicateScan ?? false
+                );
+            }
+
+            return {
+                insertedCount,
+                updatedCount,
+                invalidatedAssetIds,
+                shouldResetCursor: insertedCount > 0 || invalidatedAssetIds.length > 0,
+            };
+        });
     },
 
     /**
@@ -298,11 +536,14 @@ export const AssetRepository = {
                 const placeholders = batch.map(() => '?').join(', ');
 
                 // Remove dependent scan results before removing the asset rows.
+                await removeSimilarReviewsForAssets(transactionDb, batch);
+                await removeBlurIgnoresForAssetsInDatabase(transactionDb, batch);
                 await transactionDb.runAsync(
                     `DELETE FROM dup_members WHERE asset_id IN (${placeholders})`,
                     batch
                 );
                 await removeFaceInstancesInDatabase(transactionDb, batch);
+                await transactionDb.runAsync(`DELETE FROM ai_analysis WHERE asset_id IN (${placeholders})`, batch);
                 await transactionDb.runAsync(
                     `DELETE FROM assets WHERE asset_id IN (${placeholders})`,
                     batch
@@ -891,39 +1132,101 @@ export const AssetRepository = {
     },
 
     /**
-     * Get the lowest-scoring completed assets, optionally restricted to a
-     * permission-visible set. Apply the scope before LIMIT so hidden local
-     * index rows cannot crowd visible results out of the result window.
+     * Get the lowest-scoring completed blurry assets using the same
+     * brightness-adaptive threshold as BlurDetector (0.7x for dark meanLuma < 40
+     * and overexposed meanLuma > 220), optionally restricted to a
+     * permission-visible set. Supports stable keyset pagination via `cursor`
+     * to prevent OFFSET drift and quadratic scanning on >500 limited-access sets.
      */
     async getBlurryAssets(
         assetIds?: readonly string[],
-        limit: number = 50
+        limit: number = 50,
+        offset: number = 0,
+        cursor?: BlurryAssetsCursor | null
     ): Promise<BlurryAsset[]> {
-        if (limit <= 0) return [];
+        if (limit <= 0 || (!cursor && offset < 0)) return [];
 
         const db = await getDatabase();
-        const blurryAssets: BlurryAsset[] = [];
+        const batches = splitAssetIds(assetIds);
+        if (batches.length === 0) return [];
 
-        for (const assetIdBatch of splitAssetIds(assetIds)) {
+        const baseThreshold = DEFAULT_BLUR_CONFIG.baseThreshold;
+        const darkThreshold = DEFAULT_BLUR_CONFIG.darkThreshold;
+        const darkBlurLimit = baseThreshold * DEFAULT_BLUR_CONFIG.darkMultiplier;
+        const brightThreshold = DEFAULT_BLUR_CONFIG.brightThreshold;
+        const brightBlurLimit = baseThreshold * DEFAULT_BLUR_CONFIG.brightMultiplier;
+
+        const adaptiveWhere = `status = ?
+                 AND blur_score IS NOT NULL
+                 AND blur_score < ?
+                 AND blur_score < CASE
+                     WHEN mean_luma IS NOT NULL AND mean_luma < ? THEN ?
+                     WHEN mean_luma IS NOT NULL AND mean_luma > ? THEN ?
+                     ELSE ?
+                 END
+                 AND NOT EXISTS (
+                     SELECT 1 FROM media_review_ignores AS ign
+                     WHERE ign.ignore_type = 'blur'
+                       AND ign.target_key = assets.asset_id
+                 )`;
+        const adaptiveParams: (string | number)[] = [
+            AssetStatus.DONE,
+            baseThreshold,
+            darkThreshold,
+            darkBlurLimit,
+            brightThreshold,
+            brightBlurLimit,
+            baseThreshold,
+        ];
+        const cursorClause = cursor
+            ? ' AND (blur_score > ? OR (blur_score = ? AND asset_id > ?))'
+            : '';
+        const cursorParams: (string | number)[] = cursor
+            ? [cursor.blurScore, cursor.blurScore, cursor.assetId]
+            : [];
+
+        if (batches.length === 1) {
+            const batch = batches[0];
+            if (batch !== undefined && batch.length === 0) return [];
+            const scope = createAssetScope(batch);
+            if (cursor) {
+                return db.getAllAsync<BlurryAsset>(
+                    `SELECT asset_id, blur_score, mean_luma FROM assets
+                     WHERE ${adaptiveWhere}${cursorClause}${scope.clause}
+                     ORDER BY blur_score ASC, asset_id ASC
+                     LIMIT ?`,
+                    [...adaptiveParams, ...cursorParams, ...scope.params, limit]
+                );
+            }
+            return db.getAllAsync<BlurryAsset>(
+                `SELECT asset_id, blur_score, mean_luma FROM assets
+                 WHERE ${adaptiveWhere}${scope.clause}
+                 ORDER BY blur_score ASC, asset_id ASC
+                 LIMIT ? OFFSET ?`,
+                [...adaptiveParams, ...scope.params, limit, offset]
+            );
+        }
+
+        const blurryAssets: BlurryAsset[] = [];
+        const windowLimit = cursor ? limit : offset + limit;
+        for (const assetIdBatch of batches) {
             if (assetIdBatch !== undefined && assetIdBatch.length === 0) continue;
 
             const scope = createAssetScope(assetIdBatch);
             blurryAssets.push(...await db.getAllAsync<BlurryAsset>(
                 `SELECT asset_id, blur_score, mean_luma FROM assets
-                 WHERE status = ? AND blur_score < ?${scope.clause}
+                 WHERE ${adaptiveWhere}${cursorClause}${scope.clause}
                  ORDER BY blur_score ASC, asset_id ASC
                  LIMIT ?`,
-                [AssetStatus.DONE, 100, ...scope.params, limit]
+                [...adaptiveParams, ...cursorParams, ...scope.params, windowLimit]
             ));
         }
-
-        if (assetIds === undefined) return blurryAssets;
 
         blurryAssets.sort((a, b) => {
             if (a.blur_score !== b.blur_score) return a.blur_score - b.blur_score;
             return a.asset_id.localeCompare(b.asset_id);
         });
-        return blurryAssets.slice(0, limit);
+        return cursor ? blurryAssets.slice(0, limit) : blurryAssets.slice(offset, offset + limit);
     },
 
     /**
@@ -1003,12 +1306,38 @@ export const AssetRepository = {
     },
 
     /**
+     * Lightweight summary of completed scanned assets for exact-duplicate
+     * fileSize pre-bucketing, optionally scoped to currently visible photo IDs.
+     */
+    async getCompletedAssetsSummary(assetIds?: readonly string[]): Promise<CompletedAssetSummary[]> {
+        const db = await getDatabase();
+        const batches = splitAssetIds(assetIds);
+        if (batches.length === 0) return [];
+
+        const rows: CompletedAssetSummary[] = [];
+        for (const batch of batches) {
+            if (batch !== undefined && batch.length === 0) continue;
+            const scope = createAssetScope(batch);
+            rows.push(...await db.getAllAsync<CompletedAssetSummary>(
+                `SELECT asset_id, taken_at, width, height, file_signature
+                 FROM assets
+                 WHERE status = ?${scope.clause}
+                 ORDER BY taken_at ASC, asset_id ASC`,
+                [AssetStatus.DONE, ...scope.params],
+            ));
+        }
+        return rows;
+    },
+
+    /**
      * Reset every scanner-derived record and return all assets to PENDING.
      */
     async resetAll(): Promise<void> {
         await withTransaction(async db => {
             // Keep cursor, derived groups, and asset statuses in one commit so
             // a failed reset cannot leave the scanner in a half-reset state.
+            await db.runAsync('DELETE FROM similar_reviews');
+            await db.runAsync('DELETE FROM ai_analysis');
             await db.runAsync('DELETE FROM dup_members');
             await db.runAsync('DELETE FROM dup_groups');
             await db.runAsync('DELETE FROM face_instances');

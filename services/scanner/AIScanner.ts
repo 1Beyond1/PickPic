@@ -11,20 +11,25 @@
 
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import { InteractionManager } from 'react-native';
+import { InteractionManager, Platform } from 'react-native';
 
 import {
+    AssetRecord,
     AssetRepository,
     AssetStatus,
     DupGroupRepository,
     GLOBAL_ALGO_VERSION,
+    LibraryAssetSyncInput,
     MetaRepository,
 } from '../../database';
 import { getImageOps, GrayImageRef } from '../imageOps';
 import { hasFullPhotoLibraryAccess } from '../../stores/useMediaStore';
+import { LocalPrivacyError, usePrivacyStore } from '../../stores/usePrivacyStore';
 import { hasDocumentContext } from '../ml/LabelClassifier';
 import { selectBestShot } from './BestShotSelector';
 import { findSimilarPhotos } from './SimilarityMatcher';
+import { AIAnalysisRepository } from '../../database/repositories/AIAnalysisRepository';
+import { acquireRecordOperation, isRecordTransferActive } from '../recordOperationLock';
 
 // ============================================================================
 // Types
@@ -66,6 +71,9 @@ let mlCircuitBreakerTripped = false;
 let scannerRunGeneration = 0;
 
 const BATCH_SIZE = 20;
+const SYNC_PAGE_SIZE = 100;
+const SYNC_STAT_CONCURRENCY = 16;
+const FACE_DETECTION_MAX_DIMENSION = 1024;
 
 // ============================================================================
 // Utility Functions
@@ -123,6 +131,121 @@ function getMediaLibrarySignature(asset: MediaLibrary.Asset): string | null {
 
 async function getAssetSignature(asset: MediaLibrary.Asset): Promise<string | null> {
     return await getFileSignature(asset.uri) ?? getMediaLibrarySignature(asset);
+}
+
+/**
+ * Check whether an existing file-backed signature (`<modTime>_<size>`) already
+ * has a positive byte size and matches the current MediaStore modification time.
+ */
+function isMatchingFileSignature(
+    fileSignature: string,
+    assetModificationTime: number
+): boolean {
+    if (!Number.isFinite(assetModificationTime) || assetModificationTime <= 0) {
+        return false;
+    }
+
+    const match = /^(\d+(?:\.\d+)?)_(\d+)$/.exec(fileSignature);
+    if (!match) return false;
+
+    const sigModTime = Number(match[1]);
+    const sigSize = Number(match[2]);
+    if (!Number.isFinite(sigModTime) || sigModTime <= 0 || !Number.isFinite(sigSize) || sigSize <= 0) {
+        return false;
+    }
+
+    // Expo FileSystem reports modificationTime in seconds while MediaLibrary
+    // reports milliseconds on native platforms (and fixtures may use matching units).
+    if (Math.trunc(sigModTime) === Math.trunc(assetModificationTime)) {
+        return true;
+    }
+    if (assetModificationTime >= 1e11 && sigModTime < 1e11) {
+        return Math.trunc(sigModTime) === Math.trunc(assetModificationTime / 1000);
+    }
+
+    return false;
+}
+
+/**
+ * Determine whether an already-indexed asset can skip FileSystem.getInfoAsync
+ * and database mutation because its stored metadata and signature are still
+ * valid and unchanged.
+ */
+function canSkipAssetSync(
+    existing: AssetRecord | undefined,
+    asset: MediaLibrary.Asset
+): boolean {
+    if (!existing) return false;
+    if (
+        existing.taken_at !== asset.creationTime
+        || existing.width !== asset.width
+        || existing.height !== asset.height
+        || existing.file_signature === null
+    ) {
+        return false;
+    }
+
+    const librarySignature = getMediaLibrarySignature(asset);
+    if (librarySignature !== null && existing.file_signature === librarySignature) {
+        return true;
+    }
+
+    return isMatchingFileSignature(existing.file_signature, asset.modificationTime);
+}
+
+/**
+ * Run an async worker across items with bounded concurrency and cooperative
+ * cancellation so stop() can halt pending FileSystem reads promptly.
+ */
+async function mapWithConcurrency<T, R>(
+    items: readonly T[],
+    concurrency: number,
+    worker: (item: T) => Promise<R>,
+    shouldCancel?: () => boolean
+): Promise<R[]> {
+    if (items.length === 0) return [];
+
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(Math.max(1, concurrency), items.length);
+
+    await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+            while (nextIndex < items.length) {
+                if (shouldCancel?.()) return;
+                const currentIndex = nextIndex++;
+                results[currentIndex] = await worker(items[currentIndex]);
+            }
+        })
+    );
+
+    return results;
+}
+
+/** Android full-detail reads may demand location permission even though pixel
+ * analysis does not use GPS. Fall back only for that known SDK error, never
+ * request location or mask unrelated file failures. */
+async function getReadableAssetInfo(assetId: string, takenAt: number | null): Promise<MediaLibrary.AssetInfo> {
+    try { return await MediaLibrary.getAssetInfoAsync(assetId); }
+    catch (error) {
+        if (Platform.OS !== 'android' || !(error instanceof Error) || !error.message.includes('ACCESS_MEDIA_LOCATION')) throw error;
+        const cursors = new Set<string>();
+        let after: string | undefined;
+        // Positive known timestamps narrow the native query to this instant.
+        // Missing/zero times (including PNGs without DATE_TAKEN) need a full
+        // paginated lookup; do not invent a date and silently skip the asset.
+        const timeRange = takenAt !== null && Number.isFinite(takenAt) && takenAt > 0
+            ? { createdAfter: takenAt - 1, createdBefore: takenAt + 1 } : {};
+        do {
+            const page = await MediaLibrary.getAssetsAsync({ mediaType: 'photo', first: 100,
+                resolveWithFullInfo: false, ...timeRange, ...(after ? { after } : {}) });
+            const asset = page.assets.find(item => item.id === assetId);
+            if (asset) return { ...asset, localUri: asset.uri } as MediaLibrary.AssetInfo;
+            if (!page.hasNextPage) throw new Error('Asset no longer available for analysis');
+            if (!page.endCursor || cursors.has(page.endCursor)) throw new Error('Could not resolve analysis asset');
+            cursors.add(page.endCursor); after = page.endCursor;
+        } while (true);
+    }
 }
 
 const STATUS_MEDIA_PAGE_SIZE = 100;
@@ -205,6 +328,7 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
     let hasMore = true;
     let cursor: string | undefined;
     let synced = 0;
+    let pagesProcessed = 0;
     let shouldResetCursor = false;
     const seenAssetIds = new Set<string>();
 
@@ -213,60 +337,60 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
 
         const result = await MediaLibrary.getAssetsAsync({
             mediaType: 'photo',
-            first: 100,
+            first: SYNC_PAGE_SIZE,
             after: cursor,
             sortBy: [['creationTime', true]], // Ascending by creation time
         });
 
+        if (shouldStop) return null;
+
+        // Deduplicate within the page while recording every visible ID.
+        const pageById = new Map<string, MediaLibrary.Asset>();
         for (const asset of result.assets) {
-            if (shouldStop) return null;
             seenAssetIds.add(asset.id);
+            pageById.set(asset.id, asset);
+        }
+        const pageAssets = Array.from(pageById.values());
 
-            // Check if asset exists and signature changed
-            const signature = await getAssetSignature(asset);
-            const existing = await AssetRepository.getById(asset.id);
+        if (pageAssets.length > 0) {
+            const existingById = await AssetRepository.getByIds(
+                pageAssets.map(asset => asset.id)
+            );
+            if (shouldStop) return null;
 
-            if (existing) {
-                // Refresh library metadata and check for signature changes.
-                // taken_at is also the incremental scan's sort key. If it
-                // moves across the persisted cursor, restart from the
-                // beginning so a still-pending asset cannot be skipped.
-                const scanOrderChanged = existing.taken_at !== asset.creationTime;
-                const signatureChanged = await AssetRepository.refreshLibraryMetadata(asset.id, {
-                    takenAt: asset.creationTime,
-                    width: asset.width,
-                    height: asset.height,
-                    fileSignature: signature,
+            // Only query FileSystem for new assets, records missing a valid
+            // signature/size, or assets whose MediaStore metadata changed.
+            const assetsToSync = pageAssets.filter(
+                asset => !canSkipAssetSync(existingById.get(asset.id), asset)
+            );
+
+            if (assetsToSync.length > 0) {
+                const syncInputs = await mapWithConcurrency(
+                    assetsToSync,
+                    SYNC_STAT_CONCURRENCY,
+                    async (asset): Promise<LibraryAssetSyncInput> => ({
+                        assetId: asset.id,
+                        takenAt: asset.creationTime,
+                        width: asset.width,
+                        height: asset.height,
+                        fileSignature: await getAssetSignature(asset),
+                    }),
+                    () => shouldStop
+                );
+
+                if (shouldStop) return null;
+
+                // Commit the entire page's inserts, metadata refreshes, and
+                // derived-data invalidations in one SQLCipher transaction.
+                const batchResult = await AssetRepository.syncLibraryMetadataBatch(syncInputs, {
+                    preserveSingletonGroups: startedWithLimitedPhotoAccess,
+                    markForWiderDuplicateScan: startedWithLimitedPhotoAccess,
                 });
-                if (scanOrderChanged || signatureChanged) {
-                    // A changed asset may be older than the persisted cursor.
-                    // Rewind so resetting it to PENDING cannot make it
-                    // permanently unreachable in the next incremental pass.
+
+                synced += batchResult.insertedCount;
+                if (batchResult.shouldResetCursor) {
                     shouldResetCursor = true;
                 }
-                if (scanOrderChanged || signatureChanged) {
-                    // Similarity matching is constrained by taken_at. Remove
-                    // the old membership whenever the scan-order metadata
-                    // changes, then reprocess the asset so it can join groups
-                    // in its new time window.
-                    await DupGroupRepository.removeAssetFromGroups(
-                        asset.id,
-                        startedWithLimitedPhotoAccess,
-                        startedWithLimitedPhotoAccess
-                    );
-                }
-            } else {
-                // Insert new asset
-                await AssetRepository.upsert({
-                    asset_id: asset.id,
-                    taken_at: asset.creationTime,
-                    width: asset.width,
-                    height: asset.height,
-                    file_signature: signature,
-                    status: AssetStatus.PENDING,
-                });
-                synced++;
-                shouldResetCursor = true;
             }
         }
 
@@ -282,8 +406,9 @@ async function syncAssetsToDatabase(): Promise<ReadonlySet<string> | null> {
             cursor = nextCursor;
         }
 
-        // Yield periodically
-        if (synced > 0 && synced % 500 === 0) {
+        // Yield periodically between pages so UI interactions and stop signals stay responsive.
+        pagesProcessed++;
+        if (pagesProcessed % 5 === 0) {
             await yieldToMainThread();
         }
     }
@@ -465,6 +590,186 @@ async function rewindCursorForPendingAssets(): Promise<void> {
 /**
  * Process a single asset
  */
+async function analyzeAIPhoto(assetInfo: MediaLibrary.AssetInfo, uri: string) {
+    const imageOps = getImageOps();
+    let labelsJson: string | null = null;
+    let faceCount = 0;
+    const { MLKitService } = await import('../ml/MLKitService');
+    if (!(await MLKitService.waitUntilAvailable())) {
+        throw new Error('AI classification model is not ready; please retry the scan');
+    }
+
+    if (!MLKitService.isAvailable()) {
+        throw new Error('AI classification model is unavailable; please retry the scan');
+    }
+
+    // Phase 2a: Label Image (Object Detection) FIRST
+    let labelingUri = uri;
+    let isCropped = false;
+
+    // PREPROCESS: Center crop to square to avoid aspect ratio distortion
+    // EfficientNet-Lite4 expects 300x300 square input.
+    try {
+        if (imageOps.centerCropSquare && assetInfo.width && assetInfo.height) {
+            // EfficientNet-Lite4 uses 300x300
+            labelingUri = await imageOps.centerCropSquare(uri, assetInfo.width, assetInfo.height, 300);
+            isCropped = (labelingUri !== uri);
+        }
+    } catch {
+        console.warn('[AIScanner] Crop failed, using original.');
+    }
+
+    const labels = await (async () => {
+        try {
+            return await MLKitService.labelImage(labelingUri);
+        } finally {
+            // Always clean up the temporary crop, including
+            // when classification times out or throws.
+            if (isCropped) {
+                await FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => {
+                    if (Platform.OS !== 'web') {
+                        usePrivacyStore.getState().block('cache', 'read');
+                        stop();
+                        throw new LocalPrivacyError();
+                    }
+                });
+            }
+        }
+    })();
+
+    // Yield to allow GC after heavy image op
+    await yieldToMainThread();
+
+    if (labels.length > 0) {
+        labelsJson = JSON.stringify(labels);
+    }
+
+    // Phase 2b: Face Detection (Context-Aware)
+    // Downscale high-resolution originals before native face detection to avoid
+    // OOM on 48-200MP photos, and clean up the temporary file immediately.
+    let faceDetectionUri = uri;
+    let faceImageWidth = assetInfo.width || 0;
+    let faceImageHeight = assetInfo.height || 0;
+    let isFaceResized = false;
+
+    try {
+        if (
+            imageOps.resizeForFaceDetection
+            && faceImageWidth > 0
+            && faceImageHeight > 0
+            && Math.max(faceImageWidth, faceImageHeight) > FACE_DETECTION_MAX_DIMENSION
+        ) {
+            const resized = await imageOps.resizeForFaceDetection(
+                uri,
+                faceImageWidth,
+                faceImageHeight,
+                FACE_DETECTION_MAX_DIMENSION,
+            );
+            faceDetectionUri = resized.uri;
+            faceImageWidth = resized.width;
+            faceImageHeight = resized.height;
+            isFaceResized = faceDetectionUri !== uri;
+        }
+    } catch {
+        console.warn('[AIScanner] Face resize failed, using original.');
+    }
+
+    const rawFaces = await (async () => {
+        try {
+            return await MLKitService.detectFaces(faceDetectionUri);
+        } finally {
+            if (isFaceResized) {
+                await FileSystem.deleteAsync(faceDetectionUri, { idempotent: true }).catch(() => {
+                    if (Platform.OS !== 'web') {
+                        usePrivacyStore.getState().block('cache', 'read');
+                        stop();
+                        throw new LocalPrivacyError();
+                    }
+                });
+            }
+        }
+    })();
+
+    // Filter 1: Size Filter (Ignore tiny faces like icons/ads)
+    const baseWidth = faceImageWidth > 0 ? faceImageWidth : 1000;
+    const baseHeight = faceImageHeight > 0 ? faceImageHeight : baseWidth;
+    const MIN_FACE_RATIO = 0.1; // Face must be 10% of image width
+    const validFaces = rawFaces.filter(f => {
+        const boxWidth = f.boundingBox?.width || 0;
+        const boxX = f.boundingBox?.x || 0;
+        // Account for EXIF-rotated unscaled images where ML Kit returns
+        // coordinates in the display-oriented frame.
+        const effectiveWidth = !isFaceResized && boxX + boxWidth > baseWidth && boxX + boxWidth <= baseHeight
+            ? baseHeight
+            : baseWidth;
+        return boxWidth > (effectiveWidth * MIN_FACE_RATIO);
+    });
+
+    // Filter 2: Context Disqualifier (Ignore faces in Screenshots/Websites)
+    // Use the same grouped evidence as the category screen.
+    // A weaker document candidate or a photographed monitor
+    // must not override an actual face detection.
+    const isContextDisqualified = hasDocumentContext(labels);
+
+    if (isContextDisqualified) {
+        console.log('[AIScanner] Ignored face candidates in a document context.');
+        faceCount = 0;
+    } else {
+        faceCount = validFaces.length;
+    }
+
+    if (faceCount > 0) {
+        console.log('[AIScanner] Face analysis completed');
+    }
+
+    // Reset failure count on a complete ML success.
+    mlFailureCount = 0;
+    mlCircuitBreakerTripped = false;
+
+    return { labelsJson: labelsJson ?? '[]', faceCount };
+}
+
+async function processAIForAsset(
+    assetId: string,
+    knownVisibleIds?: ReadonlySet<string> | null,
+): Promise<boolean> {
+    const source = await AssetRepository.getById(assetId);
+    if (!source || source.status !== AssetStatus.DONE || source.algo_version !== GLOBAL_ALGO_VERSION) return false;
+    const checkPermissionVisible = async () => {
+        const permission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+        if (!permission.granted) return false;
+        if (permission.accessPrivileges !== 'limited') return true;
+        if (knownVisibleIds) return knownVisibleIds.has(assetId);
+        const scope = await getVisiblePhotoIdsForStatus();
+        return scope === null || scope.has(assetId);
+    };
+    const matchesSource = async (info: MediaLibrary.AssetInfo) => {
+        const signature = await getAssetSignature(info);
+        return info.width === source.width && info.height === source.height && info.creationTime === source.taken_at
+            && (source.file_signature === null || signature === source.file_signature);
+    };
+    try {
+        if (shouldStop || !await checkPermissionVisible()) return false;
+        const info = await getReadableAssetInfo(assetId, source.taken_at);
+        if (!info.localUri || !await matchesSource(info)) return false;
+        const result = await analyzeAIPhoto(info, info.localUri);
+        const latestPermission = await MediaLibrary.getPermissionsAsync(false, ['photo']);
+        if (!latestPermission.granted) return false;
+        const latest = await getReadableAssetInfo(assetId, source.taken_at);
+        if (!await matchesSource(latest) || latest.modificationTime !== info.modificationTime) return false;
+        return await AIAnalysisRepository.save(source, result);
+    } catch (error) {
+        if (error instanceof LocalPrivacyError) {
+            shouldStop = true;
+            return false;
+        }
+        // AI errors must never clear completed base results or group membership.
+        recordMLFailure(error);
+        if (await checkPermissionVisible()) await AIAnalysisRepository.save(source, null);
+        return false;
+    }
+}
+
 async function processAsset(
     assetId: string,
     similarityCandidateAssetIds: readonly string[] | undefined,
@@ -476,7 +781,8 @@ async function processAsset(
 
     try {
         // Get asset info from media library
-        const assetInfo = await MediaLibrary.getAssetInfoAsync(assetId);
+        const indexed = await AssetRepository.getById(assetId);
+        const assetInfo = await getReadableAssetInfo(assetId, indexed?.taken_at ?? null);
         if (!assetInfo || !assetInfo.localUri) {
             throw new Error('Asset not found or no local URI');
         }
@@ -494,106 +800,7 @@ async function processAsset(
         imageOps.dispose(gray);
         gray = null;
 
-        // Phase 2: Context-Aware ML Scanning (Merged Face & Object Detection)
-        let labelsJson: string | null = null;
-        let faceCount = 0;
-
-        // Check if AI classification is enabled in settings (default: OFF)
-        const { useSettingsStore } = await import('../../stores/useSettingsStore');
-        const enableAIClassification = useSettingsStore.getState().enableAIClassification;
-
-        // ML failures are retryable. Once the circuit breaker trips, do not
-        // silently save a base-only result as a successful AI scan.
-        const mlEnabled = !enableAIClassification || mlFailureCount <= 3;
-        if (enableAIClassification && !mlEnabled) {
-            throw new Error('AI classification paused after repeated failures; please retry the scan');
-        }
-
-        // Only run ML if: enabled + circuit breaker not tripped
-        if (mlEnabled && enableAIClassification) {
-            try {
-                const { MLKitService } = await import('../ml/MLKitService');
-                if (!(await MLKitService.waitUntilAvailable())) {
-                    throw new Error('AI classification model is not ready; please retry the scan');
-                }
-
-                if (!MLKitService.isAvailable()) {
-                    throw new Error('AI classification model is unavailable; please retry the scan');
-                }
-
-                // Phase 2a: Label Image (Object Detection) FIRST
-                let labelingUri = uri;
-                let isCropped = false;
-
-                // PREPROCESS: Center crop to square to avoid aspect ratio distortion
-                // EfficientNet-Lite4 expects 300x300 square input.
-                try {
-                    if (imageOps.centerCropSquare && assetInfo.width && assetInfo.height) {
-                        // EfficientNet-Lite4 uses 300x300
-                        labelingUri = await imageOps.centerCropSquare(uri, assetInfo.width, assetInfo.height, 300);
-                        isCropped = (labelingUri !== uri);
-                    }
-                } catch (e) {
-                    console.warn('[AIScanner] Crop failed, using original:', e);
-                }
-
-                const labels = await (async () => {
-                    try {
-                        return await MLKitService.labelImage(labelingUri);
-                    } finally {
-                        // Always clean up the temporary crop, including
-                        // when classification times out or throws.
-                        if (isCropped) {
-                            await FileSystem.deleteAsync(labelingUri, { idempotent: true }).catch(() => { });
-                        }
-                    }
-                })();
-
-                // Yield to allow GC after heavy image op
-                await yieldToMainThread();
-
-                if (labels.length > 0) {
-                    labelsJson = JSON.stringify(labels);
-                    console.log(`[AIScanner] Detected objects in ${assetId}:`, labels.map(l => l.text).join(', '));
-                }
-
-                // Phase 2b: Face Detection (Context-Aware)
-                const rawFaces = await MLKitService.detectFaces(uri);
-
-                // Filter 1: Size Filter (Ignore tiny faces like icons/ads)
-                const imgWidth = assetInfo.width || 1000;
-                const MIN_Face_RATIO = 0.1; // Face must be 10% of image width
-                const validFaces = rawFaces.filter(f => {
-                    // Check bounding box width (ML Kit returns 'width')
-                    return (f.boundingBox?.width || 0) > (imgWidth * MIN_Face_RATIO);
-                });
-
-                // Filter 2: Context Disqualifier (Ignore faces in Screenshots/Websites)
-                const topLabel = labels.length > 0 ? labels[0].text.toLowerCase() : '';
-                // Use the same grouped evidence as the category screen.
-                // A weaker document candidate or a photographed monitor
-                // must not override an actual face detection.
-                const isContextDisqualified = hasDocumentContext(labels);
-
-                if (isContextDisqualified) {
-                    console.log(`[AIScanner] Context Disqualifier Triggered: ${topLabel}. Ignoring ${validFaces.length} faces.`);
-                    faceCount = 0;
-                } else {
-                    faceCount = validFaces.length;
-                }
-
-                if (faceCount > 0) {
-                    console.log(`[AIScanner] Detected ${faceCount} Valid Face(s) (Raw: ${rawFaces.length})`);
-                }
-
-                // Reset failure count on a complete ML success.
-                mlFailureCount = 0;
-                mlCircuitBreakerTripped = false;
-            } catch (mlError) {
-                console.warn(`[AIScanner] ML Kit object detection failed for ${assetId}:`, mlError);
-                throw recordMLFailure(mlError);
-            }
-        }
+        // Persist the base result before optional AI work.
 
         // Compute candidates before publishing the new result. The database
         // method below then commits the base result and the group mutation in
@@ -615,24 +822,33 @@ async function processAsset(
             meanLuma,
             phash,
             GLOBAL_ALGO_VERSION,
-            faceCount,
-            labelsJson,
+            0,
+            null,
             matches,
             generateGroupId(),
             preserveSingletonGroups,
             markForWiderDuplicateScan
         );
 
+        const { useSettingsStore } = await import('../../stores/useSettingsStore');
+        if (useSettingsStore.getState().enableAIClassification && !shouldStop) {
+            try {
+                await processAIForAsset(
+                    assetId,
+                    similarityCandidateAssetIds ? new Set(similarityCandidateAssetIds) : null,
+                );
+            } catch {
+                useScannerStore.getState().setLastError(new Error('AI result could not be saved; base analysis was preserved'));
+            }
+        }
+
         if (targetGroupId) {
             // Best-shot metadata is recoverable and must not turn an
             // otherwise complete scan/group transaction into ERROR.
             try {
                 await selectBestShot(targetGroupId);
-            } catch (bestShotError) {
-                console.warn(
-                    `[AIScanner] Failed to update best shot for ${targetGroupId}:`,
-                    bestShotError
-                );
+            } catch {
+                console.warn('[AIScanner] Failed to update a suggested keep item.');
             }
         }
 
@@ -641,6 +857,11 @@ async function processAsset(
         // Release gray if allocated
         if (gray) {
             imageOps.dispose(gray);
+        }
+
+        if (error instanceof LocalPrivacyError) {
+            shouldStop = true;
+            return false;
         }
 
         // Mark as error
@@ -652,7 +873,9 @@ async function processAsset(
             markForWiderDuplicateScan
         );
 
-        console.warn(`[AIScanner] Failed to process asset ${assetId}:`, errorMessage);
+        // Native decoder/ML errors may include media URIs. Keep diagnostics
+        // generic; the detailed retry state belongs in the encrypted index.
+        console.warn('[AIScanner] Failed to process a media item.');
         return false;
     }
 }
@@ -701,6 +924,10 @@ async function processBatch(
             preserveSingletonGroups,
             markForWiderDuplicateScan
         );
+
+        // The image-processing layer cannot depend on the scanner. Observe
+        // its cleanup failure here even when no root UI is mounted to stop us.
+        if (usePrivacyStore.getState().failures.cache) shouldStop = true;
 
         // Yield after each asset
         await yieldToMainThread();
@@ -776,11 +1003,11 @@ async function reportCurrentStatus(
         };
         useScannerStore.getState().setProgress(finalProgress);
         runCallbacks.onProgress?.(finalProgress);
-    } catch (error) {
+    } catch {
         // The original scan error/cancellation should still be surfaced even
         // if this best-effort status refresh is blocked by a simultaneous
         // permission or database change.
-        console.warn('[AIScanner] Failed to publish current status:', error);
+        console.warn('[AIScanner] Failed to publish current status.');
     }
 }
 
@@ -813,11 +1040,15 @@ async function finalizeScannerRun(
  * Start the scanner
  */
 export async function start(cbs?: ScannerCallbacks): Promise<void> {
+    if (usePrivacyStore.getState().failures.cache) return;
     if (isRunning || isFinalizing) {
         console.log('[AIScanner] Already running.');
         return;
     }
 
+    const releaseOperation = acquireRecordOperation('scanner');
+    if (!releaseOperation) return;
+    useScannerStore.getState().setTask('scan');
     console.log('[AIScanner] Starting scan...');
     isRunning = true;
     shouldStop = false;
@@ -888,14 +1119,15 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
             completed = true;
         }
     } catch (error) {
-        console.error('[AIScanner] Scan error:', error);
+        console.error('[AIScanner] Scan failed.');
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
         useScannerStore.getState().setLastError(error instanceof Error ? error : new Error(String(error)));
         if (!shouldStop) {
             await reportCurrentStatus();
         }
     } finally {
-        await finalizeScannerRun(runGeneration, runCallbacks);
+        try { await finalizeScannerRun(runGeneration, runCallbacks); }
+        finally { releaseOperation(); }
     }
 
     if (completed) {
@@ -903,7 +1135,7 @@ export async function start(cbs?: ScannerCallbacks): Promise<void> {
             runCallbacks.onComplete?.();
         } catch (error) {
             const completionError = error instanceof Error ? error : new Error(String(error));
-            console.error('[AIScanner] Completion callback failed:', completionError);
+            console.error('[AIScanner] Completion callback failed.');
             runCallbacks.onError?.(completionError);
             if (scannerRunGeneration === runGeneration) {
                 useScannerStore.getState().setLastError(completionError);
@@ -927,11 +1159,15 @@ export async function resumeOnce(
     options?: ScanBatchOptions,
     cbs?: ScannerCallbacks
 ): Promise<void> {
+    if (usePrivacyStore.getState().failures.cache) return;
     if (isRunning || isFinalizing) {
         console.log('[AIScanner] Already running.');
         return;
     }
 
+    const releaseOperation = acquireRecordOperation('scanner');
+    if (!releaseOperation) return;
+    useScannerStore.getState().setTask('scan');
     console.log('[AIScanner] Resuming for one batch...');
     isRunning = true;
     shouldStop = false;
@@ -1024,14 +1260,15 @@ export async function resumeOnce(
             completed = true;
         }
     } catch (error) {
-        console.error('[AIScanner] Resume error:', error);
+        console.error('[AIScanner] Resume failed.');
         callbacks.onError?.(error instanceof Error ? error : new Error(String(error)));
         useScannerStore.getState().setLastError(error instanceof Error ? error : new Error(String(error)));
         if (!shouldStop) {
             await reportCurrentStatus();
         }
     } finally {
-        await finalizeScannerRun(runGeneration, runCallbacks);
+        try { await finalizeScannerRun(runGeneration, runCallbacks); }
+        finally { releaseOperation(); }
     }
 
     if (completed) {
@@ -1039,7 +1276,7 @@ export async function resumeOnce(
             runCallbacks.onComplete?.();
         } catch (error) {
             const completionError = error instanceof Error ? error : new Error(String(error));
-            console.error('[AIScanner] Completion callback failed:', completionError);
+            console.error('[AIScanner] Completion callback failed.');
             runCallbacks.onError?.(completionError);
             if (scannerRunGeneration === runGeneration) {
                 useScannerStore.getState().setLastError(completionError);
@@ -1069,6 +1306,7 @@ export async function getStatus(): Promise<ScanProgress> {
  * Reset scan cursor to start from beginning
  */
 export async function resetCursor(): Promise<void> {
+    if (isRecordTransferActive()) throw new Error('Record transfer is in progress');
     await MetaRepository.resetScanCursor();
     console.log('[AIScanner] Cursor reset.');
 }
@@ -1077,6 +1315,7 @@ export async function resetCursor(): Promise<void> {
  * Reset ALL progress (Cursor + Database Status)
  */
 export async function resetAllProgress(): Promise<void> {
+    if (isRecordTransferActive()) throw new Error('Record transfer is in progress');
     if (isRunning || isFinalizing) {
         stop();
         const deadline = Date.now() + 30000;
@@ -1088,8 +1327,13 @@ export async function resetAllProgress(): Promise<void> {
             throw new Error('Scanner did not stop in time; progress was not reset.');
         }
     }
-    await AssetRepository.resetAll();
-    currentBatch = 0;
+    const release = acquireRecordOperation('scanner');
+    if (!release) throw new Error('Another record operation is in progress');
+    try {
+        await AssetRepository.resetAll();
+        useScannerStore.getState().setClassificationProgress({ pending: 0, done: 0, error: 0 });
+        currentBatch = 0;
+    } finally { release(); }
     console.log('[AIScanner] Full progress reset.');
 }
 
@@ -1098,4 +1342,67 @@ export async function resetAllProgress(): Promise<void> {
  */
 export function isScanning(): boolean {
     return isRunning || isFinalizing;
+}
+
+export async function getClassificationStatus() {
+    const visible = await getVisiblePhotoIdsForStatus();
+    const { useSettingsStore } = await import('../../stores/useSettingsStore');
+    const albums = useSettingsStore.getState().selectedAlbumIds ?? [];
+    let scope = albums.length ? await getPhotoAssetIdsForAlbums(albums) : undefined;
+    if (visible) scope = (scope ?? [...visible]).filter(id => visible.has(id));
+    return AIAnalysisRepository.getCounts(scope);
+}
+
+/** Explicit AI backfill/retry, never an automatic side effect of enabling AI. */
+export async function startClassification(errorsOnly = false): Promise<void> {
+    if (usePrivacyStore.getState().failures.cache) return;
+    if (isRunning || isFinalizing) return;
+    const { useSettingsStore } = await import('../../stores/useSettingsStore');
+    if (!useSettingsStore.getState().enableAIClassification) return;
+    const releaseOperation = acquireRecordOperation('scanner');
+    if (!releaseOperation) return;
+    const store = useScannerStore.getState();
+    isRunning = true; shouldStop = false; currentBatch = 0;
+    callbacks = {};
+    const generation = ++scannerRunGeneration;
+    resetMLFailureState();
+    store.setTask('classification'); store.setLastError(null); store.setIsRunning(true);
+    try {
+        const visible = await syncAssetsToDatabase();
+        if (shouldStop) return;
+        const albums = useSettingsStore.getState().selectedAlbumIds ?? [];
+        let scope = albums.length ? await getPhotoAssetIdsForAlbums(albums) : undefined;
+        if (visible) scope = (scope ?? [...visible]).filter(id => visible.has(id));
+        // Snapshot the work set once: errors are retried on user request,
+        // not immediately requeued into an endless failure loop.
+        const ids = await AIAnalysisRepository.getCandidates(scope, errorsOnly);
+        store.setClassificationProgress(await getClassificationStatus());
+        for (const id of ids) {
+            await waitForInteractions();
+            if (shouldStop) break;
+            const before = await AIAnalysisRepository.getCounts([id]);
+            await processAIForAsset(id, visible);
+            const after = await AIAnalysisRepository.getCounts([id]);
+            const progress = useScannerStore.getState().classificationProgress;
+            store.setClassificationProgress({
+                pending: Math.max(0, progress.pending + after.pending - before.pending),
+                done: Math.max(0, progress.done + after.done - before.done),
+                error: Math.max(0, progress.error + after.error - before.error),
+            });
+            await yieldToMainThread();
+            if (mlCircuitBreakerTripped) {
+                store.setLastError(new Error('AI analysis paused after repeated failures; base results were preserved'));
+                break;
+            }
+        }
+    } catch {
+        store.setLastError(new Error('AI backfill could not finish; existing results were preserved'));
+    } finally {
+        try {
+            // Reconcile changes outside this work set only once at completion.
+            try { store.setClassificationProgress(await getClassificationStatus()); } catch { /* Keep the last known progress. */ }
+            await finalizeScannerRun(generation, {});
+        }
+        finally { releaseOperation(); }
+    }
 }

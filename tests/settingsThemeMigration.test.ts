@@ -42,15 +42,15 @@ describe('persisted theme compatibility', () => {
     },
   );
 
-  it('preserves a stored dark theme', async () => {
+  it.each(['light', 'dark', 'system'] as const)('preserves a stored %s theme', async theme => {
     getItem.mockResolvedValue(JSON.stringify({
-      state: { theme: 'dark', selectedAlbumIds: ['album-42'] },
+      state: { theme, selectedAlbumIds: ['album-42'] },
       version: 0,
     }));
 
     await useSettingsStore.persist.rehydrate();
 
-    expect(useSettingsStore.getState().theme).toBe('dark');
+    expect(useSettingsStore.getState().theme).toBe(theme);
     expect(useSettingsStore.getState().selectedAlbumIds).toEqual(['album-42']);
   });
 });

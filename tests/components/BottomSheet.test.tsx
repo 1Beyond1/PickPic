@@ -4,6 +4,9 @@ import { Modal, Text } from 'react-native';
 import { BottomSheet } from '../../components/BottomSheet';
 
 let mockDark = false;
+let mockReducedMotion = false;
+jest.mock('react-native-reanimated', () => ({ useReducedMotion: () => mockReducedMotion }));
+beforeEach(() => { mockReducedMotion = false; });
 jest.mock('@expo/vector-icons', () => ({ Feather: () => null }));
 jest.mock('../../hooks/useI18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 jest.mock('../../hooks/useThemeColor', () => ({ useThemeColor: () => ({ colors: mockDark ? require('../../constants/theme').COLORS_DARK : require('../../constants/theme').COLORS }) }));
@@ -30,4 +33,14 @@ it('can preserve an inert onboarding backdrop while naming its explicit close pa
     expect(onClose).toHaveBeenCalledTimes(1);
     act(() => view.UNSAFE_getByType(Modal).props.onRequestClose());
     expect(onClose).toHaveBeenCalledTimes(2);
+});
+
+it.each([false, true])('respects reduced motion without changing its explicit close action (reduced=%s)', reduced => {
+    mockReducedMotion = reduced;
+    const onClose = jest.fn();
+    const view = render(<BottomSheet visible title="Appearance" onClose={onClose}><Text>Theme choices</Text></BottomSheet>);
+    expect(view.UNSAFE_getByType(Modal).props.animationType).toBe(reduced ? 'none' : 'slide');
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByRole('button', { name: 'cancel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
 });

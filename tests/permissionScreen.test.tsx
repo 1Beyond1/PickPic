@@ -71,33 +71,12 @@ it('refreshes permission when the app returns to the foreground, not on backgrou
   expect(mockRequest).not.toHaveBeenCalled();
 });
 
-it('cancels the delayed redirect if a granted gate unmounts', () => {
-  jest.useFakeTimers();
-  try {
-    mockPermission = { granted: true, canAskAgain: true };
-    const view = render(<Index />);
-    view.unmount();
-    act(() => { jest.runOnlyPendingTimers(); });
-    expect(mockRouter.replace).not.toHaveBeenCalled();
-  } finally {
-    jest.useRealTimers();
-  }
-});
-
-it('enters photos after the existing delay when access was already granted', () => {
-  jest.useFakeTimers();
-  try {
-    mockPermission = { granted: true, canAskAgain: true };
-    render(<Index />);
-    act(() => { jest.advanceTimersByTime(499); });
-    expect(mockRouter.replace).not.toHaveBeenCalled();
-    act(() => { jest.advanceTimersByTime(1); });
-    expect(mockRouter.replace).toHaveBeenCalledTimes(1);
-    expect(mockRouter.replace).toHaveBeenCalledWith('/(tabs)/photos');
-    expect(mockRequest).not.toHaveBeenCalled();
-  } finally {
-    jest.useRealTimers();
-  }
+it('enters photos immediately without artificial delay when access was already granted', () => {
+  mockPermission = { granted: true, canAskAgain: true };
+  render(<Index />);
+  expect(mockRouter.replace).toHaveBeenCalledTimes(1);
+  expect(mockRouter.replace).toHaveBeenCalledWith('/(tabs)/photos');
+  expect(mockRequest).not.toHaveBeenCalled();
 });
 
 it('keeps complete copy scrollable within safe areas and exposes a named permission button', () => {

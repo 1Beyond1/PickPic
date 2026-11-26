@@ -10,15 +10,29 @@ import {
     SQL_CREATE_ASSETS,
     SQL_CREATE_ASSETS_INDEXES,
     SQL_CREATE_DUP_GROUPS,
+    SQL_CREATE_DUP_GROUPS_INDEXES,
     SQL_CREATE_DUP_MEMBERS,
     SQL_CREATE_DUP_MEMBERS_INDEXES,
     SQL_CREATE_FACE_GROUPS,
     SQL_CREATE_FACE_INSTANCES,
     SQL_CREATE_FACE_INSTANCES_INDEXES,
+    SQL_CREATE_MEDIA_PENDING_QUEUE,
+    SQL_CREATE_MEDIA_PENDING_QUEUE_INDEXES,
+    SQL_CREATE_MEDIA_PROCESSED_RECORDS,
+    SQL_CREATE_MEDIA_PROCESSED_RECORDS_INDEXES,
+    SQL_CREATE_MEDIA_REVIEW_IGNORES,
+    SQL_CREATE_MEDIA_REVIEW_IGNORES_INDEXES,
     SQL_CREATE_META,
+    SQL_CREATE_PROTECTED_ALBUMS,
+    SQL_CREATE_PROTECTED_ALBUMS_INDEXES,
+    SQL_CREATE_AI_ANALYSIS,
+    AI_ALGO_VERSION,
+    SQL_CREATE_SIMILAR_REVIEWS,
+    SQL_INDEX_ASSETS_STATUS_BLUR,
+    SQL_INDEX_DUP_GROUPS_CREATED,
 } from './schema';
 
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 8;
 
 /**
  * Run all migrations to bring database to current version
@@ -43,6 +57,67 @@ export async function runMigrations(db: SQLite.SQLiteDatabase): Promise<void> {
 
     if (schemaVersion < 3) {
         await migrateToV3(db);
+    }
+    if (schemaVersion < 4) {
+        await db.withTransactionAsync(async () => {
+            await db.execAsync(SQL_CREATE_AI_ANALYSIS);
+            // An empty label array is a completed AI result, not missing work.
+            // Legacy failures/null results stay eligible for explicit backfill.
+            await db.runAsync(`INSERT OR IGNORE INTO ai_analysis
+                (asset_id, version, status, source_updated_at, source_signature, source_phash, updated_at)
+                SELECT asset_id, ?, 1, updated_at, file_signature, phash, COALESCE(updated_at, 0)
+                FROM assets WHERE status = 1 AND labels_json IS NOT NULL
+                AND CASE WHEN json_valid(labels_json) THEN json_type(labels_json) = 'array' ELSE 0 END`, [AI_ALGO_VERSION]);
+            await setSchemaVersion(db, 4);
+        });
+    }
+    if (schemaVersion < 5) {
+        await db.withTransactionAsync(async () => {
+            await db.execAsync(SQL_CREATE_SIMILAR_REVIEWS);
+            // Legacy in-memory flags did not record explicit decisions and
+            // cannot be migrated as confirmed reviews.
+            await setSchemaVersion(db, 5);
+        });
+    }
+    if (schemaVersion < 6) {
+        await db.withTransactionAsync(async () => {
+            await db.execAsync(SQL_CREATE_MEDIA_PROCESSED_RECORDS);
+            for (const indexSql of SQL_CREATE_MEDIA_PROCESSED_RECORDS_INDEXES) {
+                await db.execAsync(indexSql);
+            }
+            await db.execAsync(SQL_CREATE_MEDIA_PENDING_QUEUE);
+            for (const indexSql of SQL_CREATE_MEDIA_PENDING_QUEUE_INDEXES) {
+                await db.execAsync(indexSql);
+            }
+            await setSchemaVersion(db, 6);
+        });
+    }
+    if (schemaVersion < 7) {
+        await db.withTransactionAsync(async () => {
+            const pendingColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(media_pending_queue)');
+            if (!pendingColumns.some(column => column.name === 'source')) {
+                await db.execAsync('ALTER TABLE media_pending_queue ADD COLUMN source TEXT;');
+            }
+            if (!pendingColumns.some(column => column.name === 'added_at')) {
+                await db.execAsync('ALTER TABLE media_pending_queue ADD COLUMN added_at INTEGER;');
+            }
+            await db.execAsync(SQL_INDEX_ASSETS_STATUS_BLUR);
+            await db.execAsync(SQL_INDEX_DUP_GROUPS_CREATED);
+            await setSchemaVersion(db, 7);
+        });
+    }
+    if (schemaVersion < 8) {
+        await db.withTransactionAsync(async () => {
+            await db.execAsync(SQL_CREATE_MEDIA_REVIEW_IGNORES);
+            for (const indexSql of SQL_CREATE_MEDIA_REVIEW_IGNORES_INDEXES) {
+                await db.execAsync(indexSql);
+            }
+            await db.execAsync(SQL_CREATE_PROTECTED_ALBUMS);
+            for (const indexSql of SQL_CREATE_PROTECTED_ALBUMS_INDEXES) {
+                await db.execAsync(indexSql);
+            }
+            await setSchemaVersion(db, 8);
+        });
     }
 }
 
@@ -106,6 +181,9 @@ async function migrateToV1(db: SQLite.SQLiteDatabase): Promise<void> {
 
     // Create indexes
     for (const indexSql of SQL_CREATE_ASSETS_INDEXES) {
+        await db.execAsync(indexSql);
+    }
+    for (const indexSql of SQL_CREATE_DUP_GROUPS_INDEXES) {
         await db.execAsync(indexSql);
     }
     for (const indexSql of SQL_CREATE_DUP_MEMBERS_INDEXES) {

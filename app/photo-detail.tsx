@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import * as MediaLibrary from 'expo-media-library';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
@@ -8,9 +7,11 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TYPOGRAPHY, UI_METRICS } from '../constants/theme';
 import { PhotoReadFeedback } from '../components/PhotoReadFeedback';
+import { ZoomableImage } from '../components/ZoomablePhotoModal';
 import { useI18n } from '../hooks/useI18n';
 import { useThemeColor } from '../hooks/useThemeColor';
 import { usePhotoPreviewSource } from '../hooks/usePhotoPreviewSource';
+import { getReadableMediaInfo } from '../services/readableMedia';
 import { useMediaStore } from '../stores/useMediaStore';
 
 export default function PhotoDetailScreen() {
@@ -55,11 +56,11 @@ export default function PhotoDetailScreen() {
         if (!assetId) return;
 
         let active = true;
-        void MediaLibrary.getAssetInfoAsync(assetId, {
+        void getReadableMediaInfo(assetId, 'photo', {
             shouldDownloadFromNetwork: false,
         })
             .then(info => {
-                if (!active || info) return;
+                if (!active || (info && (!info.id || info.id === assetId))) return;
 
                 // A regular media-library change may have removed the asset
                 // shown by this route. Do not leave a stale URI on screen or
@@ -67,9 +68,12 @@ export default function PhotoDetailScreen() {
                 router.replace(permissionScope === 'none' ? '/' : '/(tabs)/photos');
             })
             .catch(error => {
-                if (active) {
-                    console.warn('[PhotoDetail] Failed to verify asset after media-library refresh:', error);
+                if (!active) return;
+                if (error instanceof Error && error.message === 'Media is not accessible') {
+                    router.replace(permissionScope === 'none' ? '/' : '/(tabs)/photos');
+                    return;
                 }
+                console.warn('[PhotoDetail] Failed to verify asset after media-library refresh.');
             });
 
         return () => {
@@ -101,7 +105,7 @@ export default function PhotoDetailScreen() {
             })
             .catch((error) => {
                 if (mounted && requestId === shareRequestIdRef.current) {
-                    console.warn('[PhotoDetail] Failed to resolve local photo URI:', error);
+                    console.warn('[PhotoDetail] Failed to resolve local photo URI.');
                     setShareUri(uri);
                 }
             });
@@ -116,8 +120,8 @@ export default function PhotoDetailScreen() {
             if (await Sharing.isAvailableAsync()) {
                 await Sharing.shareAsync(shareUri || await resolveShareUri());
             }
-        } catch (error) {
-            console.error('[PhotoDetail] Failed to share photo:', error);
+        } catch {
+            console.error('[PhotoDetail] Failed to share photo.');
         }
     };
 
@@ -164,12 +168,21 @@ export default function PhotoDetailScreen() {
 function PhotoDetailMedia({ uri, assetId, onResolvedUri }: { uri: string; assetId: string; onResolvedUri: (uri: string) => void }) {
     const image = usePhotoPreviewSource(uri, assetId);
     const { colors } = useThemeColor();
+    const { t } = useI18n();
     useEffect(() => {
         if (image.attempt > 0 && image.uri && !image.failed) onResolvedUri(image.uri);
     }, [image.attempt, image.uri, image.failed, onResolvedUri]);
-    if (image.loading) return <ActivityIndicator size="large" color={colors.primary} />;
     if (image.failed) return <PhotoReadFeedback onRetry={image.retry} />;
-    return <Image key={image.attempt} source={{ uri: image.uri }} style={styles.image} contentFit="contain" onError={image.onError} />;
+    if (image.loading || !image.uri) return <ActivityIndicator size="large" color={colors.primary} />;
+    return (
+        <ZoomableImage
+            uri={image.uri}
+            imageKey={image.attempt}
+            resetToken={`${assetId}:${image.uri}:${image.attempt}`}
+            accessibilityLabel={t('photo_detail_title')}
+            onError={image.onError}
+        />
+    );
 }
 
 const styles = StyleSheet.create({
